@@ -4,7 +4,7 @@
 **Goal (Long's directive):** "Evaluate how others do it and bring it to us. We can build it, but the harness needs to be top-tier as well as the management of the main agent."
 **Two hard bars:** (1) a **top-tier harness**; (2) excellent **management of the main agent** — keeping the primary/manager agent coherent, cheap, and alive over days/weeks.
 
-Companion docs: `HANDOFF.md` (canonical resume point) and `2026-08-03-herdr-manager-design.md` (earlier design). Memory: `~/.claude/projects/-home-dinhlongviolin1-main-coding/memory/herdr-manager-design.md`.
+> **About this document.** Imported design rationale for `arco`. It references a private research/review working set — source teardowns of other agent projects (`*-analysis.md`), an 8-model review round, and local research clones — that is **not part of this repository**; such paths are kept only as provenance. In-repo companions: [`overview.md`](overview.md) and [`implementation-plan.md`](implementation-plan.md).
 
 ---
 
@@ -141,7 +141,7 @@ Next cycles (grep-level): `gateway/` (daemon liveness, warm-agent-per-chat, rest
 
 ### (original scaffold — target files) — retained for reference
 
-Target files in the local clone `~/main_coding/others/hermes-agent` (sparse-checked-out Python engine, 66M):
+Target files in the local clone `hermes-agent` (sparse-checked-out Python engine, 66M):
 - **Main loop & context:** `agent/conversation_loop.py`, `context_engine.py`, `context_compressor.py`, `conversation_compression.py`, `manual_compression_feedback.py`, `iteration_budget.py`, `bounded_response.py`, `agent_init.py`.
 - **Memory & learning:** `hermes_state_*.py` (SQLite+FTS5), `agent/memory_manager.py`, `memory_provider.py`, `curator.py`, `learning_graph.py`, `learning_mutations.py`, `insights.py`, `skills/`.
 - **Orchestration & always-on:** `gateway/` (session/routing/daemon), `agent/subagent_lifecycle.py`, `tools/delegate_tool.py`, `delegation_context.py`, `cron/`, `tools/environments/` (local/ssh/docker/modal).
@@ -255,4 +255,4 @@ Full cites in `hermes-analysis/persistent-agents-analysis.md` and `other-impleme
 - ✅ **Complete:** external teardown (Part 1); Hermes context_engine, iteration_budget, main-loop, compaction, memory/curator (Part 2A–2F); two full deep-dives on disk (conversation_loop, context_compressor).
 - ✅ **ALL market teardowns complete** (re-run across DeepSeek + Codex pools, staggered 2–3 at a time after the qwen quota exhausted — per [[agent-fanout-quota-discipline]]): autogen, claude-squad, graphiti, openai-agents, vibe-kanban, other-frameworks survey (opencode/cline/OpenHands/agent-sdk), persistent-agents (OpenClaw + Khoj). 9 analysis files in `hermes-analysis/`, all folded into Part 3.
 - **Provider routing that worked:** clavis qwen-1 (until its 5h quota hit) → then clavis deepseek-1 (DeepSeek) + tokamak launch codex (Codex pool). tokamak launch claude was NOT usable (routes to the same rate-limited Anthropic account).
-- **Repos on disk** (`~/main_coding/others/`): hermes-agent, autogen, claude-squad, graphiti, openai-agents-python, vibe-kanban, openclaw (+ herdr). Plus `/tmp/agent-research/`: opencode, cline, goose, openhands, claude-agent-sdk-python.
+- **Repos on disk** (``): hermes-agent, autogen, claude-squad, graphiti, openai-agents-python, vibe-kanban, openclaw (+ herdr). Plus `/tmp/agent-research/`: opencode, cline, goose, openhands, claude-agent-sdk-python.
