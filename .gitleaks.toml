@@ -1,0 +1,19 @@
+# gitleaks configuration for castellan
+# Extends the built-in ruleset; adds narrow allowlists for known false positives.
+title = "castellan gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives in design docs and scaffolding"
+# The design docs use words like "task-type", "task-ledger" that naive scanners
+# mis-read as "sk-..." key fragments. Also ignore obvious placeholders.
+regexTarget = "match"
+regexes = [
+  '''(?i)task-(type|by|done|ledger|id|status|call|tool)''',
+  '''(?i)(example|placeholder|redacted|your[-_]?token|xxx+|changeme|<[a-z-]+>)''',
+]
+paths = [
+  '''(.*?)(png|jpg|jpeg|gif|svg|pdf)$''',
+]

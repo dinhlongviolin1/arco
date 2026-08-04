@@ -1,0 +1,45 @@
+# --- Secrets / credentials (NEVER commit) ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.token
+*credentials*.json
+.credentials.json
+secrets.*
+config.local.*
+*.local.toml
+
+# --- Castellan runtime state (local only) ---
+.castellan/
+castellan.db
+castellan.db-wal
+castellan.db-shm
+*.db
+*.db-wal
+*.db-shm
+/data/
+/logs/
+worktrees/
+transcripts/
+
+# --- Go ---
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+*.prof
+/vendor/
+go.work
+go.work.sum
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
