@@ -2,11 +2,11 @@
 
 ## Status
 
-Castellan is **pre-alpha** and under active design. It is a supervisor for **autonomous
+Arco is **pre-alpha** and under active design. It is a supervisor for **autonomous
 coding agents that execute code and run tools**. Treat every deployment as
 security-sensitive.
 
-**Do not run castellan against production credentials, secrets, or repositories** until
+**Do not run arco against production credentials, secrets, or repositories** until
 the security preconditions in the implementation plan are met (OS-user separation,
 scrubbed spawn environment, hardened git, no high-blast credentials on worker boxes,
 server-side branch protection, authenticated Telegram/Web/intake, and secret redaction).
@@ -15,11 +15,11 @@ See the "Security preconditions" section of [`docs/implementation-plan.md`](docs
 ## Threat model (summary)
 
 - Workers run untrusted repository content and may be prompt-injected; the capability
-  tree and castellan's own action boundary are the containment, with server-side git
+  tree and arco's own action boundary are the containment, with server-side git
   rules as the only non-advisory layer.
 - Worker-side permission config is defense-in-depth, **not** a hard boundary.
 - High-blast capabilities (push to default branch, deploy, spend, destructive deletes) are
-  never handed to workers; castellan performs them only after an explicit confirm.
+  never handed to workers; arco performs them only after an explicit confirm.
 
 ## Reporting a vulnerability
 
