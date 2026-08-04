@@ -158,9 +158,9 @@ Full Hermes deep-dives on disk: `hermes-analysis/conversation_loop-analysis.md` 
 
 ### 3.1 The shape: durable Go daemon + short-lived LLM brain
 
-**Name: `castellan`** — the keeper of the keep, historically the holder of the castle's keys. Fits the trio `clavis` (the key) · `herdr` (the herder) · `castellan` (the keeper): castellan wields clavis to launch workers and oversees the swarm within. Ships as a Go binary (its own, or a `clavis castellan` subcommand).
+**Name: `arco`** — the violin instruction to play *with the bow*: how a player draws sound and control out of the strings. Fits the trio `clavis` (Latin "key", the launcher) · `herdr` (the herder) · `arco` (the bow that commands the ensemble): arco directs the worker fleet the way a bow commands the strings. Ships as a Go binary (its own, or a `clavis arco` subcommand).
 ```
-castellan (Go daemon, systemd Restart=always)  ── owns ALL durable truth
+arco (Go daemon, systemd Restart=always)  ── owns ALL durable truth
   ├─ event intake:  herdr plugin-hook execs → posts agent-state-change JSON to a local socket/HTTP
   ├─ ledger:        SQLite = worker registry (id, vm, workspace, task, state, last_event, summary, playbook_refs)
   ├─ messaging:     Telegram bot (phone in/out)

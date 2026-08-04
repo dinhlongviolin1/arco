@@ -1,6 +1,6 @@
-# Contributing to castellan
+# Contributing to arco
 
-Thanks for your interest! Castellan is early — the most useful contributions right now are
+Thanks for your interest! Arco is early — the most useful contributions right now are
 review of the design docs and, once PASS-1 lands, implementation against the plan.
 
 ## Ground rules

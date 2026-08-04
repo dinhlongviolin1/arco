@@ -1,15 +1,15 @@
-# castellan
+# arco
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-pre--alpha%20(design)-orange.svg)](docs/)
 [![gitleaks](https://img.shields.io/badge/protected%20by-gitleaks-brightgreen.svg)](.gitleaks.toml)
 
-**The keeper of the keep** — a self-hosted daemon that supervises a fleet of coding-agent
-workers across your machines, decides what to do when they finish or block, and is driven
-from the CLI (with optional Telegram and Web dashboards).
+**Command your worker agents the way a bow commands the strings** — a self-hosted daemon that
+supervises a fleet of coding-agent workers across your machines, decides what to do when they
+finish or block, and is driven from the CLI (with optional Telegram and Web dashboards).
 
-> `clavis` launches workers · `herdr` herds them on each machine · **`castellan` keeps the whole keep.**
-> (A *castellan* was the keeper of a castle's keys — and `clavis` is Latin for "key".)
+> `clavis` launches workers · `herdr` herds them on each machine · **`arco` commands the whole ensemble.**
+> (*arco* is the violin instruction to play *with the bow* — how a player draws sound and control from the strings; `clavis` is Latin for "key".)
 
 ---
 
@@ -55,4 +55,4 @@ crash-safe).
 
 ## License
 
-[Apache License 2.0](LICENSE) © 2026 Long Nguyen and the Castellan contributors.
+[Apache License 2.0](LICENSE) © 2026 Long Nguyen and the Arco contributors.

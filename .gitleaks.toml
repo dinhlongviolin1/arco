@@ -1,6 +1,6 @@
-# gitleaks configuration for castellan
+# gitleaks configuration for arco
 # Extends the built-in ruleset; adds narrow allowlists for known false positives.
-title = "castellan gitleaks config"
+title = "arco gitleaks config"
 
 [extend]
 useDefault = true

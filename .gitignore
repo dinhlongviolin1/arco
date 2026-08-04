@@ -12,11 +12,11 @@ secrets.*
 config.local.*
 *.local.toml
 
-# --- Castellan runtime state (local only) ---
-.castellan/
-castellan.db
-castellan.db-wal
-castellan.db-shm
+# --- Arco runtime state (local only) ---
+.arco/
+arco.db
+arco.db-wal
+arco.db-shm
 *.db
 *.db-wal
 *.db-shm
