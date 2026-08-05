@@ -68,6 +68,66 @@ func TestAnswerQuestion_ResumesWorkerAndGrantsOnSessionScope(t *testing.T) {
 
 	ok, _ := s.Reader().Allowed(session, "git.pr.merge")
 	require.True(t, ok, "scope=session promotes a standing grant for a non-high-blast cap")
+
+	require.Equal(t, "always", esc.OnceOrAlways, "a real grant records always")
+	require.NotEmpty(t, esc.ResumedAt, "resumed_at is stamped on resume")
+}
+
+// A rejection of a high-blast confirm with scope=session must NOT be blocked by
+// the high-blast gate (a reject never grants) — the rejection must land.
+func TestDecideConfirm_RejectHighBlastSessionScopeStillLands(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	var id string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		id, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "confirm",
+			Capability: "git.push.main", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, Action: "push main?"})
+		return e
+	}))
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.DecideConfirm(id, false, core.ScopeSession, core.Event{Kind: "confirm_dec", WorkerID: worker})
+	}))
+	esc, _ := s.Reader().GetEscalation(id)
+	require.Equal(t, "rejected", esc.Status)
+	require.Equal(t, "once", esc.OnceOrAlways, "a rejection grants nothing")
+	w, _ := s.Reader().GetWorker(worker)
+	require.Equal(t, core.WorkerBlocked, w.State)
+}
+
+func TestAnswerQuestion_UnknownCapSessionScopeFailsClosed(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	var id string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		id, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "question",
+			Capability: "made.up.capability", Action: "?"})
+		return e
+	}))
+	err := s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.AnswerQuestion(id, "ok", core.ScopeSession, core.Event{Kind: "question_esc", WorkerID: worker})
+	})
+	require.Error(t, err, "granting an unknown capability via an escalation must fail closed")
+	esc, _ := s.Reader().GetEscalation(id)
+	require.Equal(t, "pending", esc.Status)
+}
+
+func TestOpenEscalation_OnePendingAcrossKinds(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	var idQ, idC string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		idQ, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "question", Action: "q"})
+		return e
+	}))
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		idC, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "confirm", Capability: "git.pr.merge", Action: "c"})
+		return e
+	}))
+	require.Equal(t, idQ, idC, "a confirm must not open while a question is pending for the same worker")
 }
 
 func TestAnswerQuestion_HighBlastScopeRejected(t *testing.T) {

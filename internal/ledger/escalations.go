@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/oklog/ulid/v2"
 
@@ -79,16 +80,20 @@ func (r *reader) ListEscalations(f core.EscalationFilter) ([]core.Escalation, er
 // OpenEscalation inserts a pending escalation. One pending per worker+capability:
 // if one already exists, return its id (idempotent) rather than erroring.
 func (t *txn) OpenEscalation(esc core.Escalation) (string, error) {
-	// existing pending for this worker + capability?
-	var existing string
-	err := t.q.QueryRowContext(context.Background(),
-		`SELECT id FROM escalations WHERE status='pending' AND worker_id=? AND COALESCE(capability,'')=COALESCE(?,'')`,
-		nullStr(esc.WorkerID), nullStr(esc.Capability)).Scan(&existing)
-	if err == nil {
-		return existing, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return "", err
+	// One pending escalation PER WORKER (a worker blocked at an `ask` cannot emit
+	// a second) — dedup on worker alone so a question can't shadow a later confirm
+	// or vice-versa. Safe under the single-writer serialized tx.
+	if esc.WorkerID != "" {
+		var existing string
+		err := t.q.QueryRowContext(context.Background(),
+			`SELECT id FROM escalations WHERE status='pending' AND worker_id=? ORDER BY requested_at LIMIT 1`,
+			esc.WorkerID).Scan(&existing)
+		if err == nil {
+			return existing, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
 	}
 	if esc.ID == "" {
 		esc.ID = ulid.Make().String()
@@ -111,15 +116,14 @@ func (t *txn) OpenEscalation(esc core.Escalation) (string, error) {
 	if esc.OnceOrAlways == "" {
 		esc.OnceOrAlways = "once"
 	}
-	_, err = t.q.ExecContext(context.Background(),
+	if _, err := t.q.ExecContext(context.Background(),
 		`INSERT INTO escalations (id,worker_id,session_id,kind,question_class,action_class,tier,capability,
 		 action_fingerprint,action,detail,draft_answer,draft_confidence,brain_rationale,answered_by,status,
 		 requested_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending', ?)`,
 		esc.ID, nullStr(esc.WorkerID), nullStr(esc.SessionID), esc.Kind, esc.QuestionClass,
 		string(esc.ActionClass), string(esc.Tier), nullStr(esc.Capability), esc.ActionFingerprint,
 		esc.Action, esc.Detail, esc.DraftAnswer, esc.DraftConfidence, esc.BrainRationale,
-		esc.AnsweredBy, t.now())
-	if err != nil {
+		esc.AnsweredBy, t.now()); err != nil {
 		return "", err
 	}
 	return esc.ID, nil
@@ -143,19 +147,26 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	if esc.Kind != wantKind || esc.Status != "pending" {
 		return core.ErrEscalationState
 	}
-	// scope=session promotes a standing grant — but never for a high-blast cap.
-	if scope == core.ScopeSession && esc.Capability != "" {
+
+	// A grant is promoted only on a resuming decision (question, or an approved
+	// confirm) with scope=session and a capability. A rejection never grants — so
+	// the high-blast gate must NOT block a rejection.
+	resumes := wantKind == "question" || (wantKind == "confirm" && yes)
+	wouldGrant := scope == core.ScopeSession && esc.Capability != "" && esc.SessionID != "" && resumes
+	if wouldGrant {
 		row, ok, err := t.Capability(esc.Capability)
 		if err != nil {
 			return err
 		}
-		if ok && row.HighBlast {
+		if !ok {
+			return fmt.Errorf("ledger: cannot grant unknown capability %q via an escalation", esc.Capability) // fail closed
+		}
+		if row.HighBlast {
 			return core.ErrHighBlastScope
 		}
 	}
 
-	status := "answered"
-	decision := "answered"
+	status, decision := "answered", "answered"
 	if wantKind == "confirm" {
 		if yes {
 			status, decision = "approved", "approved"
@@ -163,57 +174,70 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 			status, decision = "rejected", "rejected"
 		}
 	}
-	if _, err := t.q.ExecContext(context.Background(),
-		`UPDATE escalations SET status=?, decision=?, answer_text=?, decided_by='human',
-		 answered_by='human', once_or_always=?, decided_at=? WHERE id=? AND status='pending'`,
-		status, decision, text, scopeToOnceAlways(scope), t.now(), id); err != nil {
-		return err
-	}
 
-	// Resume the worker: question/approved confirm → running; rejected → blocked.
-	if esc.WorkerID != "" {
-		w, err := t.GetWorker(esc.WorkerID)
-		if err == nil {
-			target := core.WorkerRunning
-			if wantKind == "confirm" && !yes {
-				target = core.WorkerBlocked
-			}
-			if core.LegalWorkerTransition(w.State, target) {
-				if err := t.TransitionWorker(esc.WorkerID, target, w.Rev, e); err != nil {
-					return err
-				}
-			} else {
-				if err := t.appendChecked(e); err != nil {
-					return err
-				}
-			}
-		} else if !errors.Is(err, core.ErrNotFound) {
-			return err
-		}
-	} else if err := t.appendChecked(e); err != nil {
-		return err
-	}
-
-	// Promote a standing grant when asked (non-high-blast, verified above).
-	grant := (scope == core.ScopeSession) && esc.Capability != "" && esc.SessionID != ""
-	if wantKind == "confirm" && !yes {
-		grant = false
-	}
-	if grant {
+	// Promote the grant first so we know whether it actually happened (and thus
+	// whether once_or_always should truthfully say "always").
+	granted := false
+	if wouldGrant {
 		if _, err := t.Grant(esc.SessionID, esc.Capability, "human:escalation", core.Event{
 			Kind: "grant", SessionID: esc.SessionID, Payload: `{"via":"escalation"}`,
-		}); err != nil && !errors.Is(err, core.ErrProtectedPool) {
+		}); err != nil {
+			return err
+		}
+		granted = true
+	}
+	onceAlways := "once"
+	if granted {
+		onceAlways = "always"
+	}
+
+	// Resume the worker: question / approved confirm → running; rejected → blocked.
+	target := core.WorkerRunning
+	if wantKind == "confirm" && !yes {
+		target = core.WorkerBlocked
+	}
+	resumedAt := ""
+	transitioned := false
+	if esc.WorkerID != "" {
+		w, werr := t.GetWorker(esc.WorkerID)
+		if werr != nil && !errors.Is(werr, core.ErrNotFound) {
+			return werr
+		}
+		if werr == nil && core.LegalWorkerTransition(w.State, target) {
+			if err := t.TransitionWorker(esc.WorkerID, target, w.Rev, e); err != nil {
+				return err
+			}
+			transitioned = true
+			if target == core.WorkerRunning {
+				resumedAt = t.now()
+			}
+		}
+	}
+	if !transitioned {
+		if err := t.appendChecked(e); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	_, err = t.q.ExecContext(context.Background(),
+		`UPDATE escalations SET status=?, decision=?, answer_text=?, decided_by='human',
+		 answered_by='human', once_or_always=?, decided_at=?, resumed_at=? WHERE id=? AND status='pending'`,
+		status, decision, text, onceAlways, t.now(), nullStr(resumedAt), id)
+	return err
 }
 
-func scopeToOnceAlways(s core.Scope) string {
-	if s == core.ScopeSession {
-		return "always"
+// ExpirePendingForWorker closes any pending escalation for a worker that has
+// left its waiting state by another path (e.g. a herdr signal), so it doesn't
+// linger as a phantom. Returns the number expired.
+func (t *txn) ExpirePendingForWorker(workerID string) (int, error) {
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE escalations SET status='expired', decided_at=? WHERE status='pending' AND worker_id=?`,
+		t.now(), workerID)
+	if err != nil {
+		return 0, err
 	}
-	return "once"
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 func joinAnd(parts []string) string {

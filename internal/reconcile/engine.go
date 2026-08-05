@@ -180,6 +180,17 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 			})
 			return err
 		}
+		// If the worker LEFT a waiting state by another path (e.g. a later herdr
+		// signal), close any lingering pending escalation so it isn't a phantom.
+		if isWaiting(w.State) && !isWaiting(target) {
+			if _, err := tx.ExpirePendingForWorker(in.WorkerID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
+}
+
+func isWaiting(s core.WorkerState) bool {
+	return s == core.WorkerWaitingForUser || s == core.WorkerWaitingConfirmation
 }

@@ -92,6 +92,9 @@ type Tx interface {
 	// DecideConfirm resolves a pending danger-class confirm (yes/no). Same
 	// scope/grant rules as AnswerQuestion.
 	DecideConfirm(id string, yes bool, scope Scope, e Event) error
+	// ExpirePendingForWorker closes any pending escalation for a worker that has
+	// left its waiting state by another path (so it doesn't linger as a phantom).
+	ExpirePendingForWorker(workerID string) (int, error)
 }
 
 // ErrHighBlastScope is returned when a caller tries to promote a high-blast

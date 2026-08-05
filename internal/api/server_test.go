@@ -99,7 +99,8 @@ func TestAPI_IntakeHashConflictIsRejectedNotApplied(t *testing.T) {
 	bad.ObservedHead = ""
 	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/events", bad, &EventResp{}))
 
-	resp, _ := http.Get(ts.URL + "/v1/workers")
+	resp, err := http.Get(ts.URL + "/v1/workers")
+	require.NoError(t, err)
 	defer resp.Body.Close()
 	var ws WorkersResp
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ws))
@@ -134,7 +135,8 @@ func TestAPI_EscalationFlow(t *testing.T) {
 	require.Equal(t, http.StatusOK, post(t, ts, "/v1/escalations/answer",
 		AnswerReq{ID: es.Escalations[0].ID, Text: "proceed", Scope: "once"}, &DecisionResp{}))
 
-	wr, _ := http.Get(ts.URL + "/v1/workers")
+	wr, err := http.Get(ts.URL + "/v1/workers")
+	require.NoError(t, err)
 	var ws WorkersResp
 	json.NewDecoder(wr.Body).Decode(&ws)
 	wr.Body.Close()

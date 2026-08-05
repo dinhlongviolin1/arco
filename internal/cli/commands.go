@@ -141,7 +141,15 @@ func newConfirmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			yes := args[1] == "yes" || args[1] == "y" || args[1] == "true"
+			var yes bool
+			switch args[1] {
+			case "yes", "y", "true":
+				yes = true
+			case "no", "n", "false":
+				yes = false
+			default:
+				return fmt.Errorf("decision must be yes|no, got %q", args[1])
+			}
 			scope := "once"
 			if always {
 				scope = "session"
