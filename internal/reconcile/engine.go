@@ -160,13 +160,26 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		if !core.LegalWorkerTransition(w.State, target) {
 			return nil // keep current; illegal target means our signals lag reality
 		}
-		err = tx.TransitionWorker(in.WorkerID, target, w.Rev, core.Event{
+		if err := tx.TransitionWorker(in.WorkerID, target, w.Rev, core.Event{
 			Kind: "state_change", WorkerID: in.WorkerID, SessionID: w.OwnerSession,
 			Payload: fmt.Sprintf(`{"herdr_state":%q,"target":%q}`, in.HerdrState, target),
-		})
-		if errors.Is(err, core.ErrRevMismatch) {
-			return nil // another writer moved it first; the sweep will re-derive
+		}); err != nil {
+			if errors.Is(err, core.ErrRevMismatch) {
+				return nil // another writer moved it first; the sweep will re-derive
+			}
+			return err
 		}
-		return err
+		// A worker awaiting input surfaces a question escalation (shadow: the
+		// operator decides; no unattended auto-answer in P2). One-pending-per-worker
+		// is enforced by OpenEscalation, so repeat events don't pile up.
+		if target == core.WorkerWaitingForUser {
+			_, err := tx.OpenEscalation(core.Escalation{
+				WorkerID: in.WorkerID, SessionID: w.OwnerSession, Kind: "question",
+				QuestionClass: "clarify", ActionClass: core.ClassAmbiguous, Tier: core.TierMedium,
+				Action: "worker is awaiting input",
+			})
+			return err
+		}
+		return nil
 	})
 }

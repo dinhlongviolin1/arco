@@ -90,6 +90,23 @@ func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	return r, err
 }
 
+// Escalations lists escalations (status defaults to pending server-side).
+func (c *Client) Escalations(ctx context.Context) (api.EscalationsResp, error) {
+	var r api.EscalationsResp
+	err := c.do(ctx, http.MethodGet, "/v1/escalations", nil, &r)
+	return r, err
+}
+
+// Answer resolves a pending question.
+func (c *Client) Answer(ctx context.Context, req api.AnswerReq) error {
+	return c.do(ctx, http.MethodPost, "/v1/escalations/answer", req, nil)
+}
+
+// Confirm resolves a pending danger-class confirm.
+func (c *Client) Confirm(ctx context.Context, req api.ConfirmReq) error {
+	return c.do(ctx, http.MethodPost, "/v1/escalations/confirm", req, nil)
+}
+
 // PostEvent delivers a herdr-hook state change.
 func (c *Client) PostEvent(ctx context.Context, req api.EventReq) (api.EventResp, error) {
 	var r api.EventResp

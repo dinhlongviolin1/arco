@@ -51,6 +51,8 @@ type Reader interface {
 	ResolveSession(ref string) (Session, error) // id | slug
 	ListSessions(f SessionFilter) ([]Session, error)
 	EventsSince(cursor int64, limit int) ([]Event, error)
+	ListEscalations(f EscalationFilter) ([]Escalation, error)
+	GetEscalation(id string) (Escalation, error)
 	Capability(name string) (CatalogRow, bool, error)
 	DefaultTree() ([]CatalogRow, error)
 	// Allowed is the authoritative capability check for arco-executed actions
@@ -78,7 +80,26 @@ type Tx interface {
 
 	Grant(sessionID, capability, grantedBy string, e Event) (newPermRev int64, err error)
 	Revoke(sessionID, capability string, e Event) (newPermRev int64, err error)
+
+	// OpenEscalation opens a question/confirm. One pending escalation per worker:
+	// a second open for the same worker+capability returns the existing id.
+	OpenEscalation(esc Escalation) (id string, err error)
+	// AnswerQuestion resolves a pending question with a HUMAN answer and resumes
+	// the worker. scope=ScopeSession promotes a non-high-blast capability to a
+	// standing grant; a high-blast capability with ScopeSession is rejected
+	// (standing high-blast grants require an explicit CLI grant, never here).
+	AnswerQuestion(id, text string, scope Scope, e Event) error
+	// DecideConfirm resolves a pending danger-class confirm (yes/no). Same
+	// scope/grant rules as AnswerQuestion.
+	DecideConfirm(id string, yes bool, scope Scope, e Event) error
 }
+
+// ErrHighBlastScope is returned when a caller tries to promote a high-blast
+// capability to a standing grant via an escalation decision.
+var ErrHighBlastScope = errors.New("core: high-blast capability cannot be granted via an escalation (use arco grant)")
+
+// ErrEscalationState is returned when an escalation is decided in the wrong kind/status.
+var ErrEscalationState = errors.New("core: escalation not pending or wrong kind")
 
 // Store is the persistence port (P3 may swap SQLite for Postgres without
 // touching callers). WithTx is synchronous; any reconcile-enqueue / broadcast

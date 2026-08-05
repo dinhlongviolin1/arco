@@ -96,6 +96,29 @@ func TestApplyEvent_IdleWithHeadChange_Completes(t *testing.T) {
 	require.Equal(t, "deadbeef", w.HeadCommit)
 }
 
+func TestApplyEvent_WaitingInputOpensEscalation(t *testing.T) {
+	e, s, _ := newEngine(t)
+	res, err := e.Dispatch(context.Background(), "", "task", true)
+	require.NoError(t, err)
+	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{
+		WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, WaitingInput: true,
+	}))
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerWaitingForUser, w.State)
+
+	pending, err := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: res.WorkerID})
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, "question", pending[0].Kind)
+
+	// a second waiting event must not pile up a second escalation (one-pending)
+	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{
+		WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, WaitingInput: true,
+	}))
+	pending, _ = s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: res.WorkerID})
+	require.Len(t, pending, 1)
+}
+
 func TestApplyEvent_UnknownStateNoChange(t *testing.T) {
 	e, s, _ := newEngine(t)
 	res, _ := e.Dispatch(context.Background(), "", "task", true)

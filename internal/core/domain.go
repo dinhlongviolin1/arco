@@ -178,6 +178,43 @@ type Event struct {
 	RecordedAt       string
 }
 
+// Escalation is a stuck-worker question or a danger-class confirm awaiting a
+// decision. In P2 autonomy is shadow/draft: the brain may fill DraftAnswer +
+// BrainRationale, but only a human decision (DecidedBy="human") resolves it —
+// a DraftAnswer never becomes the decision or reaches a grant.
+type Escalation struct {
+	ID                string
+	WorkerID          string
+	SessionID         string
+	Kind              string // question | confirm
+	QuestionClass     string
+	ActionClass       ActionClass
+	Tier              Tier
+	Capability        string // "" for free-text questions
+	ActionFingerprint string
+	Action            string
+	Detail            string
+	DraftAnswer       string // shadow: the brain's advisory draft (never the decision)
+	DraftConfidence   float64
+	BrainRationale    string
+	AnsweredBy        string // "" | brain | human
+	Status            string // pending|answered|approved|rejected|expired
+	Decision          string
+	AnswerText        string
+	DecidedBy         string
+	OnceOrAlways      string // once | always
+	RequestedAt       string
+	DecidedAt         string
+	ResumedAt         string
+}
+
+// EscalationFilter selects escalations (zero value = all).
+type EscalationFilter struct {
+	Status    string
+	SessionID string
+	WorkerID  string
+}
+
 // CatalogRow is a capability_catalog row — the structural classifier's data.
 type CatalogRow struct {
 	Capability     string

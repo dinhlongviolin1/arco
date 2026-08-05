@@ -29,6 +29,9 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /v1/dispatch", s.dispatch)
 	s.mux.HandleFunc("POST /v1/events", s.intake)
+	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
+	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
+	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
 	return s
 }
 
@@ -94,6 +97,35 @@ type EventReq struct {
 type EventResp struct {
 	Deduped bool   `json:"deduped"`
 	Note    string `json:"note,omitempty"`
+}
+
+type EscalationDTO struct {
+	ID          string `json:"id"`
+	Worker      string `json:"worker"`
+	Session     string `json:"session"`
+	Kind        string `json:"kind"`
+	ActionClass string `json:"action_class"`
+	Tier        string `json:"tier"`
+	Capability  string `json:"capability"`
+	Action      string `json:"action"`
+	Status      string `json:"status"`
+	Draft       string `json:"draft"`
+}
+type EscalationsResp struct {
+	Escalations []EscalationDTO `json:"escalations"`
+}
+type AnswerReq struct {
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	Scope string `json:"scope"` // once | session (aka always)
+}
+type ConfirmReq struct {
+	ID    string `json:"id"`
+	Yes   bool   `json:"yes"`
+	Scope string `json:"scope"`
+}
+type DecisionResp struct {
+	OK bool `json:"ok"`
 }
 
 // ---- handlers --------------------------------------------------------------
@@ -209,6 +241,74 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, EventResp{Deduped: false})
 }
 
+func (s *Server) listEscalations(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = "pending"
+	}
+	if status == "all" {
+		status = ""
+	}
+	es, err := s.store.Reader().ListEscalations(core.EscalationFilter{Status: status})
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	out := EscalationsResp{}
+	for _, e := range es {
+		out.Escalations = append(out.Escalations, EscalationDTO{
+			ID: e.ID, Worker: e.WorkerID, Session: e.SessionID, Kind: e.Kind,
+			ActionClass: string(e.ActionClass), Tier: string(e.Tier), Capability: e.Capability,
+			Action: e.Action, Status: e.Status, Draft: e.DraftAnswer,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
+	var req AnswerReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
+		return tx.AnswerQuestion(req.ID, req.Text, parseScope(req.Scope), core.Event{
+			Kind: "question_esc", Payload: `{"decided_by":"human"}`,
+		})
+	})
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
+}
+
+func (s *Server) confirm(w http.ResponseWriter, r *http.Request) {
+	var req ConfirmReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
+		return tx.DecideConfirm(req.ID, req.Yes, parseScope(req.Scope), core.Event{
+			Kind: "confirm_dec", Payload: `{"decided_by":"human"}`,
+		})
+	})
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
+}
+
+// parseScope maps the wire scope ("session"/"always" → session, else once).
+func parseScope(s string) core.Scope {
+	if s == "session" || s == "always" {
+		return core.ScopeSession
+	}
+	return core.ScopeOnce
+}
+
 // resolveWorker accepts a worker id or a workspace name.
 func (s *Server) resolveWorker(ref string) (string, bool, error) {
 	if ref == "" {
@@ -255,7 +355,8 @@ func errStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, core.ErrProtectedPool):
 		return http.StatusConflict
-	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch):
+	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch),
+		errors.Is(err, core.ErrHighBlastScope), errors.Is(err, core.ErrEscalationState):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

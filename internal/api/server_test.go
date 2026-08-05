@@ -113,6 +113,34 @@ func TestAPI_DispatchReportsState(t *testing.T) {
 	require.Equal(t, "running", d.State)
 }
 
+func TestAPI_EscalationFlow(t *testing.T) {
+	ts := newTestAPI(t)
+	var d DispatchResp
+	post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d)
+
+	// worker awaits input → opens a question escalation
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/events",
+		EventReq{Source: "herdr:v", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, WaitingInput: true}, &EventResp{}))
+
+	resp, err := http.Get(ts.URL + "/v1/escalations")
+	require.NoError(t, err)
+	var es EscalationsResp
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&es))
+	resp.Body.Close()
+	require.Len(t, es.Escalations, 1)
+	require.Equal(t, "question", es.Escalations[0].Kind)
+
+	// answer it → 200, worker resumes running
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/escalations/answer",
+		AnswerReq{ID: es.Escalations[0].ID, Text: "proceed", Scope: "once"}, &DecisionResp{}))
+
+	wr, _ := http.Get(ts.URL + "/v1/workers")
+	var ws WorkersResp
+	json.NewDecoder(wr.Body).Decode(&ws)
+	wr.Body.Close()
+	require.Equal(t, "running", ws.Workers[0].State)
+}
+
 func TestAPI_IntakeDedup(t *testing.T) {
 	ts := newTestAPI(t)
 	var d DispatchResp
