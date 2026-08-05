@@ -114,6 +114,35 @@ func (r *reader) ListSessions(f core.SessionFilter) ([]core.Session, error) {
 	return out, rows.Err()
 }
 
+func (r *reader) RecentWorkerEvents(workerID string, limit int) ([]core.Event, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	// Newest-first with a LIMIT keeps the scan bounded, then reverse to
+	// chronological order for a stable, readable transcript tail.
+	rows, err := r.q.QueryContext(context.Background(),
+		`SELECT `+eventCols+` FROM events WHERE worker_id=? ORDER BY id DESC LIMIT ?`, workerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []core.Event
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 func (r *reader) EventsSince(cursor int64, limit int) ([]core.Event, error) {
 	if limit <= 0 {
 		limit = 500

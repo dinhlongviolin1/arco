@@ -74,6 +74,9 @@ type Reader interface {
 	ResolveSession(ref string) (Session, error) // id | slug
 	ListSessions(f SessionFilter) ([]Session, error)
 	EventsSince(cursor int64, limit int) ([]Event, error)
+	// RecentWorkerEvents returns up to limit of a worker's most recent events in
+	// chronological (id-ascending) order — the tail used to assemble brain context.
+	RecentWorkerEvents(workerID string, limit int) ([]Event, error)
 	ListEscalations(f EscalationFilter) ([]Escalation, error)
 	GetEscalation(id string) (Escalation, error)
 	Capability(name string) (CatalogRow, bool, error)
