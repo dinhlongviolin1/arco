@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/oklog/ulid/v2"
 
@@ -19,10 +20,19 @@ import (
 type Engine struct {
 	Store core.Store
 	VM    core.VMClient
+
+	// MissThreshold is how many consecutive sweeps a worker may be unobserved
+	// before it is finalized (suspect_missing → lost / completed_candidate).
+	MissThreshold int
+
+	mu     sync.Mutex
+	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }
 
-// New builds an Engine.
-func New(store core.Store, vm core.VMClient) *Engine { return &Engine{Store: store, VM: vm} }
+// New builds an Engine with default thresholds.
+func New(store core.Store, vm core.VMClient) *Engine {
+	return &Engine{Store: store, VM: vm, MissThreshold: 3, misses: map[string]int{}}
+}
 
 // DispatchResult reports what a dispatch created.
 type DispatchResult struct {

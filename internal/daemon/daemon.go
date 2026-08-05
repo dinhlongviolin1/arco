@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/api"
 	"github.com/dinhlongviolin1/arco/internal/config"
@@ -48,7 +49,13 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		vmc = vm.NewFake()
 	}
 	eng := reconcile.New(store, vmc)
+	eng.MissThreshold = cfg.LivenessMissThreshold
 	srv := api.New(store, eng)
+
+	// Boot recovery (survive-and-reconcile) before we accept traffic.
+	if err := eng.Recover(ctx); err != nil {
+		return fmt.Errorf("daemon: boot recovery: %w", err)
+	}
 
 	// Fresh socket (a stale one from a crash blocks bind).
 	_ = os.Remove(cfg.Socket)
@@ -59,6 +66,20 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
+
+	// Authoritative reconcile sweep on a ticker (push is an optimization over it).
+	ticker := time.NewTicker(cfg.SweepInterval)
+	defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = eng.Sweep(ctx)
+			}
+		}
+	}()
 
 	select {
 	case <-ctx.Done():
