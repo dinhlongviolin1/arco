@@ -45,6 +45,16 @@ func (r *reader) CountActiveLeases(poolID string) (int, error) {
 	return n, err
 }
 
+// CountActiveWorkers returns the number of NON-terminal workers a session owns
+// (delegation fan-in denominator). Terminal set mirrors core.WorkerState.Terminal.
+func (r *reader) CountActiveWorkers(sessionID string) (int, error) {
+	var n int
+	err := r.q.QueryRowContext(context.Background(),
+		`SELECT COUNT(1) FROM workers WHERE owner_session=?
+		   AND state NOT IN ('completed_verified','failed','killed','lost')`, sessionID).Scan(&n)
+	return n, err
+}
+
 // AcquireLease atomically admits an UNBOUND lease against poolID under the
 // single-writer lock: it reads the active + start-window counts and applies the
 // pure admission decision, so the count→insert is race-free (no MaxActive TOCTOU).
