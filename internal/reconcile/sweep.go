@@ -10,8 +10,9 @@ import (
 
 // SweepResult summarizes one sweep pass (handy for logging/tests).
 type SweepResult struct {
-	Observed    int
-	Transitions int
+	Observed     int
+	Transitions  int
+	LeasesReaped int // leaked/stale provider-pool leases released (B10-lease)
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -30,6 +31,10 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	if err != nil {
 		return res, err
 	}
+	// Reap leaked/stale provider-pool leases first (B10-lease) — independent of
+	// worker liveness, so it also runs when there are no live workers. Workers
+	// finalized later in THIS sweep are reaped on the next one (eventual).
+	res.LeasesReaped, _ = e.reapLeases(ctx)
 	var live []core.Worker
 	worktrees := map[string]bool{}
 	for _, w := range all {
@@ -101,6 +106,17 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// reapLeases releases leaked/stale provider-pool leases in one tx (B10-lease).
+func (e *Engine) reapLeases(ctx context.Context) (int, error) {
+	var n int
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		var err error
+		n, err = tx.ReapLeases()
+		return err
+	})
+	return n, err
 }
 
 func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.WorkerState, headNow string) (bool, error) {
