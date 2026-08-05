@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
@@ -47,6 +48,17 @@ func TestAssembleContext_MinimalWhenEmpty(t *testing.T) {
 	require.NotContains(t, a, "Session goal:")
 	require.NotContains(t, a, "Recent events")
 	require.Contains(t, a, "JSON StepResult")
+}
+
+// A huge Task/Goal is capped (bounds prompt size), and truncation never splits a
+// multi-byte rune (output stays valid UTF-8).
+func TestAssembleContext_CapsFieldsAndRuneSafe(t *testing.T) {
+	huge := strings.Repeat("é", fieldCap) // 2-byte runes; a byte-slice at fieldCap would split one
+	w := core.Worker{ID: "W", State: core.WorkerRunning, Task: huge}
+	a := assembleContext(w, core.Session{Goal: huge}, nil)
+	require.Contains(t, a, "…(truncated)")
+	require.Less(t, len(a), 2*len(huge), "oversized task+goal are capped, not embedded whole twice")
+	require.True(t, utf8.ValidString(a), "truncation must not split a rune → prompt stays valid UTF-8")
 }
 
 // The richer context actually reaches the brain runner (session goal + event tail).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
@@ -87,8 +88,9 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 }
 
 const (
-	contextEventTail = 20  // how many recent events feed the decision prompt
-	eventPayloadCap  = 200 // per-event payload truncation (bounds prompt size)
+	contextEventTail = 20   // how many recent events feed the decision prompt
+	eventPayloadCap  = 200  // per-event payload truncation (bounds prompt size)
+	fieldCap         = 2000 // per free-text field (task/goal) cap (bounds prompt size)
 )
 
 // assembleContext builds the side-effect-free decision prompt from the worker,
@@ -100,13 +102,13 @@ const (
 // leaves for the third-party LLM.
 func assembleContext(w core.Worker, s core.Session, events []core.Event) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Worker %s state=%s task=%q", w.ID, w.State, w.Task)
+	fmt.Fprintf(&b, "Worker %s state=%s task=%q", w.ID, w.State, truncate(w.Task, fieldCap))
 	if w.DelegationDepth > 0 {
 		fmt.Fprintf(&b, " depth=%d parent=%s", w.DelegationDepth, w.ParentWorkerID)
 	}
 	b.WriteByte('\n')
 	if s.Goal != "" {
-		fmt.Fprintf(&b, "Session goal: %s\n", s.Goal)
+		fmt.Fprintf(&b, "Session goal: %s\n", truncate(s.Goal, fieldCap))
 	}
 	if len(events) > 0 {
 		b.WriteString("Recent events (oldest→newest):\n")
@@ -119,12 +121,17 @@ func assembleContext(w core.Worker, s core.Session, events []core.Event) string 
 	return b.String()
 }
 
-// truncate bounds a payload to n bytes with an explicit marker (byte-stable).
+// truncate bounds a payload to ~n bytes with an explicit marker (byte-stable).
+// It backs off to a UTF-8 rune boundary so a multi-byte rune isn't split.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…(truncated)"
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…(truncated)"
 }
 
 // applyStep reconciles a StepResult in a fresh tx (re-validating rev). Every

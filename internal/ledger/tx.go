@@ -241,6 +241,16 @@ func (t *txn) CreateSession(s core.Session) error {
 	if s.NotifyLevel == "" {
 		s.NotifyLevel = "important"
 	}
+	// Scrub free-text session fields at rest (mirror CreateWorker's Task scrub).
+	// Goal is now surfaced into the brain prompt via context assembly, so a secret
+	// in the dispatch task must not persist unscrubbed here (qwen review).
+	if t.scrub != nil {
+		s.Goal, _ = t.scrub.Scrub(s.Goal)
+		s.Title, _ = t.scrub.Scrub(s.Title)
+		s.ContextSummary, _ = t.scrub.Scrub(s.ContextSummary)
+		s.Facts, _ = t.scrub.Scrub(s.Facts)
+		s.Progress, _ = t.scrub.Scrub(s.Progress)
+	}
 	pinned := 0
 	if s.Pinned {
 		pinned = 1
