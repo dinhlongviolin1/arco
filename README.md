@@ -16,9 +16,9 @@ finish or block, and is driven from the CLI (with optional Telegram and Web dash
 ## ⚠️ Status: pre-alpha (design phase)
 
 This repository currently holds the **design and implementation plan**, not yet a running
-daemon. The architecture has been through several independent review rounds; the build
-starts at "PASS-0" in the implementation plan. **Do not point it at production
-credentials or repositories** — see [SECURITY.md](SECURITY.md).
+daemon. The architecture has been through five independent review rounds (consolidated into the
+rev-6 build guide); the build starts at **PASS-0** in [`docs/build-guide-rev6.md`](docs/build-guide-rev6.md).
+**Do not point it at production credentials or repositories** — see [SECURITY.md](SECURITY.md).
 
 ## What it is
 
@@ -39,12 +39,16 @@ crash-safe).
 
 ## Design docs
 
+- [`docs/build-guide-rev6.md`](docs/build-guide-rev6.md) — **START HERE.** The authoritative,
+  consolidated build guide: resolved decisions, the frozen `0001_init.sql` (schema + seed data),
+  the frozen Go contracts, and the PASS-0→PASS-3 task list.
 - [`docs/overview.md`](docs/overview.md) — readable overview + roadmap.
-- [`docs/implementation-plan.md`](docs/implementation-plan.md) — the engineer-facing build
-  plan (start at the **REV 4** section: resolved decisions, the schema/contract freeze, and
-  the reconciled build order).
-- [`docs/design-blueprint.md`](docs/design-blueprint.md) — the design rationale and the
-  research it draws on.
+- [`docs/implementation-plan.md`](docs/implementation-plan.md) — the layered rev-1→rev-5 plan and
+  per-task detail (**provenance**; superseded by the rev-6 guide where they differ).
+- [`docs/hardening-report-rev5.md`](docs/hardening-report-rev5.md) ·
+  [`docs/memory-links-rev5.md`](docs/memory-links-rev5.md) ·
+  [`docs/design-blueprint.md`](docs/design-blueprint.md) — review findings, the memory decision, and
+  the design rationale (provenance).
 
 ## Contributing & security
 
