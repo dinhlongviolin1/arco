@@ -29,13 +29,15 @@ var patterns = []pattern{
 	{"github-pat", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}\b`)},
 	{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`)},
 	{"anthropic-key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)},
-	{"openai-key", regexp.MustCompile(`\bsk-[A-Za-z0-9]{20,}\b`)},
+	// OpenAI: legacy sk-… and current sk-proj-/sk-svcacct-/sk-admin-… (opus P2-2).
+	{"openai-key", regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9]{20,}\b`)},
 	{"aws-access-key", regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`)},
 	{"slack-token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)},
-	{"telegram-bot-token", regexp.MustCompile(`\b\d{6,}:[A-Za-z0-9_-]{30,}\b`)},
 	{"private-key", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)},
 	// URL embedded credentials: scheme://user:pass@host → keep host, drop creds.
-	{"url-credentials", regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s:/@]+:[^\s:/@]+@`)},
+	// userinfo classes allow ':' so a colon-bearing password is caught (opus P2-1);
+	// the required ':' means git@host (SSH-style, no password) is NOT touched.
+	{"url-credentials", regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@]+:[^\s/@]+@`)},
 }
 
 // Redactor implements core.Scrubber.
@@ -52,19 +54,16 @@ func (Redactor) Scrub(s string) (string, int) {
 	n := 0
 	out := s
 	for _, p := range patterns {
-		if p.name == "url-credentials" {
-			out = p.re.ReplaceAllStringFunc(out, func(m string) string {
-				n++
-				sub := p.re.FindStringSubmatch(m)
-				return sub[1] + "[REDACTED:url-credentials]@"
-			})
+		hits := len(p.re.FindAllStringIndex(out, -1))
+		if hits == 0 {
 			continue
 		}
-		name := p.name
-		out = p.re.ReplaceAllStringFunc(out, func(string) string {
-			n++
-			return "[REDACTED:" + name + "]"
-		})
+		n += hits
+		if p.name == "url-credentials" {
+			out = p.re.ReplaceAllString(out, "${1}[REDACTED:url-credentials]@") // keep scheme+host
+		} else {
+			out = p.re.ReplaceAllString(out, "[REDACTED:"+p.name+"]")
+		}
 	}
 	return out, n
 }

@@ -17,8 +17,9 @@ func TestScrub_GoldenCorpus(t *testing.T) {
 		{"anthropic", "ANTHROPIC=sk-ant-api03-abcdefghijklmnop1234567890 x", "sk-ant-api03-abcdefghijklmnop1234567890"},
 		{"openai", "key sk-abcdefghijklmnopqrstuvwxyz012345 done", "sk-abcdefghijklmnopqrstuvwxyz012345"},
 		{"aws", "AKIAIOSFODNN7EXAMPLE creds", "AKIAIOSFODNN7EXAMPLE"},
-		{"telegram", "bot 123456789:AAErUKz0abcdefghijklmnopqrstuvwxyz12 live", "123456789:AAErUKz0abcdefghijklmnopqrstuvwxyz12"},
+		{"openai-proj", "key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 done", "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"},
 		{"url-creds", "clone https://alice:s3cr3tpw@github.com/x/y.git", "s3cr3tpw"},
+		{"url-creds-colon-pass", "https://alice:s3:cr3t@github.com/x/y.git", "s3:cr3t"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -42,6 +43,20 @@ func TestScrub_LeavesNormalTextUntouched(t *testing.T) {
 	out, n := New().Scrub(in)
 	require.Equal(t, 0, n)
 	require.Equal(t, in, out)
+}
+
+// No false positives on benign shapes: an epoch:hash control value (telegram
+// pattern removed, P2-3) and an SSH-style git@host URL (no password).
+func TestScrub_NoFalsePositives(t *testing.T) {
+	for _, in := range []string{
+		`{"deadline":"1700000000:abcdefghijklmnopqrstuvwxyz01234"}`,
+		"clone ssh://git@github.com/x/y.git",
+		"remote git@github.com:org/repo.git",
+	} {
+		out, n := New().Scrub(in)
+		require.Equal(t, 0, n, "benign input redacted: %q", in)
+		require.Equal(t, in, out)
+	}
 }
 
 func TestScrub_Deterministic(t *testing.T) {

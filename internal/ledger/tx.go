@@ -43,6 +43,14 @@ func (t *txn) CreateWorker(w core.Worker) error {
 	if w.OwnerSession == "" {
 		return fmt.Errorf("ledger: CreateWorker requires owner_session")
 	}
+	// Scrub free-text worker fields at rest too (a secret in the dispatch task /
+	// summary would otherwise persist verbatim in the workers table). Path fields
+	// (workspace/worktree/compiled_config_path) are not free text, so left as-is.
+	if t.scrub != nil {
+		w.Task, _ = t.scrub.Scrub(w.Task)
+		w.Title, _ = t.scrub.Scrub(w.Title)
+		w.Summary, _ = t.scrub.Scrub(w.Summary)
+	}
 	var pid any
 	if w.PID != nil {
 		pid = *w.PID
