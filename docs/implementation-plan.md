@@ -204,6 +204,18 @@ CLI + an operability-defaults table (M21).
 (worker-spend observability, revoke-cascade vs ancestor-walk, exec-default-on posture, one-open-escalation
 semantics) gate a blocker and are **decisions to confirm before PASS-0 is finalized**.
 
+**Memory — cross-project links (24a increment; "links, not a graph").** Reviewed independently by opus,
+fable, and qwen3.8-max → unanimous **SIMPLIFY**. The cross-project linking need is real (24a/b/c can't link
+an external OSS project to your project, nor record origin-provenance), but a general typed node/graph is
+over-engineered and fights the frozen invariants (no edge author — the brain is banned by B13; the ≤8KiB hot
+budget forbids multi-hop; a typed `rel` CHECK-enum would hit the freeze). Ship it as **`[[wikilinks]]` in the
+existing topic files + a *derived* `memory_links` backlink index rebuilt at the `mem_rev` bump** (md stays
+truth; the table is a derived index with no write API); depth-1 retrieval via `memory_read` (multi-hop = the
+brain issuing another read, never engine traversal); OSS facts carry `trust: external`+`Tainted`; cross-scope
+recall gated behind a default-off `memory.cross-project` capability; a kill-criterion makes it a zero-migration
+rollback. Full design + prior-art + kill-criterion: **[`memory-links-rev5.md`](memory-links-rev5.md)**. This
+supersedes any "node/graph memory" reading of Task 24.
+
 ---
 
 ## Revisions from review (rev 2)
@@ -685,7 +697,9 @@ func Resume(deps Deps, id string) error
 
 ### Task 24: 4-tier memory + hindsight write-back + curator
 > ⚠ **SUPERSEDED BY REV 4.1 (decision #3) — SPLIT INTO 24a/24b/24c:** **24a (P2, the only part that ships now)** = manual-only memory: `USER.md`≤4KiB + `MEMORY.md` index≤4KiB always-hot, topic files JIT via `memory_read`≤6K chars, FTS5 recall top-5 ≤500 chars w/ source IDs, **secret redaction at every egress**, per-fact frontmatter provenance (fact_id/state/author/trust/observed_at/valid_from/supersedes/pinned), `mem_rev` + `memory_revisions`. **NO `author=brain` auto-apply, NO verbatim-preference whitelist, NO LLM curator, NO hindsight in P2.** **24b** (hindsight = proposals to a pending queue, zero auto-apply) = post-MVP. **24c** (LLM curator + playbook learning) = P3. Checkpoint must not launder brain answers into summaries (`SourceEvents`+`Tainted`).
-**Files:** `memory/store.go`, `memory/hindsight.go`, `memory/curator.go(+_test)`
+>
+> ➕ **REV 5 — 24a cross-project links increment ("links, not a graph"):** add `[[wikilinks]]` in topic files + a **derived** `memory_links` backlink index rebuilt at the `mem_rev` bump (md = truth; table has no write API), `scope:`/`kind:` frontmatter (no `nodes` table — the MEMORY.md index line is the node), depth-1 retrieval via `memory_read` (multi-hop = the brain issuing another read), OSS facts `trust:external`+`Tainted`, cross-scope recall behind a default-off `memory.cross-project` capability. Ships inside 24a; instrument the kill-criterion. Full spec: [`memory-links-rev5.md`](memory-links-rev5.md).
+**Files:** `memory/store.go`, `memory/hindsight.go`, `memory/curator.go(+_test)`, `memory/links.go(+_test)`
 - [ ] **S1 tests**: `LoadUserMemory` returns whole `USER.md` + `MEMORY.md` index; `MemoryRead(topic)` loads a topic file JIT; `MemorySearch` FTS5 over topic files + archived events; `Hindsight(session)` (fake cheap model) proposes typed `MemoryDiff`s with bi-temporal provenance and **runs off the hot path (after checkpoint/close), never inside a brain decision**; diffs land as `memory_diff` escalations (human-approved by default; verbatim-preference auto-apply whitelist); `Curate` ages topic facts ACTIVE→STALE→ARCHIVED with pinned/referenced protection, never-used≠stale, reactivation-on-recall.
 - [ ] **S2–4** implement file store + FTS5 + hindsight extraction + curator; memory writes batch at checkpoint boundaries (bump a `mem_rev`) so they are the one sanctioned prefix-cache break.
 - [ ] **S5 commit** `feat: 4-tier memory + off-hot-path hindsight write-back + curator`

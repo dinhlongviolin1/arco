@@ -109,6 +109,11 @@
       </div>
     </div>
     <p style="margin:10px 0 0" class="rec">9 open questions genuinely need the maintainer (worker-spend observability, revoke-cascade vs ancestor-walk, exec-default-on posture, one-open-escalation semantics) — several gate a blocker and are decisions to confirm before PASS-0 is finalized.</p>
+    <div class="add" style="margin-top:14px">
+      <h3>🧠 Memory decision — "links, not a graph" <span class="who">(opus + fable + qwen3.8-max → unanimous SIMPLIFY)</span></h3>
+      <p style="margin:2px 0">The cross-project linking need is real (24a/b/c can't link an external OSS project to your project, nor record origin-provenance) — but a general typed node/graph is over-engineered and fights the frozen invariants: <b>no edge author</b> (the brain is banned from writing memory, B13), the <b>≤8KiB hot budget forbids multi-hop by construction</b>, and a typed <code>rel</code> CHECK-enum would hit the PASS-0 freeze. Prior art agrees — mem0's flat store is the production default, Zep/Graphiti needs the banned always-on extraction pipeline, and Obsidian's durable "graph" is just <code>[[links]]</code> + a mechanical backlink index.</p>
+      <p style="margin:6px 0 0">Ship it as a <b>24a increment</b>: <code>[[wikilinks]]</code> in the existing topic files + a <b>derived</b> <code>memory_links</code> backlink index rebuilt at the <code>mem_rev</code> bump (md stays truth; the table has no write API); depth-1 retrieval via <code>memory_read</code> (multi-hop = the brain issuing another read, never engine traversal); OSS facts carry <code>trust:external</code>+<code>Tainted</code>; cross-scope recall behind a default-off <code>memory.cross-project</code> capability. <b>Kill-criterion</b>: if links aren't followed after ~4–8 weeks, delete the table — the wikilinks stay as inert prose, so rollback is zero-migration. <span class="rec">Full design: <code>docs/memory-links-rev5.md</code>.</span></p>
+    </div>
   </div>
 
   <h2>The shape (unchanged &amp; endorsed)</h2>
