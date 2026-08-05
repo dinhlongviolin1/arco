@@ -20,6 +20,9 @@ var (
 	// ErrLeaseRejected is returned by AcquireLease when pool admission denies the
 	// lease. Inspect the wrapped *LeaseRejection for the machine-readable Reason.
 	ErrLeaseRejected = errors.New("core: lease admission rejected")
+	// ErrNotPooled is returned when claiming a worker that is not currently in the
+	// pool (only released/pooled workers can be claimed).
+	ErrNotPooled = errors.New("core: worker is not pooled")
 )
 
 // LeaseRejection carries WHY a lease was denied (disabled|cooldown|at_capacity|
@@ -133,6 +136,23 @@ type Tx interface {
 	// leases past TTL, plus bound leases whose worker is terminal or gone. Returns
 	// the number released.
 	ReapLeases() (int, error)
+
+	// ReleaseWorker hands a live worker back to the protected pool (owner →
+	// sentinel, pooled_at = now): emits worker_release_intent + worker_released and
+	// invalidates the compiled config (recompile-on-reassign). No-op if already
+	// pooled; ErrIllegalTransition on a terminal worker.
+	ReleaseWorker(workerID, actor string) error
+	// ClaimWorker moves a POOLED worker to toSession (owner → toSession, pooled_at
+	// cleared): emits worker_claim_intent + worker_claimed. ErrNotPooled if the
+	// worker isn't in the pool; ErrProtectedPool if toSession is the pool.
+	ClaimWorker(workerID, toSession, actor string) error
+	// TransferWorker moves a worker directly between (non-pool) sessions: emits
+	// worker_transfer_intent + worker_transferred. ErrProtectedPool if source or
+	// target is the pool (release/claim handle the pool); no-op if already there.
+	TransferWorker(workerID, toSession, actor string) error
+	// ReapPooledWorkers pauses workers pooled longer than ttl (pool-TTL reaper):
+	// an unclaimed worker shouldn't run forever. Returns the number paused.
+	ReapPooledWorkers(ttl time.Duration) (int, error)
 }
 
 // ErrHighBlastScope is returned when a caller tries to promote a high-blast

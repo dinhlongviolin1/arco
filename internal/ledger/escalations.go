@@ -148,11 +148,42 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 		return core.ErrEscalationState
 	}
 
+	// B14 execute-time owner re-validation: an escalation records the session that
+	// was the worker's owner when it OPENED, but ownership may have transferred
+	// since (release/claim/transfer). The grant + authority must be evaluated
+	// against the worker's CURRENT owner, not the stale recorded session. Fetch
+	// the worker once and derive the effective session from its live owner.
+	var worker core.Worker
+	haveWorker := false
+	if esc.WorkerID != "" {
+		w, werr := t.GetWorker(esc.WorkerID)
+		if werr != nil && !errors.Is(werr, core.ErrNotFound) {
+			return werr
+		}
+		if werr == nil {
+			worker, haveWorker = w, true
+		}
+	}
+	// For a worker-scoped escalation the grant tracks the LIVE worker's owner; if
+	// the worker has since vanished there is no live owner, so promote nothing
+	// (an empty effSession disables wouldGrant) rather than granting to the stale
+	// recorded session. A session-scoped escalation (no worker) uses its session.
+	effSession := esc.SessionID
+	if esc.WorkerID != "" {
+		effSession = ""
+		if haveWorker {
+			effSession = worker.OwnerSession
+		}
+	}
+
 	// A grant is promoted only on a resuming decision (question, or an approved
 	// confirm) with scope=session and a capability. A rejection never grants — so
-	// the high-blast gate must NOT block a rejection.
+	// the high-blast gate must NOT block a rejection. A worker now owned by the
+	// pool (released, unowned) has no real session to hold a standing grant, so it
+	// never promotes (falls back to once).
 	resumes := wantKind == "question" || (wantKind == "confirm" && yes)
-	wouldGrant := scope == core.ScopeSession && esc.Capability != "" && esc.SessionID != "" && resumes
+	wouldGrant := scope == core.ScopeSession && esc.Capability != "" &&
+		effSession != "" && effSession != core.PoolSessionID && resumes
 	if wouldGrant {
 		row, ok, err := t.Capability(esc.Capability)
 		if err != nil {
@@ -179,8 +210,8 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	// whether once_or_always should truthfully say "always").
 	granted := false
 	if wouldGrant {
-		if _, err := t.Grant(esc.SessionID, esc.Capability, "human:escalation", core.Event{
-			Kind: "grant", SessionID: esc.SessionID, Payload: `{"via":"escalation"}`,
+		if _, err := t.Grant(effSession, esc.Capability, "human:escalation", core.Event{
+			Kind: "grant", SessionID: effSession, Payload: `{"via":"escalation"}`,
 		}); err != nil {
 			return err
 		}
@@ -198,19 +229,13 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	}
 	resumedAt := ""
 	transitioned := false
-	if esc.WorkerID != "" {
-		w, werr := t.GetWorker(esc.WorkerID)
-		if werr != nil && !errors.Is(werr, core.ErrNotFound) {
-			return werr
+	if haveWorker && core.LegalWorkerTransition(worker.State, target) {
+		if err := t.TransitionWorker(esc.WorkerID, target, worker.Rev, e); err != nil {
+			return err
 		}
-		if werr == nil && core.LegalWorkerTransition(w.State, target) {
-			if err := t.TransitionWorker(esc.WorkerID, target, w.Rev, e); err != nil {
-				return err
-			}
-			transitioned = true
-			if target == core.WorkerRunning {
-				resumedAt = t.now()
-			}
+		transitioned = true
+		if target == core.WorkerRunning {
+			resumedAt = t.now()
 		}
 	}
 	if !transitioned {
