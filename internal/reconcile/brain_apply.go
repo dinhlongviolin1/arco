@@ -14,11 +14,15 @@ import (
 // the worker `blocked` — never a crash-loop, never a retry into a billing wall.
 func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	w, err := e.Store.Reader().GetWorker(workerID)
-	if err != nil || w.State.Terminal() {
+	// Only a still-running/starting worker is brain-classifiable. If a concurrent
+	// intake already resolved it (waiting/blocked/candidate/terminal), skip — no
+	// redundant clavis shell, no stale StepResult (qwen #5).
+	if err != nil || (w.State != core.WorkerRunning && w.State != core.WorkerStarting) {
 		return
 	}
-	// Persist brain INTENT before the call (crash-safety: "decided to ask" is
-	// distinguishable from "asked").
+	// Persist brain INTENT before the call (audit: "decided to ask"). NOTE: full
+	// crash re-drive of a dangling brain_intent is a later pass (boot recovery
+	// does not yet consume it).
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "brain_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
@@ -59,11 +63,20 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 	// a tx never holds while shelling out.
 	switch step.Kind {
 	case "run_again", "dispatch":
-		w, err := e.Store.Reader().GetWorker(workerID)
-		if err != nil || w.State.Terminal() {
+		// Re-read + record prompt_intent under the write lock RIGHT before the
+		// prompt, and skip if the worker has since moved (a concurrent intake
+		// transition) — the CAS protects state, this protects the un-recallable
+		// external side effect.
+		ws, ok := e.preparePrompt(ctx, workerID, step)
+		if !ok {
 			return
 		}
-		_ = e.VM.Prompt(ctx, w.Workspace, promptIntentText(step.Instruction))
+		if err := e.VM.Prompt(ctx, ws, promptIntentText(step.Instruction)); err != nil {
+			// Delivery failed — do NOT record a normal running decision (the ledger
+			// would claim running while the worker was never prompted). Park it.
+			e.park(ctx, workerID, "brain prompt delivery failed: "+err.Error())
+			return
+		}
 		e.recordDecision(ctx, workerID, step, core.WorkerRunning)
 	case "final_output":
 		e.transitionFromBrain(ctx, workerID, core.WorkerCompletedCandidate, step)
@@ -77,6 +90,28 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 	default:
 		e.errorEvent(ctx, workerID, "unhandled StepResult kind: "+step.Kind)
 	}
+}
+
+// preparePrompt verifies (under the write lock) that the worker is still in a
+// promptable state and records prompt_intent; returns the workspace + ok. If the
+// worker moved, ok=false and the caller skips the prompt.
+func (e *Engine) preparePrompt(ctx context.Context, workerID string, step core.StepResult) (workspace string, ok bool) {
+	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+		w, err := tx.GetWorker(workerID)
+		if err != nil {
+			return nil
+		}
+		if w.State != core.WorkerRunning && w.State != core.WorkerStarting {
+			return nil // moved (e.g. now waiting/blocked/terminal) → skip the prompt
+		}
+		workspace, ok = w.Workspace, true
+		_, _, _, e2 := tx.AppendEvent(core.Event{
+			Kind: "prompt_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
+			Payload: fmt.Sprintf(`{"instruction":%q}`, step.Instruction),
+		})
+		return e2
+	})
+	return
 }
 
 func (e *Engine) transitionFromBrain(ctx context.Context, workerID string, to core.WorkerState, step core.StepResult) {
@@ -119,10 +154,16 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 	}
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
-		if err != nil || w.State.Terminal() {
+		if err != nil {
 			return nil
 		}
-		if core.LegalWorkerTransition(w.State, waiting) {
+		// If the worker moved and can't enter the waiting state, do NOT open a
+		// stale escalation — a human answering it could resurrect a finished
+		// worker (qwen #4). Only open when the transition actually applies.
+		if w.State != waiting && !core.LegalWorkerTransition(w.State, waiting) {
+			return nil
+		}
+		if w.State != waiting {
 			if err := tx.TransitionWorker(workerID, waiting, w.Rev, core.Event{
 				Kind: "brain_decision", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
 				Payload: fmt.Sprintf(`{"kind":%q}`, kind),

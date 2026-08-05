@@ -33,6 +33,10 @@ type Engine struct {
 	VM    core.VMClient
 	Exec  *Exec // per-worker serialized off-write-path work
 	Brain BrainCfg
+	// BgCtx is the long-lived context for off-write-path (Exec) work — NOT a
+	// request ctx (which would cancel when an intake HTTP request returns). The
+	// daemon sets it to a ctx it cancels on shutdown; nil → context.Background().
+	BgCtx context.Context
 
 	// MissThreshold is how many consecutive sweeps a worker may be unobserved
 	// before it is finalized (suspect_missing → lost / completed_candidate).
@@ -168,7 +172,10 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		target, amb := fusion.Resolve(w.State, fusion.Signals{
 			HerdrState: in.HerdrState, Alive: in.Alive, HeadChanged: headChanged, WaitingInput: in.WaitingInput,
 		})
-		ambiguous = amb && !w.State.Terminal()
+		// A `blocked` worker is parked (e.g. by a brain billing wall) — do NOT
+		// re-invoke the brain on the next ambiguous signal, or a parked worker
+		// becomes a clavis/quota storm. It stays parked until an explicit reopen.
+		ambiguous = amb && !w.State.Terminal() && w.State != core.WorkerBlocked
 		if amb || target == w.State {
 			return nil // ambiguity is handled off the write path, post-commit
 		}
@@ -212,9 +219,17 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	// reentrancy). Deterministic states never reach the brain.
 	if ambiguous && e.Brain.Enabled && e.Exec != nil {
 		wid := in.WorkerID
-		e.Exec.Submit(wid, func() { e.brainClassify(context.Background(), wid) })
+		e.Exec.Submit(wid, func() { e.brainClassify(e.bg(), wid) })
 	}
 	return nil
+}
+
+// bg returns the long-lived background context for off-write-path work.
+func (e *Engine) bg() context.Context {
+	if e.BgCtx != nil {
+		return e.BgCtx
+	}
+	return context.Background()
 }
 
 func isWaiting(s core.WorkerState) bool {

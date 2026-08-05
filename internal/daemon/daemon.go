@@ -63,6 +63,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng := reconcile.New(store, vmc)
 	eng.MissThreshold = cfg.LivenessMissThreshold
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
+	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
 	// otherwise the reconciler stays deterministic-only (ambiguous states wait
 	// for the next signal rather than a failing clavis call).
@@ -108,6 +109,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		sh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(sh)
+		// Drain off-write-path brain work BEFORE the deferred store.Close, so no
+		// async tx runs after the DB is closed (ctx is already cancelled, so
+		// in-flight clavis calls / txs abort promptly).
+		eng.Exec.Stop()
 		_ = os.Remove(cfg.Socket)
 		return nil
 	case err := <-errCh:

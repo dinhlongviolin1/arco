@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,6 +84,30 @@ func TestBrain_BillingParksBlockedNotRetried(t *testing.T) {
 	e.Exec.Wait()
 	w, _ := s.Reader().GetWorker(id)
 	require.Equal(t, core.WorkerBlocked, w.State)
+}
+
+// Regression (opus P2): a worker parked `blocked` by a billing wall must NOT be
+// re-classified by the brain on the next ambiguous signal (no clavis storm).
+func TestBrain_BlockedNotReclassified(t *testing.T) {
+	var calls int32
+	e, s, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			atomic.AddInt32(&calls, 1)
+			return []byte("insufficient balance"), errors.New("exit 1")
+		}}
+	id := dispatchRunning(t, e)
+
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerBlocked, w.State)
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls))
+
+	// another ambiguous signal on the parked worker must not call the brain again
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "parked worker must not be re-classified")
 }
 
 func TestBrain_DisabledLeavesWorkerUnchanged(t *testing.T) {
