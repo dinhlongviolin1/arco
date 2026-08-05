@@ -144,3 +144,61 @@ func TestBrain_DisabledLeavesWorkerUnchanged(t *testing.T) {
 	w, _ := s.Reader().GetWorker(id)
 	require.Equal(t, core.WorkerRunning, w.State, "no brain call when disabled")
 }
+
+// A session already at its per-minute brain cap does NOT invoke the brain: the
+// worker is left as-is (re-evaluated next signal, not parked) and a
+// brain_rate_limited audit event is recorded.
+func TestBrain_PerSessionRateLimited(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"run_again","instruction":"go"}`), nil
+		}}
+	e.BrainRate = 2
+
+	res, err := e.Dispatch(context.Background(), "", "task", true)
+	require.NoError(t, err)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		for i := 0; i < 2; i++ { // seed the session at the cap
+			if _, _, _, err := tx.AppendEvent(core.Event{Kind: "brain_intent", SessionID: res.SessionID, Actor: "brain", Payload: "{}"}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(res.WorkerID)))
+	e.Exec.Wait()
+
+	require.Equal(t, int32(0), calls.Load(), "brain not called at the rate cap")
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerRunning, w.State, "rate-limited worker left as-is, not parked")
+	evs, _ := s.Reader().EventsSince(0, 100000)
+	found := false
+	for _, ev := range evs {
+		if ev.Kind == "brain_rate_limited" && ev.WorkerID == res.WorkerID {
+			found = true
+		}
+	}
+	require.True(t, found, "brain_rate_limited audit event recorded")
+}
+
+// Under the cap, the brain is invoked normally.
+func TestBrain_UnderRateLimitProceeds(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"final_output","reason":"done"}`), nil
+		}}
+	e.BrainRate = 5
+	id := dispatchRunning(t, e)
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), calls.Load(), "brain invoked when under the cap")
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerCompletedCandidate, w.State)
+}

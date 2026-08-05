@@ -70,6 +70,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng := reconcile.New(store, vmc)
 	eng.MissThreshold = cfg.LivenessMissThreshold
 	eng.PoolTTL = cfg.PoolTTL
+	eng.BrainRate = cfg.PerSessionBrainRate
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
 	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
