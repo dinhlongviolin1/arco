@@ -12,14 +12,31 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/fusion"
 )
+
+// BrainCfg configures the short-lived decision brain. Enabled=false (default)
+// keeps the reconciler deterministic-only (no brain calls); tests and the daemon
+// enable it and inject a Runner.
+type BrainCfg struct {
+	Enabled bool
+	Profile string
+	Model   string
+	Runner  brain.Runner // injected; nil → clavis DefaultRunner
+}
 
 // Engine holds the dependencies the supervise loop needs.
 type Engine struct {
 	Store core.Store
 	VM    core.VMClient
+	Exec  *Exec // per-worker serialized off-write-path work
+	Brain BrainCfg
+	// BgCtx is the long-lived context for off-write-path (Exec) work — NOT a
+	// request ctx (which would cancel when an intake HTTP request returns). The
+	// daemon sets it to a ctx it cancels on shutdown; nil → context.Background().
+	BgCtx context.Context
 
 	// MissThreshold is how many consecutive sweeps a worker may be unobserved
 	// before it is finalized (suspect_missing → lost / completed_candidate).
@@ -29,9 +46,9 @@ type Engine struct {
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }
 
-// New builds an Engine with default thresholds.
+// New builds an Engine with default thresholds and an Exec (brain disabled).
 func New(store core.Store, vm core.VMClient) *Engine {
-	return &Engine{Store: store, VM: vm, MissThreshold: 3, misses: map[string]int{}}
+	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3, misses: map[string]int{}}
 }
 
 // DispatchResult reports what a dispatch created. State is the worker's state
@@ -142,7 +159,8 @@ type EventInput struct {
 // observation, fuse to a target state, and transition under a CAS if it changed.
 // Deterministic (no brain call); ambiguity is left for a later brain pass.
 func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
-	return e.Store.WithTx(ctx, func(tx core.Tx) error {
+	var ambiguous bool
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(in.WorkerID)
 		if err != nil {
 			return err
@@ -151,11 +169,15 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		if err := tx.ObserveWorker(in.WorkerID, core.WorkerObservation{HeadCommit: in.ObservedHead}); err != nil {
 			return err
 		}
-		target, ambiguous := fusion.Resolve(w.State, fusion.Signals{
+		target, amb := fusion.Resolve(w.State, fusion.Signals{
 			HerdrState: in.HerdrState, Alive: in.Alive, HeadChanged: headChanged, WaitingInput: in.WaitingInput,
 		})
-		if ambiguous || target == w.State {
-			return nil // nothing conclusive to change (brain classification is a later pass)
+		// A `blocked` worker is parked (e.g. by a brain billing wall) — do NOT
+		// re-invoke the brain on the next ambiguous signal, or a parked worker
+		// becomes a clavis/quota storm. It stays parked until an explicit reopen.
+		ambiguous = amb && !w.State.Terminal() && w.State != core.WorkerBlocked
+		if amb || target == w.State {
+			return nil // ambiguity is handled off the write path, post-commit
 		}
 		if !core.LegalWorkerTransition(w.State, target) {
 			return nil // keep current; illegal target means our signals lag reality
@@ -189,6 +211,25 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// Ambiguous signals → ask the brain to classify, OFF the write path, serialized
+	// per worker via Exec (Submit fires strictly after the commit above; no
+	// reentrancy). Deterministic states never reach the brain.
+	if ambiguous && e.Brain.Enabled && e.Exec != nil {
+		wid := in.WorkerID
+		e.Exec.Submit(wid, func() { e.brainClassify(e.bg(), wid) })
+	}
+	return nil
+}
+
+// bg returns the long-lived background context for off-write-path work.
+func (e *Engine) bg() context.Context {
+	if e.BgCtx != nil {
+		return e.BgCtx
+	}
+	return context.Background()
 }
 
 func isWaiting(s core.WorkerState) bool {
