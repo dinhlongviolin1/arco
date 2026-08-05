@@ -34,7 +34,9 @@ Legend: **FROZEN** = locked; **PROVISIONAL — confirm** = my default, override 
    orchestration**. Cost tracking + metering are **deferred to a post-MVP sub-plan** (revisit later).
    Provider pools + `worker_pool_leases` **remain**, but for **rate-limit / concurrency orchestration only**
    (max_active, starts/min, 429 cooldown, admission) — their cost fields are removed. This **supersedes
-   rev-5 B10** and every budget/breaker item in the hardening report (now moot).
+   rev-5 B10's *spend-metering* half** and every budget/breaker item (now moot). NOTE: the *other* half of
+   rev-5 B10 — **B10-lease** (reaping leaked `worker_pool_leases` on crash) — **stays**, because pools/leases
+   are kept for concurrency; it is cited as live work below under that name.
 2. **B7 revoke propagation — cascade vs ancestor-walk.** **Cascade-materialize.** `Allowed()` stays an
    O(1) single-row read on the per-event hot path; a parent `Revoke` cascades over the subtree (recursive
    CTE) at revoke time (rare), removing the capability from every descendant grant + bumping each
@@ -94,9 +96,14 @@ PRAGMA busy_timeout=5000;
 CREATE TABLE schema_migrations (
   version    INTEGER PRIMARY KEY,
   name       TEXT NOT NULL,
-  checksum   TEXT NOT NULL,           -- sha256 of the migration text
+  checksum   TEXT NOT NULL,           -- sha256 of the migration file's DDL text (see note below)
   applied_at TEXT NOT NULL            -- UTC RFC3339Nano
 );
+-- MIGRATION BOOKKEEPING CONTRACT (P1-1): migration files contain DDL ONLY — they NEVER self-INSERT
+-- into schema_migrations. `Store.Migrate(ctx)` is the sole writer: for each unapplied file it runs the
+-- DDL, then in the SAME tx inserts (version, name, sha256(file bytes), now()). checksum = sha256 over the
+-- whole migration file as committed (it contains no bookkeeping row, so no circularity). The freeze test
+-- recomputes sha256(file) and asserts it equals the stored checksum (verify, never recompute-in-place).
 
 -- ---- sessions (first-class unit; single-parent tree; protected pool) ------
 CREATE TABLE sessions (
@@ -353,9 +360,10 @@ CREATE TABLE playbooks (
 
 -- ==== SEED: the protected pool session (fixed well-known ULID), LAST ========
 -- Must be inserted AFTER sessions exists and BEFORE any worker can be created.
+-- Well-known pool ULID = 26 valid Crockford base32 chars (all-zero; timestamp 0). NOT '…POOL' (O/L illegal, 27 chars).
 INSERT INTO sessions (id, slug, title, goal, status, kind, parent_session, permissions,
                       last_activity_at, created_at)
-VALUES ('00000000000000000000000POOL', 'pool', 'Worker Pool (protected)', '', 'active', 'pool', NULL, '{}',
+VALUES ('00000000000000000000000000', 'pool', 'Worker Pool (protected)', '', 'active', 'pool', NULL, '{}',
         '1970-01-01T00:00:00.000000000Z', '1970-01-01T00:00:00.000000000Z');
 
 -- ==== SEED: capability_catalog ============================================
@@ -388,8 +396,7 @@ INSERT INTO capability_catalog (capability, action_class, tier, default_allowed,
  ('secrets.read',        'danger','high_blast',0,1,0,'read secrets'),
  ('fs.destructive',      'danger','high_blast',0,1,0,'destructive delete outside worktree');
 
-INSERT INTO schema_migrations (version, name, checksum, applied_at)
-VALUES (1, '0001_init', 'sha256:PLACEHOLDER', '1970-01-01T00:00:00.000000000Z');
+-- (no schema_migrations INSERT here — `Store.Migrate` writes the bookkeeping row; see the contract note above)
 ```
 
 **Freeze invariants (tests in Task 2 / PASS-0):** replay of all migrations == the committed schema
@@ -488,6 +495,41 @@ type StepResult struct { Kind, Worker, Instruction, Reason string }
 // Kind ∈ run_again | dispatch | handoff | final_output | question | confirm
 //   final_output → completed_candidate + diff gate;  handoff → P2 reject/escalate (PASS-3 feature)
 //   unhandled kind → error event, never a silent drop.
+
+// ---- core entity structs (field lists frozen so two devs don't diverge) ----
+// TIME CONVENTION: every timestamp column in §B is TEXT RFC3339Nano; at the Go seam it is a
+// `string` (never time.Time) so assembly stays byte-stable and storage is engine-agnostic.
+type Worker struct {
+    ID, Title, VM, Workspace, Worktree, BaseCommit, HeadCommit, Program, AgentKind string
+    BootID, PIDStartTime string; PID *int
+    State WorkerState; Rev int64; StallCount int
+    OwnerSession string; SessionPermRev int64; PermissionsHash, CompiledConfigPath string
+    Task, RunReason, ParentWorkerID, Role, Summary string; DelegationDepth int
+    LastSeenAt, LastEventAt, PooledAt, CreatedAt string
+}
+type Session struct {
+    ID, Slug, Title, Goal string; Status SessionStatus; Kind string; ParentSession string
+    Rev, PermRev, MemRev, ContextRev int64
+    Permissions, ContextSummary, Facts, Progress, Repo, DefaultVM, NotifyLevel string; Pinned bool
+    TGTopicID, TGStatusMsgID *int64; StallCount int
+    LastActivityAt, CreatedAt, ClosedAt string
+}
+type Event struct {
+    ID int64; Source, SourceEventID, SourceEventHash string
+    WorkerID, SessionID string; Kind, Actor string
+    CausationEventID *int64; CorrelationID, Payload string
+    OccurredAt, RecordedAt string
+}
+// (Escalation, WorkerFilter, Diff, AgentObs, NormalizedEntry, Config, Exec derive 1:1 from their §B
+//  columns / §C usage; freeze their fields at first use in PASS-0/PASS-1 the same way.)
+
+type Scope string // "once" | "session"  — a human AnswerQuestion/DecideConfirm with scope="session"
+// on a non-high-blast capability promotes to a standing session_grants row (scope='session'); "once" does not.
+
+func DefaultTree() []CatalogRow // == the capability_catalog rows WHERE default_allowed=1 (single source)
+
+// prompt_hash (byte-stable-assembly telemetry, rev-4.1 #5): with `usage` cut, it rides in the
+// brain_intent event payload (free-form JSON) — it is NOT a column. Deterministic over post-Scrub bytes.
 ```
 
 **`WorkerState`** (incl. `lost`): `starting, running, waiting_for_user, waiting_for_confirmation, blocked,
@@ -550,7 +592,7 @@ SHADOW: drafts stored in `escalations.draft_answer`, human decides) → T15 esca
 `resumed_at`) → T7 reconcile sweep (VMClient, `suspect_missing`→`lost`) → T11 brain (byte-stable assemble;
 `prompt_hash` post-Scrub; error/billing ladder) → T21 transcript + checkpoint (watermark; `context_rev` CAS)
 → T16 diff-gate → T17 pause/resume (`Pause(id, keepWorktree bool)`) → T18 boot recovery (survive-and-reconcile
-+ decided-but-unresumed escalations M3 + orphan-worktree GC M16 + lease reap B10) → T27 session boot + perm
++ decided-but-unresumed escalations M3 + orphan-worktree GC M16 + lease reap B10-lease) → T27 session boot + perm
 re-sync + **runtime recompile-on-Grant/Revoke** (M5, coalesced) → T24a memory (manual; `[[wikilinks]]` +
 derived `memory_links`; `Scrub`; `trust:external`+`Tainted`) → **integration test `dispatch→hook→complete`**.
 
@@ -559,7 +601,8 @@ derived `memory_links`; `Scrub`; `trust:external`+`Tainted`) → **integration t
 as dedicated tasks each with an S1 test**: (P1) OS-user separation + scrubbed spawn env; (P2) **quarantine
 task** (repo `.claude`/`.mcp.json`/`settings.local.json`/hooks/`core.fsmonitor`/`.gitattributes`); (P3)
 managed-settings deny + no high-blast creds + server-side branch protection + per-worker fine-grained tokens
-(B8) + provider-side spend caps (B10); (P4) auth on Telegram/Web/cross-VM intake (source-bound) + caller-class
+(B8) + provider-side spend caps (a provider-account safety precondition for `external.spend`, not arco code);
+(P4) auth on Telegram/Web/cross-VM intake (source-bound) + caller-class
 on mutating endpoints (high-blast `Grant` = local-CLI only); (P5) redaction egress defense-in-depth + golden
 corpus; (P6) pinned spawn mode + net-fetch/spawn default-off + **B8 detection path** (fusion scans transcript
 tails for deny-listed calls → auto-pause + danger escalation) → worker ownership transfer (release/claim/
@@ -578,7 +621,7 @@ auto-apply); curator + playbooks 24c; depth-3 + move-subtree; typed memory `rel`
 - **Freeze:** migrate-from-fixture (replay==fingerprint; one pool row; high-blast⇒not-compiled; DefaultTree==catalog).
 - **Concurrency (`-race`):** per-worker serialize + cross-worker parallel; two racing mutations → one `ErrRevMismatch`.
 - **Crash matrix (kill-9 at every intent→done boundary):** dispatch, prompt (B9), kill, release/claim/transfer,
-  grant-expiry, decided-but-unresumed escalation (M3), orphan worktree (M16), leaked lease (B10). One table-driven harness.
+  grant-expiry, decided-but-unresumed escalation (M3), orphan worktree (M16), leaked lease (B10-lease). One table-driven harness.
 - **Security:** redaction golden corpus (planted token absent from persisted bytes AND MemorySearch snippet AND brain prompt);
   malicious-fixture-repo (`.mcp.json`+`settings.local.json` → worker with neither active); worker cannot exercise a revoked cap
   after recompile (M5); high-blast `Grant` rejected off the local-CLI caller class.
