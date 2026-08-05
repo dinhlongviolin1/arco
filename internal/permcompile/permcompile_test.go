@@ -116,6 +116,55 @@ func TestCompile_HookBlocksOutOfWorktreeWrite(t *testing.T) {
 	require.Contains(t, run(`{"tool":"Bash","command":"git push origin master"}`), `"deny"`)
 }
 
+// Regression (opus re-review HIGH-1): a `..` traversal that textually starts
+// with $WORKTREE but escapes it must be denied (path normalized before check).
+func TestCompile_HookBlocksDotDotTraversal(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"fs.worktree": true}, catalog()))
+	hook := filepath.Join(cfg, "hooks", "pretooluse.sh")
+	run := func(input string) string {
+		cmd := exec.Command("sh", hook)
+		cmd.Stdin = strings.NewReader(input)
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	require.Contains(t, run(`{"tool":"Write","file_path":"`+wt+`/../../etc/passwd"}`), `"deny"`,
+		"a .. escape that shares the worktree prefix must still be denied")
+}
+
+// Regression (opus re-review HIGH-2): a decoy "file_path" planted in a later
+// field (content) must not shadow the real, out-of-worktree file_path.
+func TestCompile_HookIgnoresDecoyFilePath(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"fs.worktree": true}, catalog()))
+	hook := filepath.Join(cfg, "hooks", "pretooluse.sh")
+	run := func(input string) string {
+		cmd := exec.Command("sh", hook)
+		cmd.Stdin = strings.NewReader(input)
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	// real file_path first (out-of-worktree), decoy in-worktree path in content → deny
+	in := `{"file_path":"/etc/passwd","content":"\"file_path\": \"` + wt + `/ok\""}`
+	require.Contains(t, run(in), `"deny"`, "the FIRST file_path is authoritative, not a later decoy")
+}
+
+// Regression (opus re-review MED-3): colon/plus refspec pushes to a protected
+// branch are also denied by the best-effort git-push globs.
+func TestCompile_HookBlocksRefspecPush(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"fs.worktree": true}, catalog()))
+	hook := filepath.Join(cfg, "hooks", "pretooluse.sh")
+	run := func(input string) string {
+		cmd := exec.Command("sh", hook)
+		cmd.Stdin = strings.NewReader(input)
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	require.Contains(t, run(`{"tool":"Bash","command":"git push origin HEAD:main"}`), `"deny"`)
+	require.Contains(t, run(`{"tool":"Bash","command":"git push origin +master"}`), `"deny"`)
+}
+
 func TestFlags_HighBlastDisallowedGrantedAllowed(t *testing.T) {
 	allowed, disallowed := Flags(map[string]bool{"git.commit": true}, catalog())
 	require.Contains(t, allowed, "Bash(git commit:*)")

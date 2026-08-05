@@ -137,17 +137,26 @@ WORKTREE=` + shellQuote(worktree) + `
 deny() { printf '{"permissionDecision":"deny","reason":"%s"}\n' "$1"; exit 0; }
 input=$(cat)
 
-# An ABSOLUTE file_path must resolve under the worktree (Edit/Write containment).
-fp=$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-case "$fp" in
-  "" ) ;;                                   # no file_path (e.g. Bash) — check command below
-  "$WORKTREE"/* | "$WORKTREE" ) ;;          # inside the worktree — ok
-  /* ) deny "write outside worktree" ;;     # any other absolute path — deny
-esac
+# Extract the FIRST file_path only (grep -o is left-to-right, head -1), so a decoy
+# "file_path" planted in a later field (e.g. content) can't shadow the real one.
+fp=$(printf '%s' "$input" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed 's/.*"\([^"]*\)"$/\1/')
+if [ -n "$fp" ]; then
+  # Normalize '..' and symlinks BEFORE the containment check — a textual prefix
+  # match alone is defeated by "$WORKTREE/../../etc/passwd". readlink -m resolves
+  # without requiring the path to exist; relative paths resolve against $PWD.
+  real=$(readlink -m "$fp")
+  wt=$(readlink -m "$WORKTREE")
+  case "$real" in
+    "$wt"/* | "$wt" ) ;;                    # inside the worktree — ok
+    * ) deny "write outside worktree" ;;    # anywhere else (incl. .. escapes) — deny
+  esac
+fi
 
-# Blocked git ops + secret/danger command shapes.
+# Blocked git ops + secret/danger command shapes. Push-to-protected matching is
+# best-effort (high_blast caps are never compiled + arco's Allowed() is the gate);
+# cover space- and colon/plus-refspec forms of main/master.
 case "$input" in
-  *'push origin main'* | *'push origin master'* | *'push '*' main'* | *'push '*' master'* | *'--force'* ) deny "blocked git push" ;;
+  *'push'*' main'* | *'push'*' master'* | *'push'*':main'* | *'push'*':master'* | *'push'*'+main'* | *'push'*'+master'* | *'--force'* | *'push'*' -f'* ) deny "blocked git push" ;;
   *'.env'* | *'.ssh/'* | *'sudo '* | *'rm -rf'* ) deny "blocked" ;;
 esac
 exit 0
