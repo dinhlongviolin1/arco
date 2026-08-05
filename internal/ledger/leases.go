@@ -167,12 +167,16 @@ func (t *txn) SetPoolState(poolID string, state core.PoolState, cooldownUntil st
 // non-terminal worker's lease is NEVER reaped (its slot is still occupied).
 func (t *txn) ReapLeases() (int, error) {
 	now := t.now()
+	// NB: the orphan clause uses NOT EXISTS, not NOT IN — NOT IN against a
+	// subquery that could yield a NULL id (SQLite permits NULL in a TEXT PRIMARY
+	// KEY) evaluates to NULL for every row and would silently disable orphan
+	// reaping. NOT EXISTS is NULL-safe (opus review, defensive).
 	res, err := t.q.ExecContext(context.Background(),
 		`UPDATE worker_pool_leases SET released_at=?
 		   WHERE released_at IS NULL AND (
 		         (worker_id IS NULL AND expires_at < ?)
 		      OR worker_id IN (SELECT id FROM workers WHERE state IN ('completed_verified','failed','killed','lost'))
-		      OR (worker_id IS NOT NULL AND worker_id NOT IN (SELECT id FROM workers))
+		      OR (worker_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workers w WHERE w.id = worker_pool_leases.worker_id))
 		   )`, now, now)
 	if err != nil {
 		return 0, err
