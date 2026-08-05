@@ -7,8 +7,16 @@
 > and [`memory-links-rev5.md`](memory-links-rev5.md) are retained as **provenance appendices** (how the
 > decisions were reached); where they conflict with this guide, **this guide wins.**
 >
-> Status: **design complete + hardened (5 review rounds) + consolidated. Not yet built. Start at PASS-0.**
-> Not safe against real repos/creds until the 6 security preconditions (PASS-3) are met.
+> Status: **design consolidated + build STARTED.** PASS-0 (frozen schema + domain/ports) and the
+> PASS-1 spine (config, ledger Store, capability `Allowed()`, API over unix socket, CLI) are implemented
+> and tested; a PASS-2 **walking skeleton** (`dispatch → herdr hook → completed_candidate`, idempotent
+> intake) runs end-to-end headless (integration test + a real binary run). Still on a fake `VMClient` — the
+> real clavis/herdr `LocalVMClient` is Task S. Not safe against real repos/creds until the 6 security
+> preconditions (PASS-3) are met.
+>
+> **Implementation map (Go, hexagonal): `internal/core` (domain + ports) · `internal/ledger` (SQLite
+> adapter, single-writer + CAS) · `internal/{fusion,reconcile}` (app layer) · `internal/{vm,api,client}`
+> (adapters) · `internal/{config,daemon,cli}` + `cmd/arco`.** Tests green under `-race`.
 
 ## How to read
 1. **§A Decisions** — the 9+3 rev-5 open questions, resolved. Several are marked `PROVISIONAL — confirm`:
