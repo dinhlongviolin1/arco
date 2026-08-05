@@ -3,7 +3,9 @@ package permcompile
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -79,6 +81,39 @@ func TestCompile_WritesExecutableHookOutsideWorktree(t *testing.T) {
 	require.NotEqual(t, cfg, wt)
 	b, _ := os.ReadFile(hook)
 	require.Contains(t, string(b), "permissionDecision", "hook emits a deny decision")
+}
+
+// Regression (opus P1#2): a row with Tier=high_blast but HighBlast=false, even if
+// granted, must NOT reach allow — the gate trusts tier OR flag, not one bool.
+func TestCompile_MislabeledHighBlastTierExcluded(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	cat := []core.CatalogRow{{Capability: "git.pr.merge", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, HighBlast: false}}
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"git.pr.merge": true}, cat))
+	p := readSettings(t, cfg)
+	require.NotContains(t, p["allow"], "Bash(gh pr merge:*)")
+	require.NotContains(t, p["ask"], "Bash(gh pr merge:*)")
+	require.Contains(t, p["deny"], "Bash(gh pr merge:*)")
+}
+
+// Regression (opus P1#1): the PreToolUse hook actually blocks an out-of-worktree
+// write and allows an in-worktree one (run the generated script, as opus did).
+func TestCompile_HookBlocksOutOfWorktreeWrite(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"fs.worktree": true}, catalog()))
+	hook := filepath.Join(cfg, "hooks", "pretooluse.sh")
+
+	run := func(input string) string {
+		cmd := exec.Command("sh", hook)
+		cmd.Stdin = strings.NewReader(input)
+		out, _ := cmd.Output()
+		return string(out)
+	}
+	// write outside the worktree → denied
+	require.Contains(t, run(`{"tool":"Write","file_path":"/etc/passwd"}`), `"deny"`)
+	// write inside the worktree → allowed (no deny emitted)
+	require.NotContains(t, run(`{"tool":"Write","file_path":"`+wt+`/a.go"}`), `"deny"`)
+	// push to master → denied (parity with settings.json staticDeny)
+	require.Contains(t, run(`{"tool":"Bash","command":"git push origin master"}`), `"deny"`)
 }
 
 func TestFlags_HighBlastDisallowedGrantedAllowed(t *testing.T) {

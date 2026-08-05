@@ -53,7 +53,8 @@ var staticDeny = []string{
 
 // Compile writes settings.json + a PreToolUse hook into configDir (which MUST be
 // outside the worktree). `granted` is the worker's effective capability set;
-// `cat` is the capability_catalog. Placement rules:
+// `cat` MUST be the FULL capability_catalog (NOT DefaultTree(), which omits the
+// high-blast rows) so the high-blast deny/exclusion sees them. Placement rules:
 //   - high_blast → never in allow (belt: also denied); routine/low granted →
 //     allow; medium granted → ask; ungranted non-high-blast → neither (implicit
 //     deny by Claude's default-deny).
@@ -66,7 +67,7 @@ func Compile(configDir, worktree string, granted map[string]bool, cat []core.Cat
 	for _, row := range cat {
 		pats := toolPatterns[row.Capability]
 		switch {
-		case row.HighBlast:
+		case row.HighBlast || row.Tier == core.TierHighBlast: // trust EITHER, not one bool (opus P1)
 			// never on a worker — deny any pattern we know for it (defense-in-depth)
 			for _, p := range pats {
 				deny[p] = true
@@ -116,7 +117,7 @@ func Flags(granted map[string]bool, cat []core.CatalogRow) (allowed, disallowed 
 	as, ds := map[string]bool{}, map[string]bool{}
 	for _, row := range cat {
 		for _, p := range toolPatterns[row.Capability] {
-			if row.HighBlast {
+			if row.HighBlast || row.Tier == core.TierHighBlast {
 				ds[p] = true
 			} else if granted[row.Capability] && row.Tier != core.TierMedium {
 				as[p] = true
@@ -131,13 +132,23 @@ func Flags(granted map[string]bool, cat []core.CatalogRow) (allowed, disallowed 
 func hookScript(worktree string) string {
 	return `#!/bin/sh
 # arco PreToolUse hook (layer 1, best-effort). Reads the tool-use JSON on stdin.
-# Deny writes/reads that resolve outside the worktree, and blocked git subcommands.
 # NOTE: string matching is defeatable; arco's Allowed() boundary is authoritative.
 WORKTREE=` + shellQuote(worktree) + `
+deny() { printf '{"permissionDecision":"deny","reason":"%s"}\n' "$1"; exit 0; }
 input=$(cat)
+
+# An ABSOLUTE file_path must resolve under the worktree (Edit/Write containment).
+fp=$(printf '%s' "$input" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+case "$fp" in
+  "" ) ;;                                   # no file_path (e.g. Bash) — check command below
+  "$WORKTREE"/* | "$WORKTREE" ) ;;          # inside the worktree — ok
+  /* ) deny "write outside worktree" ;;     # any other absolute path — deny
+esac
+
+# Blocked git ops + secret/danger command shapes.
 case "$input" in
-  *'"git push"'*'main'* | *'push origin main'* | *'--force'* ) echo '{"permissionDecision":"deny","reason":"blocked git op"}'; exit 0 ;;
-  *'/.env'* | *'.ssh/'* | *'sudo '* | *'rm -rf'* ) echo '{"permissionDecision":"deny","reason":"blocked"}'; exit 0 ;;
+  *'push origin main'* | *'push origin master'* | *'push '*' main'* | *'push '*' master'* | *'--force'* ) deny "blocked git push" ;;
+  *'.env'* | *'.ssh/'* | *'sudo '* | *'rm -rf'* ) deny "blocked" ;;
 esac
 exit 0
 `
