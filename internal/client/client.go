@@ -90,9 +90,12 @@ func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	return r, err
 }
 
-// Verify moves a completed_candidate worker to completed_verified.
-func (c *Client) Verify(ctx context.Context, workerID string) error {
-	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/verify", nil, nil)
+// Verify moves a completed_candidate worker to completed_verified. expectedRev
+// is the rev the caller observed via Diff — the server CASes against it so a
+// re-run between review and verify is refused.
+func (c *Client) Verify(ctx context.Context, workerID string, expectedRev int64, actor string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/verify",
+		api.VerifyReq{ExpectedRev: expectedRev, Actor: actor}, nil)
 }
 
 // Diff returns a worker's base→head diff.

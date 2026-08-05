@@ -119,20 +119,25 @@ func TestAPI_VerifyDiffGate(t *testing.T) {
 	var d DispatchResp
 	post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d)
 
-	// verify while running → 409
-	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", nil, &DecisionResp{}))
+	// verify while running → 409 (illegal; not a candidate)
+	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", VerifyReq{ExpectedRev: 1}, &DecisionResp{}))
 
 	// drive to completed_candidate
 	post(t, ts, "/v1/events", EventReq{Source: "h", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}, &EventResp{})
 
-	// diff endpoint works
+	// diff endpoint returns the rev to echo back
 	resp, err := http.Get(ts.URL + "/v1/workers/" + d.WorkerID + "/diff")
 	require.NoError(t, err)
+	var dr DiffResp
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&dr))
 	resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, "completed_candidate", dr.State)
 
-	// verify now succeeds → 200
-	require.Equal(t, http.StatusOK, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", nil, &DecisionResp{}))
+	// verifying against a STALE rev → 409 (never verify on a guess)
+	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", VerifyReq{ExpectedRev: dr.Rev - 1}, &DecisionResp{}))
+
+	// verify against the reviewed rev → 200
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", VerifyReq{ExpectedRev: dr.Rev, Actor: "human"}, &DecisionResp{}))
 
 	wr, err := http.Get(ts.URL + "/v1/workers")
 	require.NoError(t, err)

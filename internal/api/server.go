@@ -131,12 +131,19 @@ type DecisionResp struct {
 }
 
 type DiffResp struct {
+	Rev        int64  `json:"rev"` // echo back to /verify so it CASes against the reviewed version
+	State      string `json:"state"`
 	Base       string `json:"base"`
 	Head       string `json:"head"`
 	Files      int    `json:"files"`
 	Insertions int    `json:"insertions"`
 	Deletions  int    `json:"deletions"`
 	Patch      string `json:"patch"`
+}
+
+type VerifyReq struct {
+	ExpectedRev int64  `json:"expected_rev"`
+	Actor       string `json:"actor"`
 }
 
 // ---- handlers --------------------------------------------------------------
@@ -253,18 +260,30 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerDiff(w http.ResponseWriter, r *http.Request) {
-	d, err := s.eng.WorkerDiff(r.Context(), r.PathValue("id"))
+	wk, err := s.store.Reader().GetWorker(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DiffResp{
-		Base: d.Base, Head: d.Head, Files: d.Files, Insertions: d.Insertions, Deletions: d.Deletions, Patch: d.Patch,
-	})
+	out := DiffResp{Rev: wk.Rev, State: string(wk.State), Base: wk.BaseCommit, Head: wk.HeadCommit}
+	if wk.HeadCommit != "" { // avoid a git call (and a 500) on a worker with no head yet
+		d, err := s.eng.WorkerDiff(r.Context(), wk.ID)
+		if err != nil {
+			writeErr(w, errStatus(err), err)
+			return
+		}
+		out.Files, out.Insertions, out.Deletions, out.Patch = d.Files, d.Insertions, d.Deletions, d.Patch
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
-	if err := s.eng.Verify(r.Context(), r.PathValue("id")); err != nil {
+	var req VerifyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.eng.Verify(r.Context(), r.PathValue("id"), req.ExpectedRev, req.Actor); err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}
