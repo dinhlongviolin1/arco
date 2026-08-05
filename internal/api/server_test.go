@@ -114,6 +114,34 @@ func TestAPI_DispatchReportsState(t *testing.T) {
 	require.Equal(t, "running", d.State)
 }
 
+func TestAPI_VerifyDiffGate(t *testing.T) {
+	ts := newTestAPI(t)
+	var d DispatchResp
+	post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d)
+
+	// verify while running → 409
+	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", nil, &DecisionResp{}))
+
+	// drive to completed_candidate
+	post(t, ts, "/v1/events", EventReq{Source: "h", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}, &EventResp{})
+
+	// diff endpoint works
+	resp, err := http.Get(ts.URL + "/v1/workers/" + d.WorkerID + "/diff")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// verify now succeeds → 200
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", nil, &DecisionResp{}))
+
+	wr, err := http.Get(ts.URL + "/v1/workers")
+	require.NoError(t, err)
+	var ws WorkersResp
+	require.NoError(t, json.NewDecoder(wr.Body).Decode(&ws))
+	wr.Body.Close()
+	require.Equal(t, "completed_verified", ws.Workers[0].State)
+}
+
 func TestAPI_EscalationFlow(t *testing.T) {
 	ts := newTestAPI(t)
 	var d DispatchResp

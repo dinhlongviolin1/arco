@@ -81,6 +81,45 @@ func newSessionsCmd() *cobra.Command {
 	}
 }
 
+func newVerifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "verify <worker-id>",
+		Short: "mark a completed_candidate worker completed_verified (diff-gate)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			if err := c.Verify(context.Background(), args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "verified")
+			return nil
+		},
+	}
+}
+
+func newDiffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <worker-id>",
+		Short: "show a worker's base→head diff",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			d, err := c.Diff(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s..%s  %d files +%d -%d\n%s\n", d.Base, d.Head, d.Files, d.Insertions, d.Deletions, d.Patch)
+			return nil
+		},
+	}
+}
+
 func newEscalationsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "escalations",

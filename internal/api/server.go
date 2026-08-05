@@ -29,6 +29,8 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /v1/dispatch", s.dispatch)
 	s.mux.HandleFunc("POST /v1/events", s.intake)
+	s.mux.HandleFunc("GET /v1/workers/{id}/diff", s.workerDiff)
+	s.mux.HandleFunc("POST /v1/workers/{id}/verify", s.verify)
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
@@ -126,6 +128,15 @@ type ConfirmReq struct {
 }
 type DecisionResp struct {
 	OK bool `json:"ok"`
+}
+
+type DiffResp struct {
+	Base       string `json:"base"`
+	Head       string `json:"head"`
+	Files      int    `json:"files"`
+	Insertions int    `json:"insertions"`
+	Deletions  int    `json:"deletions"`
+	Patch      string `json:"patch"`
 }
 
 // ---- handlers --------------------------------------------------------------
@@ -239,6 +250,25 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, EventResp{Deduped: false})
+}
+
+func (s *Server) workerDiff(w http.ResponseWriter, r *http.Request) {
+	d, err := s.eng.WorkerDiff(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DiffResp{
+		Base: d.Base, Head: d.Head, Files: d.Files, Insertions: d.Insertions, Deletions: d.Deletions, Patch: d.Patch,
+	})
+}
+
+func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.Verify(r.Context(), r.PathValue("id")); err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
 }
 
 func (s *Server) listEscalations(w http.ResponseWriter, r *http.Request) {

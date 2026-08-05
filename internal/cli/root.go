@@ -48,6 +48,8 @@ func newRoot() *cobra.Command {
 		newDispatchCmd(),
 		newWorkersCmd(),
 		newSessionsCmd(),
+		newVerifyCmd(),
+		newDiffCmd(),
 		newEscalationsCmd(),
 		newAnswerCmd(),
 		newConfirmCmd(),

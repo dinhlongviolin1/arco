@@ -90,6 +90,18 @@ func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	return r, err
 }
 
+// Verify moves a completed_candidate worker to completed_verified.
+func (c *Client) Verify(ctx context.Context, workerID string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/verify", nil, nil)
+}
+
+// Diff returns a worker's base→head diff.
+func (c *Client) Diff(ctx context.Context, workerID string) (api.DiffResp, error) {
+	var r api.DiffResp
+	err := c.do(ctx, http.MethodGet, "/v1/workers/"+workerID+"/diff", nil, &r)
+	return r, err
+}
+
 // Escalations lists escalations (status defaults to pending server-side).
 func (c *Client) Escalations(ctx context.Context) (api.EscalationsResp, error) {
 	var r api.EscalationsResp
