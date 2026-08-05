@@ -11,6 +11,42 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
 
+func TestRecentWorkerEvents_OrderAndLimit(t *testing.T) {
+	s := newTestStore(t)
+	sid := ulid.Make().String()
+	wid := ulid.Make().String()
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		if err := tx.CreateSession(core.Session{ID: sid, Goal: "g", Status: core.SessionActive, Kind: core.SessionKindWork}); err != nil {
+			return err
+		}
+		if err := tx.CreateWorker(core.Worker{ID: wid, OwnerSession: sid, State: core.WorkerStarting, Workspace: "arco_" + wid, Task: "t", RunReason: "x"}); err != nil {
+			return err
+		}
+		for i := 0; i < 5; i++ {
+			if _, _, _, err := tx.AppendEvent(core.Event{Kind: "note", WorkerID: wid, SessionID: sid, Payload: "{}"}); err != nil {
+				return err
+			}
+		}
+		// an event for a DIFFERENT worker must not leak in
+		other := ulid.Make().String()
+		if err := tx.CreateWorker(core.Worker{ID: other, OwnerSession: sid, State: core.WorkerStarting, Workspace: "arco_" + other, Task: "t", RunReason: "x"}); err != nil {
+			return err
+		}
+		_, _, _, err := tx.AppendEvent(core.Event{Kind: "note", WorkerID: other, SessionID: sid, Payload: "{}"})
+		return err
+	}))
+
+	// limit caps the tail and results are chronological (id ascending)
+	evs, err := s.Reader().RecentWorkerEvents(wid, 3)
+	require.NoError(t, err)
+	require.Len(t, evs, 3, "limit respected")
+	require.Less(t, evs[0].ID, evs[1].ID)
+	require.Less(t, evs[1].ID, evs[2].ID)
+	for _, ev := range evs {
+		require.Equal(t, wid, ev.WorkerID, "no other worker's events leak in")
+	}
+}
+
 func TestBrainRate_CountWindowAndKind(t *testing.T) {
 	s := newTestStore(t)
 	clk := &testClock{t: time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)}

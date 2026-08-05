@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
@@ -62,7 +64,12 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 		return
 	}
 
-	prompt := assemblePrompt(w)
+	// Assemble decision context: worker + its owning session goal + a bounded,
+	// chronological event tail. Reads are best-effort — a read error just yields a
+	// thinner prompt, never a failed classification.
+	sess, _ := e.Store.Reader().GetSession(w.OwnerSession)
+	tail, _ := e.Store.Reader().RecentWorkerEvents(w.ID, contextEventTail)
+	prompt := assembleContext(w, sess, tail)
 	if e.Redact != nil { // scrub BEFORE the prompt leaves for a third-party LLM
 		prompt, _ = e.Redact.Scrub(prompt)
 	}
@@ -80,14 +87,51 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	e.applyStep(ctx, workerID, res.Step)
 }
 
-// assemblePrompt builds a minimal, side-effect-free decision prompt. (A richer,
-// byte-stable session-transcript assembly is a later pass; this keeps the wiring
-// honest without inventing context.)
-func assemblePrompt(w core.Worker) string {
-	return fmt.Sprintf(
-		"Worker %s state=%s task=%q. Decide the next step and reply with a JSON StepResult "+
-			"{\"kind\":\"run_again|dispatch|handoff|final_output|question|confirm\",\"instruction\":\"...\",\"reason\":\"...\"}.",
-		w.ID, w.State, w.Task)
+const (
+	contextEventTail = 20   // how many recent events feed the decision prompt
+	eventPayloadCap  = 200  // per-event payload truncation (bounds prompt size)
+	fieldCap         = 2000 // per free-text field (task/goal) cap (bounds prompt size)
+)
+
+// assembleContext builds the side-effect-free decision prompt from the worker,
+// its owning session, and a chronological event tail. It is BYTE-STABLE: given
+// the same inputs it produces identical bytes (no clock reads, no map iteration,
+// events already ordered by id) so prompt_hash telemetry is deterministic over
+// the post-Scrub bytes (rev-4.1 #5). Payloads are already write-time scrubbed
+// (B4); e.Redact re-scrubs the whole prompt as belt-and-suspenders before it
+// leaves for the third-party LLM.
+func assembleContext(w core.Worker, s core.Session, events []core.Event) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Worker %s state=%s task=%q", w.ID, w.State, truncate(w.Task, fieldCap))
+	if w.DelegationDepth > 0 {
+		fmt.Fprintf(&b, " depth=%d parent=%s", w.DelegationDepth, w.ParentWorkerID)
+	}
+	b.WriteByte('\n')
+	if s.Goal != "" {
+		fmt.Fprintf(&b, "Session goal: %s\n", truncate(s.Goal, fieldCap))
+	}
+	if len(events) > 0 {
+		b.WriteString("Recent events (oldest→newest):\n")
+		for _, ev := range events {
+			fmt.Fprintf(&b, "  [%d] %s %s\n", ev.ID, ev.Kind, truncate(ev.Payload, eventPayloadCap))
+		}
+	}
+	b.WriteString("Decide the next step and reply with a JSON StepResult " +
+		`{"kind":"run_again|dispatch|handoff|final_output|question|confirm","instruction":"...","reason":"..."}.`)
+	return b.String()
+}
+
+// truncate bounds a payload to ~n bytes with an explicit marker (byte-stable).
+// It backs off to a UTF-8 rune boundary so a multi-byte rune isn't split.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…(truncated)"
 }
 
 // applyStep reconciles a StepResult in a fresh tx (re-validating rev). Every

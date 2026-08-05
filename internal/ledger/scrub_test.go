@@ -42,3 +42,17 @@ func TestCreateWorker_ScrubsTask(t *testing.T) {
 	require.NoError(t, s.DB().QueryRow(`SELECT task FROM workers WHERE id=?`, "01WSCRUB000000000000000000").Scan(&task))
 	require.NotContains(t, task, token)
 }
+
+// A secret in a session's free-text goal must be scrubbed at rest too — the goal
+// is surfaced into the brain prompt via context assembly (qwen review).
+func TestCreateSession_ScrubsGoal(t *testing.T) {
+	s := newTestStore(t)
+	s.SetScrubber(redact.New())
+	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.CreateSession(core.Session{ID: "01WSGOAL0000000000000000000", Goal: "ship with " + token, Status: core.SessionActive, Kind: core.SessionKindWork})
+	}))
+	var goal string
+	require.NoError(t, s.DB().QueryRow(`SELECT goal FROM sessions WHERE id=?`, "01WSGOAL0000000000000000000").Scan(&goal))
+	require.NotContains(t, goal, token, "raw secret must not be at rest in session.goal")
+}
