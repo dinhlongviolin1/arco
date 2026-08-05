@@ -10,6 +10,7 @@ import (
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/redact"
 	"github.com/dinhlongviolin1/arco/internal/vm"
 )
 
@@ -108,6 +109,31 @@ func TestBrain_BlockedNotReclassified(t *testing.T) {
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
 	e.Exec.Wait()
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls), "parked worker must not be re-classified")
+}
+
+// The brain prompt must be scrubbed before it leaves for the third-party LLM.
+func TestBrain_PromptScrubbedBeforeInvoke(t *testing.T) {
+	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	var gotArgs []string
+	e, _, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			gotArgs = args
+			return []byte(`{"kind":"final_output"}`), nil
+		}}
+	e.Redact = redact.New()
+
+	// dispatch a worker whose task embeds a secret → assemblePrompt would include it
+	res, err := e.Dispatch(context.Background(), "", "push using "+token, true)
+	require.NoError(t, err)
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(res.WorkerID)))
+	e.Exec.Wait()
+
+	joined := ""
+	for _, a := range gotArgs {
+		joined += a + " "
+	}
+	require.NotContains(t, joined, token, "secret must be scrubbed from the brain prompt")
 }
 
 func TestBrain_DisabledLeavesWorkerUnchanged(t *testing.T) {

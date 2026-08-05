@@ -17,6 +17,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
+	"github.com/dinhlongviolin1/arco/internal/redact"
 	"github.com/dinhlongviolin1/arco/internal/vm"
 )
 
@@ -50,6 +51,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		return err
 	}
 	defer store.Close()
+	store.SetScrubber(redact.New()) // write-time secret redaction (B4)
 	if err := store.Migrate(ctx); err != nil {
 		return err
 	}
@@ -72,6 +74,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// Enable the short-lived decision brain only when a profile is configured;
 	// otherwise the reconciler stays deterministic-only (ambiguous states wait
 	// for the next signal rather than a failing clavis call).
+	eng.Redact = redact.New() // scrub the brain prompt before it leaves for the LLM
 	if cfg.BrainProfile != "" {
 		eng.Brain = reconcile.BrainCfg{Enabled: true, Profile: cfg.BrainProfile, Model: cfg.BrainModel}
 	}

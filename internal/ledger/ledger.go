@@ -34,7 +34,12 @@ type Store struct {
 	db    *sql.DB
 	wmu   sync.Mutex // single-writer serialization
 	clock core.Clock
+	scrub core.Scrubber // write-time secret redaction (nil = none)
 }
+
+// SetScrubber installs a write-time redactor applied to every event payload at
+// the single insert chokepoint (build-guide B4). Set once at startup.
+func (s *Store) SetScrubber(sc core.Scrubber) { s.scrub = sc }
 
 var _ core.Store = (*Store)(nil)
 
@@ -189,7 +194,7 @@ func (s *Store) WithTx(ctx context.Context, fn func(core.Tx) error) error {
 	if err != nil {
 		return err
 	}
-	tx := newTxn(sqlTx, s.now)
+	tx := newTxn(sqlTx, s.now, s.scrub)
 	if err := fn(tx); err != nil {
 		_ = sqlTx.Rollback()
 		return err
