@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arco — Overview (rev 6)</title>
+<style>
+  :root{
+    --bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--border:#2b333d;
+    --ink:#e6edf3;--muted:#9aa7b4;--accent:#e3b341;--accent2:#58a6ff;
+    --good:#3fb950;--warn:#d29922;--bad:#f85149;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;font-size:16px}
+  .wrap{max-width:980px;margin:0 auto;padding:44px 22px 96px}
+  header.hero{border-bottom:1px solid var(--border);padding-bottom:24px;margin-bottom:30px}
+  .kicker{font-family:var(--mono);color:var(--accent);letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+  h1{font-size:40px;margin:.15em 0 .1em;letter-spacing:-.02em}
+  .tag{color:var(--muted);font-size:17px;max-width:72ch}
+  .trio{margin-top:14px;font-family:var(--mono);font-size:13px;color:var(--muted)} .trio b{color:var(--accent2)}
+  h2{margin:40px 0 6px;font-size:23px;letter-spacing:-.01em;border-left:3px solid var(--accent);padding-left:12px}
+  h3{margin:22px 0 8px;font-size:16px;color:var(--accent2)}
+  p{color:#cdd7e1} ul{padding-left:20px} li{margin:5px 0;color:#cdd7e1} li b{color:var(--ink)}
+  code{font-family:var(--mono);background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:.86em;color:#e6c07b}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:14px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .card h3{margin-top:0}
+  .card.core{border-color:#2f5a3a}.card.opt{border-color:#4a3d1f}
+  .lbl{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;padding:2px 8px;border-radius:999px;display:inline-block;margin-bottom:8px}
+  .card.core .lbl{background:#12351d;color:var(--good)}.card.opt .lbl{background:#33290c;color:var(--warn)}
+  .rules{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:8px 22px}
+  figure{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin:18px 0;overflow:auto}
+  figcaption{font-family:var(--mono);font-size:12px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em}
+  .mermaid{display:flex;justify-content:center}
+  table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14.5px}
+  th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--accent);font-family:var(--mono);font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+  .review{background:linear-gradient(180deg,#1a1410,#161b22);border:1px solid #4a3d1f;border-radius:14px;padding:6px 24px 20px;margin-top:16px}
+  .agree{border-left:3px solid var(--good);padding-left:14px;margin:14px 0}
+  .add{border-left:3px solid var(--accent2);padding-left:14px;margin:14px 0}
+  .decide{border-left:3px solid var(--warn);padding-left:14px;margin:14px 0}
+  .fix{border-left:3px solid var(--bad);padding-left:14px;margin:14px 0}
+  .rec{font-family:var(--mono);font-size:12px;color:var(--good)}
+  .who{font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .files{font-family:var(--mono);font-size:12.5px;color:var(--muted);background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:12px} .files b{color:var(--accent2)}
+  footer{margin-top:56px;border-top:1px solid var(--border);padding-top:18px;color:var(--muted);font-size:13px;font-family:var(--mono)}
+  .pill{font-family:var(--mono);font-size:11px;background:var(--panel2);border:1px solid var(--border);border-radius:999px;padding:2px 9px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">Design Overview · rev 6 · consolidated build guide (freeze inlined) · arco</div>
+    <h1>arco</h1>
+    <div class="tag">Command your worker agents the way a bow commands the strings — a self-hosted daemon that supervises a fleet of coding-agent workers across your machines, decides what to do when they finish or block, and is driven from the CLI (Telegram &amp; Web optional).</div>
+    <div class="trio"><b>clavis</b> (the key) launches workers · <b>herdr</b> herds them per machine · <b>arco</b> (the bow) commands the ensemble</div>
+  </header>
+
+  <div class="pill">✅ rev 6 — <b>consolidated build guide</b> (<code>docs/build-guide-rev6.md</code>): the rev-1→rev-5 layers flattened into one authoritative source with the freeze inlined (schema + seed data + Go contracts + PASS-0→3 tasks). Verdict after 5 review rounds: <b>build-ready</b>. Scroll to <b>“rev 5 hardening”</b> for how it got here.</div>
+
+  <div style="background:rgba(63,185,80,.06);border:1px solid #2f5a3a;border-radius:12px;padding:8px 22px;margin-top:18px">
+    <h3 style="color:#3fb950;margin-bottom:2px">🆕 What changed &nbsp;<span style="color:#9aa7b4;font-family:var(--mono);font-size:12px">rev 2 → rev 3 design threads (below); rev 4 = final-review hardening + resolved decisions (see “Final review”)</span></h3>
+    <ul>
+      <li><b>rev 4.2 — worker ownership transfer + session hierarchy</b> (fable + qwen3.8-max reviewed → both <b>ADOPT-WITH-FIXES</b>). Workers are <b>single-owner but transferable</b> between sessions — <em>release = pause</em> (kill the process, keep worktree/branch/summary; avoids laundering secrets through a live pool), <em>claim = recompile permissions + resume</em>, via a protected <code>pool</code> sentinel. Sessions form a <b>single-parent tree</b> (<code>parent_session</code>): flat / <b>supersession</b> (one entry point drives all) / nesting are one structure — but the tree is a <em>roll-up structure, not a stack of LLMs</em> (context rolls up as capped summaries, authority flows down via child⊆parent trees, resources arbitrated by ledger leases). <b>P2 ships flat; depth-2 supersession next; deep nesting deferred.</b> Schema-freeze delta (<code>parent_session</code>, <code>kind</code>, <code>rev</code>, pool row, event kinds) lands in PASS-0. <span class="who">(see implementation-plan.md rev 4.2)</span></li>
+      <li><b>Renamed <code>castellan → arco</code></b> — "castellan" collided with OpenStack Castellan (a key-manager, same domain); <code>arco</code> is the violin bow instruction — how a player commands the strings — collision-clean and personal. Repo: <code>github.com/dinhlongviolin1/arco</code>. Plus <b>qwen3.8-max final sign-off: GO WITH FIXES</b> (26/27 blockers resolved; 6 must-fix-in-PASS-0).</li>
+      <li><b>Sessions are now first-class</b> — the unit of <em>work + conversation</em>; one session owns a group of workers <b>across VMs</b>, holds its own context, carries a capability tree, binds to a Telegram topic. <span class="who">(subsumes the old flat “jobs”)</span></li>
+      <li><b>“Approvals” → autonomy-first.</b> Routine actions never gate; only a <em>question</em> (stuck) or a <em>confirm</em> (dangerous) interrupts — and questions are answered <b>two-level</b> (arco's brain tries first, human only if uncertain/danger).</li>
+      <li><b>New: per-session capability tree</b> — least-privilege, inherited narrow-only by workers, compiled onto each worker, with <b>tiered grants</b> (high-blast = per-action-once, CLI-only standing).</li>
+      <li><b>New: context balance</b> — a durable per-session <b>brain transcript</b> (coherence without a warm process); and a <b>4-tier memory</b> system with off-hot-path hindsight write-back.</li>
+      <li><b>Telegram is now concrete</b> — one forum supergroup, <b>one topic per session</b>, pinned status card, General = fleet console.</li>
+      <li><b>Worker states changed</b> — <code>waiting_for_approval</code> → <code>waiting_for_user</code> / <code>waiting_for_confirmation</code>; the core-loop diagram now shows two-level answering + the capability check.</li>
+      <li><b>New: two independent reviews</b> (Fable + Qwen3.8-max) → the “decide before build” panel below (didn't exist in rev 2).</li>
+    </ul>
+  </div>
+
+  <div id="rev5" style="background:linear-gradient(180deg,#101a14,#161b22);border:1px solid #2f5a3a;border-radius:14px;padding:6px 24px 20px;margin-top:18px">
+    <h2 style="border-left-color:var(--good)">rev 5 — pre-build adversarial hardening &nbsp;<span class="pill" style="color:var(--good)">verdict: GO</span></h2>
+    <p><b>Method:</b> 16 Claude domain reviewers (security, concurrency, scale, data-model, session-ownership/hierarchy, capability, crash-safety, cost, contracts, brain, autonomy, memory, build-order, ux, observability) — <b>each blocker adversarially verified</b> by an independent refuter (96 agents, 97 findings, <b>55 survived</b>) — plus <b>3 qwen3.8-max cross-family passes</b> on the highest-risk areas. No finding invalidates the architecture; every blocker is a <em>specification hole or an unreconciled supersession</em>. Full detail: <code>docs/hardening-report-rev5.md</code>.</p>
+    <div class="fix">
+      <h3>🔴 The 4-reviewer convergence (highest confidence)</h3>
+      <p style="margin:2px 0"><b>Runtime permission-freshness gap</b> — <code>perm_rev</code> bumps on grant/revoke but nothing recompiles a <em>running</em> worker at runtime (only boot + Claim/Transfer re-sync). So a worker is either <b>silently stalled</b> (dispatch gate closes with no re-opener → session hangs) or <b>silently wide</b> (a revoked capability stays live in the on-disk config). Fix: on grant/revoke, fan out pause→recompile→resume to affected workers via the per-worker queue.</p>
+    </div>
+    <div class="grid">
+      <div class="card" style="border-color:#5a2f2f">
+        <span class="lbl" style="background:#3a1414;color:var(--bad)">Blockers · fix before code</span>
+        <ul>
+          <li><b>The freeze isn't frozen</b> — the raw SQL block is stale rev-3; produce ONE <code>0001_init.sql</code>, seed the <code>pool</code> row last, reconcile the "locked" <code>Store</code>/<code>VMClient</code> block, and <b>define <code>Deps</code></b> (used everywhere, declared nowhere).</li>
+          <li><b>Redaction must be write-time</b> — <code>events</code> is immutable, so an egress-only scrub leaves secrets on disk forever; add <code>internal/redact</code> before <code>AppendEvent</code> and before the brain prompt (the biggest exfil surface).</li>
+          <li><b>Quarantine + config-siting</b> — repo <code>.mcp.json</code>/<code>settings.local.json</code> out-precede arco; and arco's own compiled config sits <em>inside</em> the worker-writable worktree. Stage it daemon-owned, outside the checkout.</li>
+          <li><b><code>Allowed()</code> isn't authoritative over worker-direct calls</b> — a worker <code>curl</code>s the merge API in-process. Reframe: compiled config = prevention, arco = detection+response.</li>
+          <li><b>Worker LLM spend is never metered</b> → budgets watch only the cheap brain; and provider-pool leases leak on crash.</li>
+          <li><b>Silent-drop kinds</b> — <code>final_output</code>/<code>handoff</code> have no reconciler branch; <code>herdr.Prompt</code> isn't bracketed by intent/done.</li>
+        </ul>
+      </div>
+      <div class="card" style="border-color:#4a3d1f">
+        <span class="lbl">Major · rev-4.2 crash windows (qwen)</span>
+        <ul>
+          <li><b>Pending escalations aren't settled on transfer</b> — a <code>confirm yes</code> decided after ownership moves authorizes under the new owner.</li>
+          <li><b>Release contradicts Pause</b> on the worktree; the <b>pool TTL reaper is a no-op</b> with no durable clock.</li>
+          <li><b>Depth/fan-in caps unenforced at <code>CreateSession</code></b> — depth-3 is constructible today despite "deferred."</li>
+          <li><b>Authority laundering up the rollup</b> — <code>Tainted</code> only persuades the LLM; make it structural.</li>
+          <li><b>Session teardown has no join</b> (hangs <code>active</code>) and orphan worktrees are never GC'd.</li>
+          <li>Structural-liveness banners on Tasks 7/10/18; escalation timeout must <em>close</em> the row.</li>
+        </ul>
+      </div>
+    </div>
+    <p style="margin:10px 0 0" class="rec">9 open questions genuinely need the maintainer (worker-spend observability, revoke-cascade vs ancestor-walk, exec-default-on posture, one-open-escalation semantics) — several gate a blocker and are decisions to confirm before PASS-0 is finalized.</p>
+    <div class="add" style="margin-top:14px">
+      <h3>🧠 Memory decision — "links, not a graph" <span class="who">(opus + fable + qwen3.8-max → unanimous SIMPLIFY)</span></h3>
+      <p style="margin:2px 0">The cross-project linking need is real (24a/b/c can't link an external OSS project to your project, nor record origin-provenance) — but a general typed node/graph is over-engineered and fights the frozen invariants: <b>no edge author</b> (the brain is banned from writing memory, B13), the <b>≤8KiB hot budget forbids multi-hop by construction</b>, and a typed <code>rel</code> CHECK-enum would hit the PASS-0 freeze. Prior art agrees — mem0's flat store is the production default, Zep/Graphiti needs the banned always-on extraction pipeline, and Obsidian's durable "graph" is just <code>[[links]]</code> + a mechanical backlink index.</p>
+      <p style="margin:6px 0 0">Ship it as a <b>24a increment</b>: <code>[[wikilinks]]</code> in the existing topic files + a <b>derived</b> <code>memory_links</code> backlink index rebuilt at the <code>mem_rev</code> bump (md stays truth; the table has no write API); depth-1 retrieval via <code>memory_read</code> (multi-hop = the brain issuing another read, never engine traversal); OSS facts carry <code>trust:external</code>+<code>Tainted</code>; cross-scope recall behind a default-off <code>memory.cross-project</code> capability. <b>Kill-criterion</b>: if links aren't followed after ~4–8 weeks, delete the table — the wikilinks stay as inert prose, so rollback is zero-migration. <span class="rec">Full design: <code>docs/memory-links-rev5.md</code>.</span></p>
+    </div>
+  </div>
+
+  <h2>The shape (unchanged &amp; endorsed)</h2>
+  <div class="rules"><ul>
+    <li><b>Durable Go daemon + SQLite ledger</b> owns the truth about every worker &amp; session; survives restart.</li>
+    <li><b>The LLM brain is a short-lived guest</b> — invoked per-event for a bounded decision, then exits. No long-running LLM process → no leaks, bounded cost, crash-safe.</li>
+    <li><b>Sessions are the first-class unit</b> of <em>work + conversation</em> — a session owns a group of workers (across VMs), holds its own durable brain transcript, and carries a capability tree. Never a resident process.</li>
+    <li><b>Autonomy-first</b> — routine actions never gate; a stuck worker asks a <em>question</em>, a dangerous action needs a <em>confirm</em>. Questions are answered two-level (arco's brain first, human only if uncertain or danger-class).</li>
+    <li><b>Least privilege</b> — each session has a capability tree; workers inherit a narrowed copy; the operator widens with explicit grants.</li>
+    <li><b>Push is an optimization, not the truth</b> — an authoritative periodic reconcile sweep repairs state even when events drop; intake is idempotent.</li>
+  </ul></div>
+
+  <h2>Feature map (rev 3)</h2>
+  <div class="grid">
+    <div class="card core">
+      <span class="lbl">Core · required</span>
+      <h3>Daemon + CLI</h3>
+      <ul>
+        <li><b>Sessions</b> — own workers cross-VM, own context, own capability tree, own Telegram topic. (Subsumes the old flat "jobs".)</li>
+        <li><b>Worker ledger</b> — rich states, <code>owner_session</code>, worktree, base commit, effective capabilities.</li>
+        <li><b>Capability tree + grants</b> — per-session git/fs/exec/external/fleet; inherited narrow-only; <code>arco grant/revoke</code>; every change audited.</li>
+        <li><b>Context balance</b> — durable per-session brain transcript, reassembled byte-stably; opportunistic cache; checkpoint→rolling summary.</li>
+        <li><b>Escalations</b> — autonomy-first questions + confirms; two-level answering; tiered grants (high-blast = per-action-once, CLI-only standing).</li>
+        <li><b>Event intake + reconcile sweep</b> — idempotent push + authoritative liveness/HEAD repair.</li>
+        <li><b>State fusion</b> · <b>worker lifecycle</b> (spawn/pause/resume/kill + diff) · <b>dispatch/routing</b> · <b>diff-gated completion</b>.</li>
+        <li><b>Concurrency</b> — serialize per-worker, parallel across; throttle + jitter backoff.</li>
+        <li><b>Cost accounting</b> — <s>per-worker/model tokens incl. cache hits</s> <b>CUT (rev 6)</b>; cost tracking + metering deferred post-MVP. Provider pools/leases stay for rate-limit/concurrency only.</li>
+      </ul>
+    </div>
+    <div class="card opt">
+      <span class="lbl">Optional add-ons</span>
+      <h3>Telegram · Web</h3>
+      <ul>
+        <li><b>Telegram</b> — one forum supergroup, <b>one topic per session</b>, pinned status card, General = fleet console + escalation mirror. Inline <code>[✅ once][✅ always][❌][👀 diff]</code>.</li>
+        <li><b>Web UI</b> — server-rendered (html/template + htmx + SSE), <b>no JS build</b>; session board = same <code>events WHERE session_id=?</code> the topic renders.</li>
+        <li>Both pure clients — off changes nothing.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="lbl">Later · the edge</span>
+      <h3>Memory &amp; learning</h3>
+      <ul>
+        <li><b>4-tier memory</b> — USER.md (always) + MEMORY.md index/topics (JIT) + per-session facts/summary/FTS5 + playbooks.</li>
+        <li><b>Hindsight write-back</b> — off-hot-path pass proposes typed memory diffs (human-approved); curator ages facts to avoid drift.</li>
+        <li>The compounding advantage — build once the fleet runs.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>The core loop (rev 3)</h2>
+  <figure>
+    <figcaption>Two-level answering + capability boundary check</figcaption>
+    <pre class="mermaid">
+sequenceDiagram
+  participant W as Worker (herdr)
+  participant C as arco
+  participant L as SQLite ledger
+  participant B as Brain (short-lived)
+  participant U as You (CLI, TG, Web)
+  W->>C: state change or question (idempotent event)
+  C->>L: append event (dedup, two-clock)
+  C->>C: fusion of events, transcript, liveness, HEAD
+  alt unambiguous and routine
+    C->>L: update state (no LLM)
+  else question or decision
+    C->>L: persist brain intent first
+    C->>B: assemble transcript, user memory, playbooks
+    B-->>C: answer or typed StepResult
+    alt confident and not danger-class
+      C->>W: answer autonomously (log rationale, FYI to topic)
+    else uncertain or danger-class
+      C->>U: escalate question or confirm, show diff
+      U-->>C: decide once, always, or no
+    end
+  end
+  Note over C: capability check at arco boundary. high-blast never on worker
+  C->>W: next action via clavis and herdr
+    </pre>
+  </figure>
+
+  <h2 id="reviews">Final review — 8 aspects, 3 models — resolved</h2>
+  <p><b>Eight-aspect final review</b> (opus×3, fable×2, codex×3; qwen hit its weekly quota so Codex substituted): security, concurrency/crash-safety, cross-VM/scale/cost, memory, data-model, autonomy, UX, plan-executability. Full findings in <code>hermes-analysis/review2-*.md</code>. <b>Unanimous verdict: the architecture is sound and unchanged; the P2 headless core is buildable — after a schema/contract freeze (PASS-0) and 6 security preconditions before real creds.</b> Every fix is mechanical. Decisions are now resolved; the full rev-4 build guide is at the top of the impl-plan.</p>
+
+  <div class="review">
+
+    <div class="agree" style="background:rgba(63,185,80,.08)">
+      <h3>🏁 qwen3.8-max final sign-off — GO WITH FIXES</h3>
+      <p style="margin:2px 0 8px">Independent meta-review of rev 4 (opus+fable+codex ran the 8 aspects; qwen verified the consolidation). <b>26/27 blockers resolved with the demanded mechanism; all 5 decisions correct &amp; mutually consistent; no surviving architectural objection.</b> Start PASS-0 + PASS-1 now — but absorb these <b>6 contract-shaped fixes inside the PASS-0 freeze</b> (expensive after <code>schema.sql</code> has rows):</p>
+      <ul>
+        <li><b>Complete the PASS list</b> — catalog/<code>Allowed()</code> impl in PASS-1; permcompile + intake endpoint + pause/resume + boot <code>perm_rev</code> re-sync placed in PASS-2 (they're needed by PASS-2's own tests).</li>
+        <li><b>Fix the escalation dedup index</b> — free-text questions have NULL capability (SQLite treats NULLs as distinct → never dedups); scope it per-worker with <code>COALESCE(capability,'')</code>.</li>
+        <li><b>Pin the spawn mode = interactive-in-pane, never headless <code>-p</code></b> (headless aborts on unlisted <code>ask</code> tools → breaks the whole question/answer path).</li>
+        <li><b>Add to the freeze</b>: <code>question_class</code> on escalations (graduation report) + <code>prompt_intent</code>/<code>prompt_done</code> event kinds (<code>herdr.Prompt</code> is still fire-and-hope).</li>
+        <li><b>Mark the 7 superseded task texts</b> so a subagent doesn't build day-1 auto-answer / hindsight-auto-apply / <code>INSERT OR IGNORE</code> from stale instructions.</li>
+        <li><b>Store contract</b>: <code>WithTx</code> synchronous; enqueue/SSE/wake fire strictly post-commit; no reentrancy.</li>
+      </ul>
+      <p style="margin:6px 0 0" class="rec">All folded into the plan as “rev 4.1 — qwen sign-off patches.” None change the architecture. This is the last gate; it opens.</p>
+    </div>
+
+    <div class="agree">
+      <h3>✅ All 3 model families agreed (high confidence — the must-fix backbone)</h3>
+      <ul>
+        <li><b>The permission compile is a courtesy lock, not a security boundary.</b> Bash re-expresses any deny-listed command (<code>sh -c</code>, <code>gh api</code>, env indirection). <span class="rec">FIX: keep it for accident-prevention/observability; make arco's own boundary check authoritative; <b>never put high-blast capabilities on the worker at all.</b></span> <span class="who">(Fable + Qwen)</span></li>
+        <li><b>Two-level autonomy is the single highest-risk piece</b> (soft confidence threshold, no precedent). <span class="rec">FIX: ship graduated — brain <b>drafts</b>, you one-tap approve first; auto-answer only later, per question-class, never for danger; per-session auto-answer budget; FYI-visible even when silent.</span> <span class="who">(Fable "shadow mode first" + Qwen "graduate")</span></li>
+        <li><b>Danger-class must be assigned deterministically</b> from the capability tree — never trust the worker's/brain's self-report. <span class="rec">FIX: structural classifier; explicit test.</span> <span class="who">(Fable dissent #2 + Qwen §2)</span></li>
+        <li><b>Standing grants must not accumulate forever.</b> <span class="rec">FIX: grant TTL + use-count aging (curator pattern), grants die with the session, weekly grants digest, <code>[👀 diff]</code> on confirms too. Keep high-blast CLI-only.</span> <span class="who">(Fable + Qwen §3)</span></li>
+        <li><b>Telegram will hit rate limits at fleet scale</b> (~20 msg/min per group, all topics). <span class="rec">FIX: throttle status-card edits (≤1/topic/60s), buffered-vs-emitted policy, coalesce the General mirror too.</span> <span class="who">(Fable dissent #3 + Qwen §4.4)</span></li>
+      </ul>
+    </div>
+
+    <div class="add">
+      <h3>➕ Qwen added (Fable didn't emphasize — worth adopting)</h3>
+      <ul>
+        <li><b>The REAL trust boundary the plan never states:</b> (1) no high-blast credentials on worker boxes (scoped per-session tokens); (2) <b>server-side git branch protection / rulesets</b> — the only non-advisory layer; (3) OS-user separation; (4) stage the compiled config <b>outside</b> the worker-writable worktree, read-only, and <b>pin non-bypass permission mode</b> (else a worker overwrites its own <code>settings.json</code>, or <code>--dangerously-skip-permissions</code> voids everything).</li>
+        <li><b>Cross-VM liveness is broken as written</b> — Sweep/boot recovery use <code>PID</code>, meaningless off-host. Use <b>herdr-reported liveness</b> now (cheap today, a rewrite at P3 otherwise).</li>
+        <li><b>Delegation is default-ON, disagreeing with every teardown.</b> Add max depth (start 1), per-session live-worker cap, spawn budget.</li>
+        <li><b>No fleet-level cost breaker</b> — the billing ladder stops one worker; add a daily token/USD cap + per-session cap that parks new spawns.</li>
+        <li><b>Attention is the scarce resource</b> — rule: anything that pages you must be actionable in &lt;30s from a phone; default notify aggressive-silent + a daily digest.</li>
+        <li><b>Defer hindsight+curator (Task 24) past MVP</b> — biggest surface (~2k lines); T1–T3 give ~90% of recall value. Build the compounding layer once there's something to compound.</li>
+      </ul>
+    </div>
+
+    <div class="agree">
+      <h3>✅ The five decisions — RESOLVED (you were away; my calls, change any)</h3>
+      <ul>
+        <li><b>Two-level autonomy</b> → build the resolver but <b>default to SHADOW/DRAFT</b> in P2; auto-answer only after measured (≥50 samples, ≥95% agreement, 0 danger-misses); confirms never auto.</li>
+        <li><b>Worker self-spawn (delegation)</b> → <b>default OFF</b>; per-session grant; depth 1; ≤2 children/parent; ≤5 live/session; ≤20 spawns/session/day.</li>
+        <li><b>Hindsight / curator / playbook-learning</b> → <b>deferred past MVP</b>; P2 memory is manual-only (files + FTS5, capped, redacted).</li>
+        <li><b>Trust-boundary hardening</b> → <b>accepted as mandatory</b> before real creds (the 6 preconditions).</li>
+        <li><b>Byte-stable transcript</b> → keep the cheap invariant + prompt-hash + cache telemetry; <b>no cache-plan engine</b> until <code>cache_read</code> proves payoff.</li>
+      </ul>
+    </div>
+
+    <div class="add">
+      <h3>🧭 The reconciled P2 build order (supersedes the 1→27 numbering)</h3>
+      <ul>
+        <li><b>PASS-0 — freeze</b> the schema + shared contracts (immutable events + brain-transcript table; capability_catalog + session_grants rows; escalations gains capability/decision/classifier; provider_pools + leases; budgets + breakers; vms + vm_observations; migrations; workers gains <code>rev</code> CAS + task/lineage/perm columns; <code>Deps</code>/<code>VMClient</code>/<code>Store</code>/<code>CapabilityOf</code>).</li>
+        <li><b>PASS-1 — spine:</b> module/config → Store+migrations → ledger → API over unix socket + healthz → CLI.</li>
+        <li><b>PASS-2 — single-VM supervise (walking skeleton):</b> LocalVMClient → normalize → fusion → spawn (reordered, env-scrubbed) → executor (per-worker CAS, brain off write-path) → reconciler (intent-first + error/billing ladder) → sweep → brain → escalations (<b>structural class, autonomy SHADOW</b>) → diff-gate → boot recovery. Test: dispatch→hook→complete, headless.</li>
+        <li><b>PASS-3 — hardening:</b> budgets+breaker+<code>freeze</code> → provider-pool leases → per-VM admission → secret redaction → env-scrub/git-hardening + server-side branch protection → manual memory (24a).</li>
+        <li><b>Then P3 sub-plans:</b> SSH cross-VM, provider pools at scale, Telegram, Web, hindsight (24b), curator/playbooks (24c), Postgres/queue.</li>
+      </ul>
+    </div>
+
+    <div class="decide">
+      <h3>🔒 6 security preconditions — required before running against real repos/creds</h3>
+      <ul>
+        <li>OS-user separation + scrubbed spawn env · hardened git + quarantined repo <code>.claude</code>/<code>.mcp.json</code> · no high-blast creds on worker boxes + <b>server-side git branch protection</b> · auth on Telegram/Web/intake · secret redaction at every egress · pinned spawn permission mode + structural action-class + net/spawn default-off.</li>
+      </ul>
+    </div>
+
+    <div class="fix">
+      <h3>🔧 Plan-text drift the reviewers caught (fix in a rev 4, no decision needed)</h3>
+      <ul>
+        <li><code>AssembleContext(… j Job)</code> should be <code>s Session</code> (jobs subsumed).</li>
+        <li>Tasks 8/12 still test <code>waiting_for_approval</code>; rev 3 dropped it → <code>waiting_for_user</code>/<code>waiting_for_confirmation</code>.</li>
+        <li>Task 15 still says <code>approvals.go</code>/<code>arco approve</code> → escalations + <code>answer</code>/<code>confirm</code>.</li>
+        <li>Overview feature bullet still lists <code>waiting_for_approval</code>.</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <h2>Roadmap</h2>
+  <table>
+    <tr><th>Phase</th><th>You get</th></tr>
+    <tr><td><b>P1 — Concierge</b></td><td>Single-VM smoke test: herdr-hook → notify → reply, over an existing session. Near-zero build.</td></tr>
+    <tr><td><b>P2 — Arco MVP</b></td><td>Daemon + ledger + sessions + capability tree + escalations + reconcile sweep + CLI on one machine. (Two-level autonomy in draft mode; hindsight deferred.)</td></tr>
+    <tr><td><b>P3 — Swarm</b></td><td>Cross-VM (herdr-reported liveness, one central arco), provider pools, fleet cost breaker, the learning loop. Store swaps to Postgres.</td></tr>
+  </table>
+
+  <div class="files">
+    <b>Full docs:</b> plans/2026-08-04-arco-impl-plan.md (rev 3, Tasks 1–27) · plans/2026-08-04-arco-overview.md (rev 3)<br>
+    <b>Reviews:</b> Fable changelog (in session) · specs/hermes-analysis/qwen-design-review.md · specs/2026-08-04-manager-harness-blueprint.md · 9 competitor teardowns
+  </div>
+
+  <footer>
+    arco · rev 3 · two-reviewer pass (Fable + Qwen3.8-max) · 2026-08-04 · served on the LAN
+    <br><span class="pill">diagrams via mermaid CDN — text is native HTML, renders offline</span>
+  </footer>
+</div>
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({startOnLoad:true,theme:"dark",themeVariables:{fontFamily:"ui-monospace, Menlo, monospace",primaryColor:"#161b22",primaryBorderColor:"#2b333d",primaryTextColor:"#e6edf3",lineColor:"#58a6ff"}});
+</script>
+</body>
+</html>

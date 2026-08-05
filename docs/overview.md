@@ -4,6 +4,12 @@
 > Companion: the full design rationale is in [`design-blueprint.md`](design-blueprint.md). The engineer-facing build plan is [`implementation-plan.md`](implementation-plan.md).
 
 > **Rev 3 (2026-08-04)** — introduces five threads: **sessions** (the first-class unit of work + conversation that owns workers across VMs), a **context-balance policy** (durable per-session brain transcript + opportunistic warm prefix; never a warm process), a **4-tier memory** system with off-hot-path hindsight write-back, a **Telegram forum-topic UX** (one topic per session), and **autonomy-first control** (no per-action approval gates; a per-session capability tree compiled onto each worker; two-level question answering; tiered grants). The core shape (durable Go daemon + SQLite ledger + short-lived brain) is unchanged.
+>
+> **Rev 4 → 4.2 (2026-08-04)** — final-review hardening: a PASS-0 schema/contract freeze, the reconciled PASS-0→1→2→3 build order, six security preconditions, single-owner-but-transferable worker ownership (pause/recompile/resume via a protected `pool`), and the single-parent session tree (flat in P2, depth-2 supersession next). Autonomy in P2 is **shadow/draft by default** — nothing auto-answers until earned per class. Engineer detail: [`implementation-plan.md`](implementation-plan.md).
+>
+> **Rev 5 (2026-08-05)** — pre-build adversarial review (16 Claude domain reviewers + adversarial verification + 3 qwen3.8-max cross-family passes). Verdict **GO**; every blocker was a spec hole or unreconciled supersession, not a design flaw. Findings + fixes + the PASS-0 delta checklist: [`hardening-report-rev5.md`](hardening-report-rev5.md). Also resolves the memory question (opus+fable+qwen → **"links, not a graph"**): cross-project `[[wikilinks]]` + a derived backlink index as a 24a increment, not a general node/graph store — [`memory-links-rev5.md`](memory-links-rev5.md).
+>
+> **rev 6 (2026-08-05) — consolidated build guide.** The rev-1→rev-5 layers are flattened into one authoritative source with the freeze fully inlined (schema + seed data + Go contracts + PASS-0→3 tasks): **[`build-guide-rev6.md`](build-guide-rev6.md) — start here to build.** This overview + the layered plan are now provenance.
 
 ## What it is, in one breath
 `clavis` launches workers · `herdr` herds them on each machine · **`arco` commands the whole ensemble** — one durable Go daemon that owns the truth about every worker, reacts to their state changes, calls an LLM "brain" only when a decision is needed, and reports to you.
@@ -47,7 +53,7 @@
 - **Pause/resume** — park idle workers (commit → detach → reclaim worktree/PTY), resume later — required to reach hundreds of workers on finite machines.
 - **Diff-gated completion** — a worker only moves `completed_candidate → completed_verified` after its base→head diff is reviewed (human or auto-verifier), not on a guess.
 - **Scheduler** — arco can schedule its own follow-ups (cron); natural-language → schedule.
-- **Cost accounting** — per-worker/per-model token+cost, first-class.
+- ~~**Cost accounting**~~ — **CUT from the MVP (rev 6)**; cost tracking + metering deferred post-MVP. Focus is task orchestration; provider pools/leases stay for rate-limit/concurrency only.
 - **CLI** — `arco status | sessions | session | workers | dispatch | grant | revoke | answer | logs | attach | pause | resume | kill | schedule | playbook`.
 
 ### Optional add-on: Telegram (forum-topic UX)
