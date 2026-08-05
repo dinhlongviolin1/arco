@@ -59,6 +59,24 @@ func TestLocal_GitHeadsAndDiff(t *testing.T) {
 	require.Equal(t, 0, d0.Files)
 }
 
+func TestLocal_DiffRejectsNonCommitRev(t *testing.T) {
+	dir, _, head := realGitRepo(t)
+	l := NewLocal("herdr")
+	// a base that starts with '-' must never reach git as an option
+	_, err := l.Diff(context.Background(), dir, "--output=/tmp/pwn", head)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-commit-shaped")
+}
+
+func TestLocal_GitHeadsCtxCancelReturnsError(t *testing.T) {
+	dir, _, _ := realGitRepo(t)
+	l := NewLocal("herdr")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+	_, err := l.GitHeads(ctx, []string{dir})
+	require.Error(t, err, "a cancelled sweep must not look like 0 heads")
+}
+
 // fakeHerdr installs a `herdr` script on PATH that answers `agent list --json`
 // and logs `agent prompt`, so we exercise the real exec path without herdr.
 func fakeHerdr(t *testing.T, listJSON string) (promptLog string) {

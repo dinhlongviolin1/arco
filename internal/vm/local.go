@@ -2,8 +2,11 @@ package vm
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -11,15 +14,23 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
 
+// maxPatchBytes caps how much of a diff patch we buffer/serve, so one fat
+// worktree (vendored trees, a committed blob) can't OOM the daemon.
+const maxPatchBytes = 1 << 20 // 1 MiB
+
+// terminalHerdrStatus is the set of herdr agent statuses that mean "not alive".
+// Confirm the real values in the Task-S spike; anything NOT in this set (incl.
+// empty/unknown) is treated as alive (presence in the list = alive).
+var terminalHerdrStatus = map[string]bool{"done": true, "gone": true, "exited": true, "dead": true}
+
 // LocalVMClient drives agents on the local machine: git for HEAD/diff (real,
-// deterministic) and the herdr CLI over its socket API for agent liveness +
-// prompting. The herdr JSON field mapping below is against herdr's documented
-// `agent list --json` / `agent prompt` contract; the exact fields must be
-// confirmed against a running herdr in the Task-S spike before this is the
-// daemon default (the daemon still uses Fake until then).
+// deterministic) and the herdr CLI over its socket API for liveness + prompting.
+// The herdr JSON field mapping is against herdr's documented `agent list --json`
+// / `agent prompt` contract; exact fields/types must be confirmed against a live
+// herdr in the Task-S spike before this is the daemon default (default = Fake).
 type LocalVMClient struct {
-	Herdr string // herdr binary (default "herdr")
-	Git   string // git binary (default "git")
+	Herdr string
+	Git   string
 }
 
 var _ core.VMClient = (*LocalVMClient)(nil)
@@ -32,25 +43,43 @@ func NewLocal(herdr string) *LocalVMClient {
 	return &LocalVMClient{Herdr: herdr, Git: "git"}
 }
 
-// herdrAgent mirrors the fields we consume from `herdr agent list --json`.
+// herdrAgent mirrors the fields we consume. Identity fields are RawMessage so a
+// numeric OR string encoding both decode (herdr's exact types are spike-TBD).
 type herdrAgent struct {
-	Workspace string `json:"workspace"`
-	Label     string `json:"label"`
-	Status    string `json:"status"` // working|idle|blocked|done|unknown
-	BootID    string `json:"boot_id"`
-	PIDStart  string `json:"pid_start_time"`
+	Workspace string          `json:"workspace"`
+	Label     string          `json:"label"`
+	Status    string          `json:"status"`
+	BootID    json.RawMessage `json:"boot_id"`
+	PIDStart  json.RawMessage `json:"pid_start_time"`
 }
 
-// ListAgents returns observed agents. Presence in the list = alive; identity
-// fields (boot_id, pid_start_time) are passed through when herdr provides them.
+func rawStr(r json.RawMessage) string {
+	s := strings.TrimSpace(string(r))
+	if s == "" || s == "null" {
+		return ""
+	}
+	if len(s) >= 2 && s[0] == '"' {
+		var out string
+		if json.Unmarshal(r, &out) == nil {
+			return out
+		}
+	}
+	return s
+}
+
+// ListAgents returns observed agents. Presence = alive unless the status is a
+// terminal one. Empty stdout is an empty list (not an error).
 func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error) {
-	out, err := exec.CommandContext(ctx, l.Herdr, "agent", "list", "--json").Output()
+	out, err := runOutput(ctx, l.Herdr, "agent", "list", "--json")
 	if err != nil {
 		return nil, err
 	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
 	var raw []herdrAgent
 	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("herdr agent list: bad json: %w", err)
 	}
 	obs := make([]core.AgentObs, 0, len(raw))
 	for _, a := range raw {
@@ -59,18 +88,23 @@ func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error)
 			ws = a.Label
 		}
 		obs = append(obs, core.AgentObs{
-			Workspace: ws, BootID: a.BootID, PIDStartTime: a.PIDStart,
-			Alive: a.Status != "" && a.Status != "gone",
+			Workspace: ws, BootID: rawStr(a.BootID), PIDStartTime: rawStr(a.PIDStart),
+			Alive: !terminalHerdrStatus[a.Status],
 		})
 	}
 	return obs, nil
 }
 
-// GitHeads returns each worktree's current HEAD (git rev-parse). Worktrees that
-// error (missing/not a repo) are omitted rather than failing the whole sweep.
+// GitHeads returns each worktree's HEAD; bad/empty worktrees are omitted.
 func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[string]string, error) {
 	heads := make(map[string]string, len(worktrees))
 	for _, wt := range worktrees {
+		if err := ctx.Err(); err != nil {
+			return heads, err // don't report "0 heads" as success on a cancelled sweep
+		}
+		if wt == "" {
+			continue // never `git -C "" ` (would run in the daemon's cwd)
+		}
 		out, err := exec.CommandContext(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
 		if err != nil {
 			continue
@@ -80,29 +114,36 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 	return heads, nil
 }
 
-// Prompt submits a prompt to an agent (fire-and-return; delivery is later proven
-// by the normalizer observing the embedded intent ULID).
+// Prompt submits a prompt to an agent. NOTE: blocks until herdr returns (bounded
+// by ctx). The Task-S spike should add a `--` end-of-options guard so a prompt
+// beginning with `-` can't be parsed as a flag.
 func (l *LocalVMClient) Prompt(ctx context.Context, workspace, text string) error {
 	return exec.CommandContext(ctx, l.Herdr, "agent", "prompt", workspace, text).Run()
 }
 
-// Kill interrupts an agent (best-effort Ctrl-C via send-keys).
+// Kill interrupts an agent (best-effort Ctrl-C).
 func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 	return exec.CommandContext(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
 }
 
-// Diff returns the base→head numstat summary + patch for a worktree.
+// Diff returns the base→head numstat summary + a size-capped patch.
 func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (core.Diff, error) {
 	d := core.Diff{Base: base, Head: head}
-	if base == "" || head == "" {
+	if worktree == "" || base == "" || head == "" {
 		return d, nil
+	}
+	// Never let a DB rev that starts with '-' (or is otherwise not commit-shaped)
+	// be parsed by git as an option (e.g. --output=/path zeroes the diff).
+	if !looksLikeRev(base) || !looksLikeRev(head) {
+		return d, fmt.Errorf("vm: refusing non-commit-shaped rev (base=%q head=%q)", base, head)
 	}
 	rng := base + ".." + head
 	num, err := exec.CommandContext(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
 	if err != nil {
 		return d, err
 	}
-	sc := bufio.NewScanner(strings.NewReader(string(num)))
+	sc := bufio.NewScanner(bytes.NewReader(num))
+	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) < 3 {
@@ -116,9 +157,55 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 			d.Deletions += n
 		}
 	}
-	// Full patch (best-effort; empty on error is fine for the summary).
-	if patch, err := exec.CommandContext(ctx, l.Git, "-C", worktree, "diff", rng).Output(); err == nil {
-		d.Patch = string(patch)
+	if err := sc.Err(); err != nil {
+		return d, fmt.Errorf("herdr diff numstat scan: %w", err)
 	}
+	d.Patch, d.Truncated = l.cappedPatch(ctx, worktree, rng)
 	return d, nil
+}
+
+// cappedPatch streams `git diff` and buffers at most maxPatchBytes, draining the
+// rest so git never blocks on a full pipe.
+func (l *LocalVMClient) cappedPatch(ctx context.Context, worktree, rng string) (string, bool) {
+	cmd := exec.CommandContext(ctx, l.Git, "-C", worktree, "diff", rng)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", false
+	}
+	if err := cmd.Start(); err != nil {
+		return "", false
+	}
+	b, _ := io.ReadAll(io.LimitReader(stdout, maxPatchBytes+1))
+	_, _ = io.Copy(io.Discard, stdout) // drain remainder
+	_ = cmd.Wait()
+	if len(b) > maxPatchBytes {
+		return string(b[:maxPatchBytes]) + "\n...[patch truncated]", true
+	}
+	return string(b), false
+}
+
+// looksLikeRev reports whether s is a plausible git commit (hex, 7..64 chars) —
+// enough to reject option-injection without a full git check-ref-format.
+func looksLikeRev(s string) bool {
+	if len(s) < 7 || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// runOutput runs a command capturing stdout, folding stderr into the error.
+func runOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("%s %s: %s: %w", name, strings.Join(args, " "), bytes.TrimSpace(ee.Stderr), err)
+		}
+		return nil, err
+	}
+	return out, nil
 }

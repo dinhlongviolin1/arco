@@ -132,6 +132,7 @@ type Diff struct {
 	Insertions int
 	Deletions  int
 	Patch      string // full patch for a single worker; empty in bulk numstat
+	Truncated  bool   // Patch was capped (too large to buffer whole)
 }
 
 // VMClient observes and drives workers on a machine.
