@@ -56,9 +56,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 
 	vmc := deps.VM
 	if vmc == nil {
-		// TODO(Task S): swap for vm.LocalVMClient (clavis/herdr) once the
-		// clavis/herdr contract spike lands. Fake keeps the daemon headless-runnable.
-		vmc = vm.NewFake()
+		// Default Fake keeps the daemon headless-runnable. Opt in to the real
+		// herdr LocalVMClient via use_local_vm / ARCO_LOCAL_VM once the Task-S
+		// spike has confirmed herdr's `agent list --json` schema on this host.
+		if cfg.UseLocalVM {
+			vmc = vm.NewLocal(cfg.HerdrBin)
+		} else {
+			vmc = vm.NewFake()
+		}
 	}
 	eng := reconcile.New(store, vmc)
 	eng.MissThreshold = cfg.LivenessMissThreshold
