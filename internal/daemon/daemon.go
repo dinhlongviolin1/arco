@@ -1,0 +1,131 @@
+// Package daemon wires the ledger, reconcile engine, VMClient, and API server
+// into a long-running process listening on a unix socket.
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/dinhlongviolin1/arco/internal/api"
+	"github.com/dinhlongviolin1/arco/internal/config"
+	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/reconcile"
+	"github.com/dinhlongviolin1/arco/internal/vm"
+)
+
+// Deps are the wired dependencies; Run builds real ones from config unless
+// overridden (tests inject a fake VMClient).
+type Deps struct {
+	VM core.VMClient
+}
+
+// Run opens the ledger, migrates, and serves the API on cfg.Socket until ctx is
+// cancelled. It closes the listener and store on shutdown.
+func Run(ctx context.Context, cfg config.Config, deps Deps) error {
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.Socket), 0o700); err != nil {
+		return err
+	}
+
+	// Single-instance guard: an exclusive advisory lock on the DB. Two daemons
+	// on one DB file would each have their own single-writer mutex, breaking the
+	// single-writer invariant (only busy_timeout would mitigate). Refuse to start.
+	unlock, err := lockDB(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	store, err := ledger.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		return err
+	}
+
+	vmc := deps.VM
+	if vmc == nil {
+		// TODO(Task S): swap for vm.LocalVMClient (clavis/herdr) once the
+		// clavis/herdr contract spike lands. Fake keeps the daemon headless-runnable.
+		vmc = vm.NewFake()
+	}
+	eng := reconcile.New(store, vmc)
+	eng.MissThreshold = cfg.LivenessMissThreshold
+	srv := api.New(store, eng)
+
+	// Boot recovery (survive-and-reconcile) before we accept traffic.
+	if err := eng.Recover(ctx); err != nil {
+		return fmt.Errorf("daemon: boot recovery: %w", err)
+	}
+
+	// Fresh socket (a stale one from a crash blocks bind).
+	_ = os.Remove(cfg.Socket)
+	ln, err := net.Listen("unix", cfg.Socket)
+	if err != nil {
+		return fmt.Errorf("daemon: listen %s: %w", cfg.Socket, err)
+	}
+
+	httpSrv := &http.Server{Handler: srv.Handler()}
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.Serve(ln) }()
+
+	// Authoritative reconcile sweep on a ticker (push is an optimization over it).
+	ticker := time.NewTicker(cfg.SweepInterval)
+	defer ticker.Stop()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_, _ = eng.Sweep(ctx)
+			}
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Graceful: stop accepting, drain in-flight requests, THEN let the
+		// deferred store.Close run (no write-after-close on an active request).
+		sh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(sh)
+		_ = os.Remove(cfg.Socket)
+		return nil
+	case err := <-errCh:
+		_ = os.Remove(cfg.Socket)
+		if err == http.ErrServerClosed {
+			return nil
+		}
+		return err
+	}
+}
+
+// lockDB takes an exclusive, non-blocking advisory lock on a lockfile next to
+// the DB, returning an unlock func. It fails if another daemon holds it.
+func lockDB(dbPath string) (func(), error) {
+	lockPath := dbPath + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("daemon: another arco instance holds %s (%w)", lockPath, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
