@@ -139,6 +139,7 @@ type DiffResp struct {
 	Insertions int    `json:"insertions"`
 	Deletions  int    `json:"deletions"`
 	Patch      string `json:"patch"`
+	Truncated  bool   `json:"truncated"`
 }
 
 type VerifyReq struct {
@@ -272,7 +273,7 @@ func (s *Server) workerDiff(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, errStatus(err), err)
 			return
 		}
-		out.Files, out.Insertions, out.Deletions, out.Patch = d.Files, d.Insertions, d.Deletions, d.Patch
+		out.Files, out.Insertions, out.Deletions, out.Patch, out.Truncated = d.Files, d.Insertions, d.Deletions, d.Patch, d.Truncated
 	}
 	writeJSON(w, http.StatusOK, out)
 }

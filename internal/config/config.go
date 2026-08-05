@@ -36,6 +36,7 @@ type Config struct {
 	BrainProfile  string `toml:"brain_profile"`
 	BrainModel    string `toml:"brain_model"`
 	HerdrBin      string `toml:"herdr_bin"`
+	UseLocalVM    bool   `toml:"use_local_vm"` // opt in to the real herdr LocalVMClient (else Fake)
 
 	// Pinned operability defaults (build-guide-rev6 §C).
 	MaxSpawns             int           `toml:"max_spawns"`
@@ -129,5 +130,8 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_HERDR_BIN"); v != "" {
 		cfg.HerdrBin = v
+	}
+	if v := os.Getenv("ARCO_LOCAL_VM"); v == "1" || v == "true" {
+		cfg.UseLocalVM = true
 	}
 }
