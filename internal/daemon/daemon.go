@@ -62,6 +62,13 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	eng := reconcile.New(store, vmc)
 	eng.MissThreshold = cfg.LivenessMissThreshold
+	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
+	// Enable the short-lived decision brain only when a profile is configured;
+	// otherwise the reconciler stays deterministic-only (ambiguous states wait
+	// for the next signal rather than a failing clavis call).
+	if cfg.BrainProfile != "" {
+		eng.Brain = reconcile.BrainCfg{Enabled: true, Profile: cfg.BrainProfile, Model: cfg.BrainModel}
+	}
 	srv := api.New(store, eng)
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
