@@ -115,6 +115,25 @@ func TestParseLinks_IgnoresCodeSpans(t *testing.T) {
 	require.Empty(t, vb.BackLinks)
 }
 
+// Regression (qwen #1 read-side): a symlinked *.md must not be followed by Read.
+func TestRead_SymlinkFileNotFollowed(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(outside, "secret"), []byte("TOPSECRET"), 0o600))
+	require.NoError(t, os.Symlink(filepath.Join(outside, "secret"), filepath.Join(dir, "leak.md")))
+	v, err := New(dir).Read("leak")
+	require.NoError(t, err)
+	require.Equal(t, "", v.Content, "a symlinked topic file must not be read into content")
+}
+
+// Regression (qwen #4): the always-hot identity files can't be clobbered via topics.
+func TestApplyMemoryDiff_ReservedNames(t *testing.T) {
+	s := New(t.TempDir())
+	for _, name := range []string{"USER", "user", "MEMORY", "memory"} {
+		require.ErrorIs(t, s.ApplyMemoryDiff(MemoryDiff{Op: "add", Topic: name, Content: "x", Author: "user", DecidedBy: "long"}, time.Now), ErrBadOp)
+	}
+}
+
 func TestApplyMemoryDiff_RejectsFakeDecider(t *testing.T) {
 	s := New(t.TempDir())
 	require.ErrorIs(t, s.ApplyMemoryDiff(MemoryDiff{Op: "add", Topic: "x", Content: "c", Author: "user", DecidedBy: "brain"}, time.Now), ErrNoHuman)

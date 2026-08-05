@@ -64,6 +64,11 @@ func (s *Store) ApplyMemoryDiff(d MemoryDiff, now func() time.Time) error {
 	if topic == "" {
 		return ErrBadOp
 	}
+	// Reserve the always-hot identity files: they must not be clobbered via the
+	// topic API (case-insensitive, for case-insensitive filesystems).
+	if strings.EqualFold(topic, "USER") || strings.EqualFold(topic, "MEMORY") {
+		return ErrBadOp
+	}
 	p := s.path(topic)
 	switch d.Op {
 	case "add", "update":

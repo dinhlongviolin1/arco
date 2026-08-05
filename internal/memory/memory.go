@@ -30,9 +30,12 @@ func (s *Store) path(topic string) string {
 
 // cleanTopic strips any path traversal, keeping a safe relative slug.
 func cleanTopic(topic string) string {
-	t := strings.TrimSuffix(strings.TrimSpace(topic), ".md")
+	t := strings.TrimSpace(topic)
+	for strings.HasSuffix(t, ".md") { // strip ALL trailing .md so a.md.md ≡ a
+		t = strings.TrimSuffix(t, ".md")
+	}
 	t = filepath.ToSlash(filepath.Clean("/" + t)) // anchor at root, resolve ..
-	return strings.TrimPrefix(t, "/")
+	return strings.TrimLeft(t, "/")               // TrimLeft (not TrimPrefix): kill any leading //
 }
 
 // LoadUserMemory returns the always-hot USER.md and MEMORY.md contents (missing
@@ -65,9 +68,16 @@ type TopicView struct {
 func (s *Store) Read(topic string) (TopicView, error) {
 	topic = cleanTopic(topic)
 	v := TopicView{Topic: topic}
-	if b, err := os.ReadFile(s.path(topic)); err == nil {
-		v.Content = string(b)
-		v.OutLinks = parseLinks(v.Content)
+	// Read only a REGULAR file whose resolved parent stays under Dir — never
+	// follow a symlinked *.md (which could exfiltrate an arbitrary file into
+	// brain context). A missing/symlink/escaping topic yields empty content but
+	// still-computed backlinks.
+	p := s.path(topic)
+	if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() && s.assertContained(p) == nil {
+		if b, err := os.ReadFile(p); err == nil {
+			v.Content = string(b)
+			v.OutLinks = parseLinks(v.Content)
+		}
 	}
 	back, err := s.backlinksTo(topic)
 	if err != nil {
@@ -125,8 +135,8 @@ func (s *Store) walkTopics(fn func(name, content string)) error {
 			}
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(p, ".md") {
-			return nil
+		if info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !strings.HasSuffix(p, ".md") {
+			return nil // skip symlinked *.md so the scan can't follow one out of Dir
 		}
 		rel, rerr := filepath.Rel(s.Dir, p)
 		if rerr != nil {
