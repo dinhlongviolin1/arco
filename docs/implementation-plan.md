@@ -137,6 +137,75 @@ No conflicts with the rev-4 freeze; the pool sentinel satisfies the frozen `owne
 
 ---
 
+## rev 5 — pre-build hardening (2026-08-05) · adversarial multi-model review · READ WITH REV 4
+
+A full adversarial review before code — **16 Claude domain reviewers (each finding adversarially
+verified) + 3 qwen3.8-max cross-family passes** — hardened the plan. Verdict: **GO** (unchanged
+architecture); every blocker is a *specification hole or an unreconciled supersession*, not a design
+flaw. Full findings + fixes + the PASS-0 delta checklist are in **[`hardening-report-rev5.md`](hardening-report-rev5.md)**.
+Where rev 5 conflicts with earlier text, **rev 5 wins** (it is the latest layer over REV 4 / 4.1 / 4.2).
+Fold these into the PASS-0 editing pass (contract-shaped; expensive after rows exist):
+
+**Blockers (must fix before code):**
+- **B1** — the raw SQL block (Data Model, below) is stale rev-3 and is **NOT** the freeze. Produce ONE
+  frozen `0001_init.sql` (single source of truth), stamp the rev-3 block `SUPERSEDED — do NOT embed`,
+  seed the fixed-ULID `kind='pool'` row LAST (else the first `CreateWorker` fails NOT NULL+FK on
+  `owner_session`), migrate-from-fixture test asserts replay==schema + exactly one pool row.
+- **B2/B3** — the "locked" Key Interfaces block contradicts the PASS-0 freeze: replace
+  `Store{WithWrite(func(*sql.Tx)); DB()}` with `Store{ Migrate(ctx); WithTx(ctx, func(Tx)) }` (`Tx`
+  arco-owned, no `*sql.Tx` leak); add the frozen `VMClient`; **define `type Deps struct{…}`** (used
+  everywhere, declared nowhere).
+- **B4** — secret redaction is **write-time/ingress**, not egress (`events` is immutable; a leaked secret
+  is unscrubbable). Add `internal/redact/` `Scrub(s)(string,int)` wired into `AppendEvent`, the
+  transcript/FTS/topic writers, **and before `Invoke`** (the brain prompt to a third-party LLM is the
+  largest exfil surface); keep egress redaction as defense-in-depth.
+- **B5/B6** — quarantine repo-shipped `.claude`/`.mcp.json`/`settings.local.json`/hooks/`core.fsmonitor`
+  (`.mcp.json` tools escape `Allowed()`), AND stage arco's OWN compiled config **outside the
+  worker-writable worktree** (`~/.arco/workers/<ulid>/`, daemon-owned) via `--settings` — else the
+  worker rewrites the PreToolUse hook or shadows it with `settings.local.json`.
+- **B7** — `Revoke` on a parent must **cascade** to descendant sessions (child⊆parent is checked only on
+  widen); today a revoked cap survives down the tree. *(open-q #2)*
+- **B8** — `Allowed()` is authoritative only for **arco-executed** actions; a worker acts live in-process
+  (`curl .../merge`, `gh api`). Reframe as **compiled config = prevention, arco = detection+response**;
+  back every worker-executed medium-tier cap with a server-side non-advisory control; build the detection
+  path (scan transcript tails → auto-pause + escalate).
+- **B9** — bracket `herdr.Prompt` (the most frequent side effect) with `prompt_intent`/`prompt_done`
+  (echo an intent ULID) + boot-recovery re-drive.
+- **B10** — worker-agent LLM spend is never metered → budgets meter only the cheap brain. Write `usage`
+  rows with `call_kind='agent'`; **freeze `worker_pool_leases` columns** + boot reconciliation + TTL
+  (leases leak on crash → pool drains to zero). *(open-q #1)*
+- **B11** — add reconciler branches for `final_output` (→ candidate + diff gate) and P2 `handoff` (reject);
+  unhandled kind → `error` event, never a silent drop.
+- **B12** — the brain resolver must return a distinct `DraftAnswer{Text,Confidence,Rationale,Tainted}`
+  (no scope/yesNo field), renamed off `AnswerQuestion`; freeze that no brain-sourced value reaches
+  `DecideConfirm`/`Grant`.
+- **B13** — Task 24 S1 still tests a brain **auto-apply** memory path rev-4.1 killed (injection→persistent
+  memory). Rewrite to 24a manual-only + an explicit "no auto-apply exists" test.
+- **B14** *(qwen)* — settle pending escalations in the ownership-CAS tx; a `confirm yes` decided AFTER a
+  transfer must re-check `Allowed()` against the CURRENT owner (else it authorizes a danger action / grants
+  on the OLD session).
+
+**Major (fold in; several carry SUPERSEDED markers below):** structural-liveness banners on Tasks 7/10/18
+(M2); durable resume-intent + boot recovery for decided-but-unresumed escalations (M3); Claim/Resume
+re-acquires a lease + admission (M4); Revoke narrows a **running** worker via pause→recompile→resume (M5,
+**4-reviewer convergence**); grant-expiry drives `perm_rev` (M6); consolidated `event_kind` const enum with
+default-case `error` (M7); fix Task 4's leftover `INSERT OR IGNORE` + hash-mismatch contract (M8);
+`billing`/`rate_limited` fusion classes so a worker isn't re-prompted into a wall (M9); freeze
+`CapabilityOf(NormalizedEntry)(CatalogRow,bool)` fail-**closed** (M11); Checkpoint watermark + stale-rev
+re-validate (M12); Release keeps the worktree (contradicts Task 17) + a real pool reaper with `pooled_at`
+(M13); session-teardown completion-check join + teardown-aware side-effect drop (M14); Transfer stages
+config AFTER the CAS / defined CAS-failure re-drive (M15); boot-GC orphan worktrees (M16); escalation
+timeout **closes** the row (M17); enforce depth/fan-in/self-parent at `CreateSession` (M18); rollup
+authority-laundering made **structural** (M19); pin rollup cost + `call_kind='rollup'` + hot-path
+admission priority (M20); `arco unfreeze` + systemd `WatchdogSec` liveness + `arco escalations`/`autonomy`
+CLI + an operability-defaults table (M21).
+
+**9 open questions for the maintainer** are listed at the end of the hardening report — several
+(worker-spend observability, revoke-cascade vs ancestor-walk, exec-default-on posture, one-open-escalation
+semantics) gate a blocker and are **decisions to confirm before PASS-0 is finalized**.
+
+---
+
 ## Revisions from review (rev 2)
 1. **Idempotent, crash-safe event intake** — herdr sends a stable `source_event_id`; intake dedups on admit. Push is now an *optimization over* an authoritative **periodic reconcile sweep** that repairs the ledger from process-liveness + git HEAD even when POSTs are dropped. *(New Task 7; Tasks 4, 6 changed.)*
 2. **Persist brain-call INTENT before invoking** + a **malformed-output / error / billing ladder** (re-prompt → fallback model → record `empty_response` & alert; never crash-loop; no hard `max_tokens` on the StepResult call; **no retry on a billing wall**). *(Task 12 reordered + expanded.)*
@@ -209,6 +278,12 @@ arco/
 ---
 
 ## Data Model (`internal/ledger/schema.sql`, embedded)
+
+> ⚠ **SUPERSEDED BY REV 5 (B1) — DO NOT EMBED THIS BLOCK.** The SQL below is stale rev-3
+> (`CREATE TABLE IF NOT EXISTS`, `events.active/compacted`, `cost_usd REAL`, nullable `owner_session`,
+> no CHECK enums, missing ~12 frozen tables, no seeded `pool` row). It is kept only as a readable sketch.
+> The PASS-0 freeze is ONE `0001_init.sql` built to the REV 4 / rev 4.1 / rev 4.2 spec + the
+> [`hardening-report-rev5.md`](hardening-report-rev5.md) "PASS-0 schema & contract deltas" checklist.
 
 ```sql
 PRAGMA journal_mode=WAL;
@@ -342,6 +417,17 @@ CREATE TABLE IF NOT EXISTS playbooks (       -- P3 learning loop
 ## Key Interfaces (locked)
 
 > ⚠ **SUPERSEDED BY REV 4.1 (read the REV 4 section at the top first):** `OpenEscalation` returns immediately — no blocking `chan Decision`; a decision re-submits a resume job (watcher-only channel). Split the decision API into **`AnswerQuestion(id, text, scope)`** and **`DecideConfirm(id, yesNo, scope)`** — drop the shared `Decision`. `action_class`/`tier`/`capability` are computed **structurally** from `capability_catalog` (never caller- or brain-supplied). `Spawn` order = pre-gen ULID + `workspace=arco_<ulid>` → write `dispatch_intent` + `CreateWorker` (with a **scrubbed `cmd.Env` allowlist**) **before** any external side effect → adopt-or-abort recovery (no trailing `AttachWorker`). `AppendEvent` uses `ON CONFLICT(source, source_event_id) DO NOTHING` (not `INSERT OR IGNORE`).
+>
+> ⚠ **ALSO SUPERSEDED BY REV 5 (B2/B3, extends this marker to `Store` + `VMClient`):** replace
+> `Store{WithWrite(func(*sql.Tx)); DB() *sql.DB}` with `Store{ Migrate(ctx) error; WithTx(ctx, func(Tx) error) error }`
+> where `Tx` is an arco-owned interface (**no `*sql.Tx`/`*sql.DB` through the interface** — keep them
+> inside the sqlite impl). Re-declare `CreateWorker/GetWorker/ListWorkers/TransitionWorker/AppendEvent/
+> EventsSince/Grant` as ctx-taking methods on `Tx`/sub-stores; **add `expectedRev` + a typed
+> `ErrRevMismatch`** to the CAS mutators (`TransitionWorker`, `Checkpoint`, `Grant/Revoke→(newPermRev,err)`)
+> — the frozen sigs otherwise cannot express the mandated `workers.rev`/`context_rev` CAS. Add the frozen
+> **`VMClient`** (`ListAgents/GitHeads/Prompt/Kill/Diff`) and route `Sweep`/`Spawn` through it. Define
+> **`type Deps struct{…}`**. Rename the brain resolver to return **`DraftAnswer{Text,Confidence,Rationale,Tainted}`**
+> (no scope field). Freeze **`CapabilityOf(NormalizedEntry)(CatalogRow,bool)`** (unclassifiable = fail-closed).
 
 ```go
 // ledger — Store is an interface so P3 can swap SQLite for Postgres without touching callers.
@@ -474,6 +560,7 @@ func Resume(deps Deps, id string) error
 - [ ] **S5 commit** `feat: idempotent event intake endpoint`
 
 ### Task 7: Authoritative reconcile sweep (steady-state repair)
+> ⚠ **SUPERSEDED BY REV 4 §Cross-VM liveness + REV 5 (M2):** gather signals via **`VMClient.ListAgents/GitHeads`**, NOT a central/bare PID. Identity = `vm + workspace + boot_id + pid_start_time + remote HEAD`; batched per-VM observation; `suspect_missing → lost`. The S2–4 "process liveness via PID" text below builds the exact model rev-4 bans — use the `VMClient` form.
 **Files:** `reconcile/sweep.go(+_test)`
 **Interfaces:** `Sweep(deps)`. This is the *truth*; push is an optimization over it.
 - [ ] **S1 test**: seed 2 workers — one whose fake process is dead + HEAD changed, one alive; run `Sweep`; dead+changed → `completed_candidate` (or `failed` if no HEAD change), alive stays; a `reconcile` event is recorded; runs even though **no** intake event arrived.
@@ -494,6 +581,7 @@ func Resume(deps Deps, id string) error
 - [ ] **S5 commit** `feat: per-agent log normalization feeding fusion`
 
 ### Task 10: herdr wrapper + git (worktree + per-path lock + diff)
+> ⚠ **SUPERSEDED BY REV 4 §Cross-VM liveness + REV 5 (M2):** this task is the **`LocalVMClient`** implementation of `VMClient.{ListAgents,GitHeads,Prompt,Kill,Diff}` — not a standalone herdr wrapper. All liveness/HEAD goes through `VMClient` so `SSHVMClient` (P3) drops in unchanged.
 **Files:** `worker/herdr.go`, `worker/git.go(+_test)`
 - [ ] **S1 tests** (temp git repo, fake `herdr` on PATH): `git.AddWorktree` under a **per-path lock** (concurrent adds to same repo serialize); records `base_commit`; `Diff(base,head)` returns numstat; `herdr.List/Prompt` shell out correctly.
 - [ ] **S2–4** implement `Mutex`-per-repo-path map; worktree add/remove; HEAD read; diff (full for one, `--numstat` bulk). PASS.
@@ -550,6 +638,7 @@ func Resume(deps Deps, id string) error
 - [ ] **S2–5** implement. commit `feat: pause/resume to reclaim worktrees/PTYs`.
 
 ### Task 18: Boot recovery + survive-and-reconcile + crash-loop breaker
+> ⚠ **SUPERSEDED BY REV 4 §Cross-VM liveness + REV 5 (M2/M3/M16, B10-lease):** boot recovery keys off `boot_id + pid_start_time` (survives PID reuse across a reboot), **not a bare central PID**. Add three recovery cases: (a) a decided-but-unresumed escalation (`status IN (answered,approved,rejected) AND resumed_at IS NULL`) → re-submit the resume, idempotent via the `prompt_intent` ULID (M3); (b) a `worker_pool_lease` with no matching non-terminal worker / pending `dispatch_intent`, or past `expires_at` → release (B10-lease); (c) an orphan worktree matching `arco_<ulid>` whose ULID has no non-terminal worker row → GC (M16). The "live PID" S1 text below is the banned model — read it as `VMClient` liveness.
 **Files:** `cli/daemon.go` (extend), `reconcile/sweep.go` (reuse), test
 - [ ] **S1 tests**: pre-seed a `running` worker with a **live** PID + a herdr pane → on boot it is **kept** (survive-and-reconcile), and the first `Sweep` re-attaches it; a `running` worker with a **dead** PID → `failed` + recovery event; a `dispatch_intent` with no `dispatch_done` → resolved (re-attach if the process exists, else mark `failed`, never double-spawn); pending escalations (questions/confirms) survive; if the daemon restarts >N times in M minutes, the breaker refuses auto-actions and alerts.
 - [ ] **S2–5** implement boot sweep + intent/done reconciliation + a restart-rate breaker (persist boot timestamps). commit `feat: survive-and-reconcile boot recovery + crash-loop breaker`.
@@ -588,7 +677,8 @@ func Resume(deps Deps, id string) error
 
 ### Task 23: Compile session tree → worker Claude Code config (defense-in-depth enforcement)
 **Files:** `permcompile/compile.go(+_test)`, `worker/spawn.go` (extend)
-> Verified mechanism: `settings.json` `permissions.{allow,deny,ask}` (eval order deny→ask→allow, hooks first, deny wins even in bypass) + `PreToolUse` hook (`permissionDecision:"deny"` / exit 2) + `--allowedTools/--disallowedTools`. Worker-side hooks have documented bypass gaps (claude-code#37210) → **arco's own `Allowed()` boundary check (Task 20) is authoritative; high-blast capabilities are never compiled onto the worker at all.**
+> ⚠ **SUPERSEDED BY REV 4.1 (default-off) + REV 5 (B6/B8/M11):** (1) **remove `net-fetch` from the `allow` set** in the S1 test below — rev-4.1 decision #2 + precond #6 make `net-fetch`/`spawn-subworker` **default-OFF** (Task 20 got this marker; this task did not, so a subagent would build the stale wide version). (2) Stage the compiled config + hook script **OUTSIDE the worker-writable worktree** (`~/.arco/workers/<ulid>/`, daemon-owned) and point Claude Code at it via `--settings` — a worktree-local hook script is worker-rewritable and a repo `settings.local.json` out-precedes it. (3) The model is **compiled config = prevention, arco = detection+response**: `Allowed()` is authoritative only for **arco-executed** actions; a worker acts live in-process, so every worker-executed medium-tier cap must be backed by a server-side non-advisory control.
+> Verified mechanism: `settings.json` `permissions.{allow,deny,ask}` (eval order deny→ask→allow, hooks first, deny wins even in bypass) + `PreToolUse` hook (`permissionDecision:"deny"` / exit 2) + `--allowedTools/--disallowedTools`. Worker-side hooks have documented bypass gaps (claude-code#37210) → **arco's own `Allowed()` boundary check (Task 20) is authoritative for arco-executed actions; high-blast capabilities are never compiled onto the worker at all.**
 - [ ] **S1 tests**: `Compile(worktree, tree)` writes `.claude/settings.json` with tests/build/lint/install/net-fetch and in-worktree fs in `allow`, out-of-worktree writes + push.main + deploy + spend + read-secrets in `deny`, medium-risk (merge/shared-push) in `ask`; writes a `PreToolUse` hook script that denies out-of-worktree paths + parses `Bash`/`gh` command strings for blocked git subcommands; `Flags(tree)` returns matching `--allowedTools/--disallowedTools`; **a high-blast capability produces a `deny` rule AND is asserted absent from allow (worker cannot reach it even if it tries)**; Spawn narrows session→worker tree and compiles before launch.
 - [ ] **S2–4** implement; document that command-string matching is best-effort and the daemon boundary is the real gate.
 - [ ] **S5 commit** `feat: compile session capability tree onto worker (settings.json + PreToolUse hook + flags)`
