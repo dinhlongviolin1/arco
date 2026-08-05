@@ -81,6 +81,53 @@ func newSessionsCmd() *cobra.Command {
 	}
 }
 
+func newVerifyCmd() *cobra.Command {
+	var rev int64
+	var actor string
+	cmd := &cobra.Command{
+		Use:   "verify <worker-id> --rev <rev>",
+		Short: "mark a completed_candidate worker completed_verified (diff-gate)",
+		Long:  "Pass the --rev shown by `arco diff`; if the worker re-ran since you reviewed, verify is refused (409).",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			if err := c.Verify(context.Background(), args[0], rev, actor); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "verified")
+			return nil
+		},
+	}
+	cmd.Flags().Int64Var(&rev, "rev", -1, "the rev you reviewed (from `arco diff`)")
+	cmd.Flags().StringVar(&actor, "actor", "human", "who is verifying (audit)")
+	_ = cmd.MarkFlagRequired("rev")
+	return cmd
+}
+
+func newDiffCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <worker-id>",
+		Short: "show a worker's base→head diff (and the rev to pass to `arco verify`)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			d, err := c.Diff(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "rev %d  state %s  %s..%s  %d files +%d -%d\n%s\n",
+				d.Rev, d.State, d.Base, d.Head, d.Files, d.Insertions, d.Deletions, d.Patch)
+			return nil
+		},
+	}
+}
+
 func newEscalationsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "escalations",
