@@ -215,6 +215,47 @@ type EscalationFilter struct {
 	WorkerID  string
 }
 
+// PoolState is a provider pool's admission state. `cooldown` is a temporary
+// 429-backoff (auto-clears at CooldownUntil); `disabled` is operator-set and
+// sticky. Pools cap rate-limit / concurrency ONLY — no cost (build-guide §A #1).
+type PoolState string
+
+const (
+	PoolOK       PoolState = "ok"
+	PoolCooldown PoolState = "cooldown"
+	PoolDisabled PoolState = "disabled"
+)
+
+// ProviderPool caps how many workers may run against one provider/org/profile
+// concurrently (MaxActive), how fast they may start (MaxStartsPerMin), and
+// enforces a 429 cooldown. Mirrors the provider_pools row (cost fields cut).
+type ProviderPool struct {
+	ID              string
+	Provider        string
+	Org             string
+	ClavisProfile   string
+	ModelClass      string
+	MaxActive       int
+	MaxStartsPerMin int
+	State           PoolState
+	CooldownUntil   string // RFC3339Nano; "" when not in cooldown
+	CreatedAt       string
+}
+
+// Lease is one worker's admission token against a pool, acquired BEFORE
+// dispatch_intent and released when the worker terminates. A leaked lease (crash
+// between acquire and release) is reaped by ReapLeases via TTL / terminal-worker
+// cross-check (build-guide B10-lease). Mirrors the worker_pool_leases row.
+type Lease struct {
+	ID                    string
+	PoolID                string
+	WorkerID              string // "" until bound to a worker
+	DispatchIntentEventID *int64
+	AcquiredAt            string
+	ExpiresAt             string
+	ReleasedAt            string // "" while active
+}
+
 // CatalogRow is a capability_catalog row — the structural classifier's data.
 type CatalogRow struct {
 	Capability     string

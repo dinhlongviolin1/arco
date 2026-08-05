@@ -17,7 +17,21 @@ var (
 	ErrIllegalTransition = errors.New("core: illegal worker state transition")
 	// ErrProtectedPool guards mutations that are illegal on the pool sentinel.
 	ErrProtectedPool = errors.New("core: operation not allowed on the protected pool session")
+	// ErrLeaseRejected is returned by AcquireLease when pool admission denies the
+	// lease. Inspect the wrapped *LeaseRejection for the machine-readable Reason.
+	ErrLeaseRejected = errors.New("core: lease admission rejected")
 )
+
+// LeaseRejection carries WHY a lease was denied (disabled|cooldown|at_capacity|
+// start_rate) so a caller can back off appropriately. It satisfies
+// errors.Is(err, ErrLeaseRejected).
+type LeaseRejection struct{ Reason string }
+
+func (e *LeaseRejection) Error() string        { return "core: lease rejected: " + e.Reason }
+func (e *LeaseRejection) Is(target error) bool { return target == ErrLeaseRejected }
+
+// StartRateWindow is the sliding window over which MaxStartsPerMin is enforced.
+const StartRateWindow = time.Minute
 
 // WorkerObservation carries liveness/HEAD facts recorded by the sweep or intake.
 // Empty string fields are left unchanged; LastSeenAt defaults to now if empty.
@@ -58,6 +72,11 @@ type Reader interface {
 	// Allowed is the authoritative capability check for arco-executed actions
 	// (O(1) own-tree read; cascade keeps it O(1)).
 	Allowed(sessionID, capability string) (bool, error)
+
+	// GetPool returns a provider pool by id.
+	GetPool(id string) (ProviderPool, error)
+	// CountActiveLeases returns how many un-released leases the pool holds.
+	CountActiveLeases(poolID string) (int, error)
 }
 
 // Tx is a serialized single-writer transaction. It is arco-owned; the storage
@@ -95,6 +114,25 @@ type Tx interface {
 	// ExpirePendingForWorker closes any pending escalation for a worker that has
 	// left its waiting state by another path (so it doesn't linger as a phantom).
 	ExpirePendingForWorker(workerID string) (int, error)
+
+	// AcquireLease atomically admits a new lease against poolID under the
+	// single-writer lock (counts active + start-window leases, applies admission),
+	// inserting an UNBOUND lease (worker_id NULL) with expires_at = now + ttl.
+	// Returns *LeaseRejection (errors.Is ErrLeaseRejected) when admission denies,
+	// or ErrNotFound if the pool doesn't exist. An expired cooldown auto-clears.
+	AcquireLease(leaseID, poolID string, ttl time.Duration) error
+	// BindLease attaches an acquired lease to the worker + dispatch_intent event
+	// it admitted (called in the same tx as CreateWorker/dispatch_intent).
+	BindLease(leaseID, workerID string, dispatchIntentEventID int64) error
+	// ReleaseLease marks a lease released (idempotent: already-released is a no-op).
+	ReleaseLease(leaseID string) error
+	// SetPoolState sets a pool's admission state; cooldownUntil applies only to
+	// PoolCooldown (RFC3339Nano; "" clears it). Used for 429 backoff / disable.
+	SetPoolState(poolID string, state PoolState, cooldownUntil string) error
+	// ReapLeases releases leaked/stale leases (build-guide B10-lease): unbound
+	// leases past TTL, plus bound leases whose worker is terminal or gone. Returns
+	// the number released.
+	ReapLeases() (int, error)
 }
 
 // ErrHighBlastScope is returned when a caller tries to promote a high-blast

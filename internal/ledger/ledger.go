@@ -41,6 +41,11 @@ type Store struct {
 // the single insert chokepoint (build-guide B4). Set once at startup.
 func (s *Store) SetScrubber(sc core.Scrubber) { s.scrub = sc }
 
+// SetClock overrides the time source (default time.Now). Injectable so tests can
+// drive TTL / cooldown / start-rate windows deterministically. Set once, before
+// concurrent use — the field is read without a lock.
+func (s *Store) SetClock(c core.Clock) { s.clock = c }
+
 var _ core.Store = (*Store)(nil)
 
 // Open opens (creating if needed) the SQLite database at path with WAL and
