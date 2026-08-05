@@ -13,6 +13,7 @@ type SweepResult struct {
 	Observed     int
 	Transitions  int
 	LeasesReaped int // leaked/stale provider-pool leases released (B10-lease)
+	PooledPaused int // workers paused after sitting unclaimed past the pool TTL
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -35,6 +36,10 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// worker liveness, so it also runs when there are no live workers. Workers
 	// finalized later in THIS sweep are reaped on the next one (eventual).
 	res.LeasesReaped, _ = e.reapLeases(ctx)
+	// Pause workers that have sat unclaimed in the pool past the TTL.
+	if e.PoolTTL > 0 {
+		res.PooledPaused, _ = e.reapPooled(ctx)
+	}
 	var live []core.Worker
 	worktrees := map[string]bool{}
 	for _, w := range all {
@@ -114,6 +119,17 @@ func (e *Engine) reapLeases(ctx context.Context) (int, error) {
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		var err error
 		n, err = tx.ReapLeases()
+		return err
+	})
+	return n, err
+}
+
+// reapPooled pauses workers that have sat unclaimed in the pool past PoolTTL.
+func (e *Engine) reapPooled(ctx context.Context) (int, error) {
+	var n int
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		var err error
+		n, err = tx.ReapPooledWorkers(e.PoolTTL)
 		return err
 	})
 	return n, err

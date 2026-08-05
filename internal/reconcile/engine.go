@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 
@@ -44,6 +45,10 @@ type Engine struct {
 	// MissThreshold is how many consecutive sweeps a worker may be unobserved
 	// before it is finalized (suspect_missing → lost / completed_candidate).
 	MissThreshold int
+
+	// PoolTTL is how long a released worker may sit unclaimed in the pool before
+	// the sweep pauses it (0 = reaping disabled). Set from config by the daemon.
+	PoolTTL time.Duration
 
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
