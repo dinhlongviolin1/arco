@@ -81,6 +81,90 @@ func newSessionsCmd() *cobra.Command {
 	}
 }
 
+func newEscalationsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "escalations",
+		Short: "list pending escalations (questions + confirms)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.Escalations(context.Background())
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tKIND\tCLASS\tTIER\tCAP\tACTION")
+			for _, e := range res.Escalations {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, e.ActionClass, e.Tier, e.Capability, e.Action)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
+func newAnswerCmd() *cobra.Command {
+	var always bool
+	cmd := &cobra.Command{
+		Use:   "answer <id> <text>",
+		Short: "answer a pending question (--always promotes a non-high-blast standing grant)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			scope := "once"
+			if always {
+				scope = "session"
+			}
+			if err := c.Answer(context.Background(), api.AnswerReq{ID: args[0], Text: args[1], Scope: scope}); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "answered")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&always, "always", false, "promote a standing session grant (non-high-blast only)")
+	return cmd
+}
+
+func newConfirmCmd() *cobra.Command {
+	var always bool
+	cmd := &cobra.Command{
+		Use:   "confirm <id> <yes|no>",
+		Short: "decide a pending danger-class confirm",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			var yes bool
+			switch args[1] {
+			case "yes", "y", "true":
+				yes = true
+			case "no", "n", "false":
+				yes = false
+			default:
+				return fmt.Errorf("decision must be yes|no, got %q", args[1])
+			}
+			scope := "once"
+			if always {
+				scope = "session"
+			}
+			if err := c.Confirm(context.Background(), api.ConfirmReq{ID: args[0], Yes: yes, Scope: scope}); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "decided")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&always, "always", false, "promote a standing session grant (non-high-blast only)")
+	return cmd
+}
+
 // newHookCmd posts a herdr-style state change to the daemon. This is what the
 // herdr plugin-hook shells out to (the PASS-2 intake bridge).
 func newHookCmd() *cobra.Command {
