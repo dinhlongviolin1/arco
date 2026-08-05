@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Arco — Overview (rev 5)</title>
+<title>Arco — Overview (rev 6)</title>
 <style>
   :root{
     --bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--border:#2b333d;
@@ -54,13 +54,13 @@
 <div class="wrap">
 
   <header class="hero">
-    <div class="kicker">Design Overview · rev 5 · pre-build adversarial hardening (16 Claude reviewers + 3 qwen3.8-max passes) · arco</div>
+    <div class="kicker">Design Overview · rev 6 · consolidated build guide (freeze inlined) · arco</div>
     <h1>arco</h1>
     <div class="tag">Command your worker agents the way a bow commands the strings — a self-hosted daemon that supervises a fleet of coding-agent workers across your machines, decides what to do when they finish or block, and is driven from the CLI (Telegram &amp; Web optional).</div>
     <div class="trio"><b>clavis</b> (the key) launches workers · <b>herdr</b> herds them per machine · <b>arco</b> (the bow) commands the ensemble</div>
   </header>
 
-  <div class="pill">✅ rev 5 — pre-build adversarial review (16 Claude domain reviewers + adversarial verification + 3 qwen3.8-max cross-family passes) → <b>GO</b>; 13 blockers + 17 major, all spec-holes not design flaws, folded into a PASS-0 delta checklist. Scroll to <b>“rev 5 hardening.”</b></div>
+  <div class="pill">✅ rev 6 — <b>consolidated build guide</b> (<code>docs/build-guide-rev6.md</code>): the rev-1→rev-5 layers flattened into one authoritative source with the freeze inlined (schema + seed data + Go contracts + PASS-0→3 tasks). Verdict after 5 review rounds: <b>build-ready</b>. Scroll to <b>“rev 5 hardening”</b> for how it got here.</div>
 
   <div style="background:rgba(63,185,80,.06);border:1px solid #2f5a3a;border-radius:12px;padding:8px 22px;margin-top:18px">
     <h3 style="color:#3fb950;margin-bottom:2px">🆕 What changed &nbsp;<span style="color:#9aa7b4;font-family:var(--mono);font-size:12px">rev 2 → rev 3 design threads (below); rev 4 = final-review hardening + resolved decisions (see “Final review”)</span></h3>

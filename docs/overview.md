@@ -8,6 +8,8 @@
 > **Rev 4 → 4.2 (2026-08-04)** — final-review hardening: a PASS-0 schema/contract freeze, the reconciled PASS-0→1→2→3 build order, six security preconditions, single-owner-but-transferable worker ownership (pause/recompile/resume via a protected `pool`), and the single-parent session tree (flat in P2, depth-2 supersession next). Autonomy in P2 is **shadow/draft by default** — nothing auto-answers until earned per class. Engineer detail: [`implementation-plan.md`](implementation-plan.md).
 >
 > **Rev 5 (2026-08-05)** — pre-build adversarial review (16 Claude domain reviewers + adversarial verification + 3 qwen3.8-max cross-family passes). Verdict **GO**; every blocker was a spec hole or unreconciled supersession, not a design flaw. Findings + fixes + the PASS-0 delta checklist: [`hardening-report-rev5.md`](hardening-report-rev5.md). Also resolves the memory question (opus+fable+qwen → **"links, not a graph"**): cross-project `[[wikilinks]]` + a derived backlink index as a 24a increment, not a general node/graph store — [`memory-links-rev5.md`](memory-links-rev5.md).
+>
+> **rev 6 (2026-08-05) — consolidated build guide.** The rev-1→rev-5 layers are flattened into one authoritative source with the freeze fully inlined (schema + seed data + Go contracts + PASS-0→3 tasks): **[`build-guide-rev6.md`](build-guide-rev6.md) — start here to build.** This overview + the layered plan are now provenance.
 
 ## What it is, in one breath
 `clavis` launches workers · `herdr` herds them on each machine · **`arco` commands the whole ensemble** — one durable Go daemon that owns the truth about every worker, reacts to their state changes, calls an LLM "brain" only when a decision is needed, and reports to you.

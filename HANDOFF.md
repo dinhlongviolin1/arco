@@ -14,25 +14,27 @@ to do when they finish or block. It's driven from the CLI (Telegram + Web are op
   "brain" only when a decision is needed** — so nothing long-running is an LLM process
   (no leaks, bounded cost, crash-safe).
 
-## Status: design complete + reviewed; **not yet built**
-The architecture has been through several independent review rounds and is considered
-build-ready. There is **no daemon code yet** — the repo currently holds the design/build
-plan. The next step is to start building at **PASS-0**.
+## Status: design complete + hardened (5 review rounds) + consolidated; **not yet built**
+The architecture has been through five independent review rounds (through a rev-5 adversarial
+hardening pass) and is **build-ready after consolidation** — now consolidated into
+[`docs/build-guide-rev6.md`](docs/build-guide-rev6.md). There is **no daemon code yet**. The next step
+is to start building at **PASS-0** using the rev-6 guide. A handful of rev-6 §A decisions are marked
+`PROVISIONAL — confirm` (maintainer calls); they are safe to build against and cheap to flip.
 
 ⚠️ Not safe to run against real repos/credentials until the **security preconditions**
 (below, and in the plan) are met. See [`SECURITY.md`](SECURITY.md).
 
 ## Where to read (in order)
-1. [`docs/implementation-plan.md`](docs/implementation-plan.md) — **the build guide.** Read
-   the top sections in this order:
-   - **REV 4** — resolved decisions, the **PASS-0 schema/contract freeze**, the reconciled
-     build order (PASS-0 → PASS-1 → PASS-2 → PASS-3), and the 6 security preconditions.
-   - **rev 4.1** — the final-review sign-off patches (6 must-fix-in-PASS-0 items).
-   - **rev 4.2** — session hierarchy + worker ownership transfer (schema-freeze delta).
-   - The **Tasks (1–27)** below carry inline `⚠ SUPERSEDED BY REV 4.x` markers where rev-4
-     changed them — **always follow the rev-4 form, not the raw task text.**
-2. [`docs/overview.md`](docs/overview.md) — readable overview + roadmap.
-3. [`docs/design-blueprint.md`](docs/design-blueprint.md) — the design rationale (how other
+1. [`docs/build-guide-rev6.md`](docs/build-guide-rev6.md) — **THE build guide.** The consolidated,
+   authoritative source: resolved decisions (§A), the frozen `0001_init.sql` incl. seed data (§B),
+   the frozen Go contracts (§C), and the PASS-0→3 task list (§D). Start here. It supersedes everything below.
+2. [`docs/implementation-plan.md`](docs/implementation-plan.md) — the **layered plan (provenance).** The
+   rev-1→rev-5 history and the detailed per-task S1–S5 substeps (as corrected by the rev-6 freeze). Read for
+   task detail; where it conflicts with rev-6, **rev-6 wins.**
+3. [`docs/hardening-report-rev5.md`](docs/hardening-report-rev5.md) + [`docs/memory-links-rev5.md`](docs/memory-links-rev5.md)
+   — the rev-5 review findings + the "links, not a graph" memory decision (provenance; line refs are pre-consolidation).
+4. [`docs/overview.md`](docs/overview.md) — readable overview + roadmap.
+5. [`docs/design-blueprint.md`](docs/design-blueprint.md) — the design rationale (how other
    agent systems solve the same problems, and what we borrowed). *Note: it cites internal
    research/review artifacts that are not part of this repo — kept only as provenance.*
 
@@ -101,7 +103,9 @@ capability tree). Pure-Go SQLite (`modernc.org/sqlite`, cgo-free); `cobra` CLI.
 3. Managed-settings deny layer + no high-blast credentials on worker boxes + **server-side
    git branch protection** (the only non-advisory layer).
 4. Auth on Telegram (sender allowlist), Web, and cross-machine event intake (source-bound).
-5. Secret redaction at every ledger / memory / transcript egress.
+5. Secret redaction at **write-time / ingress** (before `AppendEvent` and before the brain prompt —
+   `events` is immutable, so egress-only scrubbing leaves secrets on disk forever), plus egress
+   defense-in-depth on every ledger / memory / transcript read.
 6. Pinned spawn permission mode (interactive-in-pane, not headless `-p`) + structural
    action-class + network-fetch/spawn default-off.
 
