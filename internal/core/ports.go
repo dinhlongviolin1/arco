@@ -19,6 +19,16 @@ var (
 	ErrProtectedPool = errors.New("core: operation not allowed on the protected pool session")
 )
 
+// WorkerObservation carries liveness/HEAD facts recorded by the sweep or intake.
+// Empty string fields are left unchanged; LastSeenAt defaults to now if empty.
+type WorkerObservation struct {
+	HeadCommit   string
+	PID          *int
+	PIDStartTime string
+	BootID       string
+	LastSeenAt   string
+}
+
 // WorkerFilter selects workers for a list query (zero value = all).
 type WorkerFilter struct {
 	State        WorkerState
@@ -57,6 +67,10 @@ type Tx interface {
 	CreateWorker(w Worker) error
 	TransitionWorker(id string, to WorkerState, expectedRev int64, e Event) error
 	AppendEvent(e Event) (cursor int64, deduped bool, conflict bool, err error)
+
+	// ObserveWorker records liveness/HEAD observations (head_commit, last_seen_at,
+	// pid, boot_id) without a state change or rev bump — the sweep/intake truth.
+	ObserveWorker(id string, obs WorkerObservation) error
 
 	CreateSession(s Session) error
 	SetSessionStatus(id string, to SessionStatus, expectedRev int64, e Event) error

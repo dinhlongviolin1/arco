@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 
@@ -143,6 +144,44 @@ func (t *txn) insertEvent(e core.Event) (int64, bool, bool, error) {
 	}
 	id, _ := res.LastInsertId()
 	return id, false, false, nil
+}
+
+// ObserveWorker records liveness/HEAD without a state change or rev bump.
+func (t *txn) ObserveWorker(id string, obs core.WorkerObservation) error {
+	sets := []string{}
+	args := []any{}
+	if obs.HeadCommit != "" {
+		sets = append(sets, "head_commit=?")
+		args = append(args, obs.HeadCommit)
+	}
+	if obs.PIDStartTime != "" {
+		sets = append(sets, "pid_start_time=?")
+		args = append(args, obs.PIDStartTime)
+	}
+	if obs.BootID != "" {
+		sets = append(sets, "boot_id=?")
+		args = append(args, obs.BootID)
+	}
+	if obs.PID != nil {
+		sets = append(sets, "pid=?")
+		args = append(args, *obs.PID)
+	}
+	last := obs.LastSeenAt
+	if last == "" {
+		last = t.now()
+	}
+	sets = append(sets, "last_seen_at=?")
+	args = append(args, last)
+	args = append(args, id)
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE workers SET `+strings.Join(sets, ", ")+` WHERE id=?`, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return core.ErrNotFound
+	}
+	return nil
 }
 
 func (t *txn) CreateSession(s core.Session) error {
