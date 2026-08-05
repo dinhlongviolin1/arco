@@ -23,6 +23,12 @@ var (
 	// ErrNotPooled is returned when claiming a worker that is not currently in the
 	// pool (only released/pooled workers can be claimed).
 	ErrNotPooled = errors.New("core: worker is not pooled")
+	// ErrMaxDepthExceeded is returned when a delegation would exceed the maximum
+	// delegation depth (depth-2 supersession).
+	ErrMaxDepthExceeded = errors.New("core: delegation depth limit exceeded")
+	// ErrFanInExceeded is returned when a session already holds the maximum number
+	// of active workers (max_children_per_session fan-in cap).
+	ErrFanInExceeded = errors.New("core: session fan-in limit exceeded")
 )
 
 // LeaseRejection carries WHY a lease was denied (disabled|cooldown|at_capacity|
@@ -80,6 +86,9 @@ type Reader interface {
 	GetPool(id string) (ProviderPool, error)
 	// CountActiveLeases returns how many un-released leases the pool holds.
 	CountActiveLeases(poolID string) (int, error)
+	// CountActiveWorkers returns how many NON-terminal workers a session owns
+	// (the fan-in cap denominator for delegation admission).
+	CountActiveWorkers(sessionID string) (int, error)
 }
 
 // Tx is a serialized single-writer transaction. It is arco-owned; the storage

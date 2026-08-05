@@ -54,13 +54,23 @@ type Engine struct {
 	// clavis/provider rate quotas against a single session storming the brain.
 	BrainRate int
 
+	// MaxChildren caps the number of active workers a session may own — the
+	// delegation fan-in cap (0 = unlimited). Set from config by the daemon.
+	MaxChildren int
+	// MaxDepth is the maximum delegation depth (depth-2 supersession). 0 → 2.
+	MaxDepth int
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }
 
 // New builds an Engine with default thresholds and an Exec (brain disabled).
+// MaxChildren defaults to a bounded fan-in (defense-in-depth: an Engine built
+// outside the daemon still can't spawn unbounded children); the daemon overrides
+// it from config. MaxDepth's 0→2 default is applied in Delegate.
 func New(store core.Store, vm core.VMClient) *Engine {
-	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3, misses: map[string]int{}}
+	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3,
+		MaxChildren: 8, misses: map[string]int{}}
 }
 
 // DispatchResult reports what a dispatch created. State is the worker's state
@@ -119,16 +129,22 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 		return DispatchResult{}, err
 	}
 
-	// Phase 2: external side effect (launch the agent). The fake VMClient in
-	// tests is a no-op; a real one shells out via clavis/herdr.
-	launchErr := e.VM.Prompt(ctx, workspace, task)
+	// Phases 2+3: launch the agent + durable result/state.
+	finalState, err := e.launchAndFinalize(ctx, workerID, workspace, sessionID, task)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
+}
 
-	// Phase 3: durable result + state.
+// launchAndFinalize performs the external launch (phase 2) then the durable
+// dispatch_done transition (phase 3) shared by Dispatch and Delegate. A launch
+// error is resolved by liveness (the agent may have spawned before the error
+// surfaced) rather than blindly marking failed over a live process.
+func (e *Engine) launchAndFinalize(ctx context.Context, workerID, workspace, sessionID, task string) (core.WorkerState, error) {
+	launchErr := e.VM.Prompt(ctx, workspace, task)
 	finalState := core.WorkerRunning
 	if launchErr != nil {
-		// Ambiguous: the launch may have spawned the agent before erroring
-		// (timeout / dropped connection). Resolve by liveness rather than blindly
-		// marking failed over a live process — alive ⇒ adopt running, else failed.
 		finalState = core.WorkerFailed
 		if agents, aerr := e.VM.ListAgents(ctx); aerr == nil {
 			for _, a := range agents {
@@ -139,7 +155,7 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 			}
 		}
 	}
-	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
@@ -152,10 +168,7 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 			Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID, Payload: payload,
 		})
 	})
-	if err != nil {
-		return DispatchResult{}, err
-	}
-	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
+	return finalState, err
 }
 
 // EventInput is a normalized worker state-change from the herdr hook / intake.

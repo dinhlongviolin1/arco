@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -96,7 +97,7 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 	// run_again/dispatch prompt the worker — a side effect done BEFORE the tx so
 	// a tx never holds while shelling out.
 	switch step.Kind {
-	case "run_again", "dispatch":
+	case "run_again":
 		// Re-read + record prompt_intent under the write lock RIGHT before the
 		// prompt, and skip if the worker has since moved (a concurrent intake
 		// transition) — the CAS protects state, this protects the un-recallable
@@ -109,6 +110,20 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 			// Delivery failed — do NOT record a normal running decision (the ledger
 			// would claim running while the worker was never prompted). Park it.
 			e.park(ctx, workerID, "brain prompt delivery failed: "+err.Error())
+			return
+		}
+		e.recordDecision(ctx, workerID, step, core.WorkerRunning)
+	case "dispatch":
+		// The brain delegates a subtask → spawn a CHILD worker (depth + per-session
+		// fan-in gated). The parent stays running while the child works. A denied
+		// delegation (depth/fan-in) is an audit event, never a crash or silent drop.
+		if _, err := e.Delegate(ctx, workerID, step.Instruction); err != nil {
+			switch {
+			case errors.Is(err, core.ErrMaxDepthExceeded), errors.Is(err, core.ErrFanInExceeded):
+				e.errorEvent(ctx, workerID, "delegation denied: "+err.Error())
+			default:
+				e.errorEvent(ctx, workerID, "delegation failed: "+err.Error())
+			}
 			return
 		}
 		e.recordDecision(ctx, workerID, step, core.WorkerRunning)
