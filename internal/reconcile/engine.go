@@ -97,7 +97,18 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 	// Phase 3: durable result + state.
 	finalState := core.WorkerRunning
 	if launchErr != nil {
+		// Ambiguous: the launch may have spawned the agent before erroring
+		// (timeout / dropped connection). Resolve by liveness rather than blindly
+		// marking failed over a live process — alive ⇒ adopt running, else failed.
 		finalState = core.WorkerFailed
+		if agents, aerr := e.VM.ListAgents(ctx); aerr == nil {
+			for _, a := range agents {
+				if a.Alive && a.Workspace == workspace {
+					finalState = core.WorkerRunning
+					break
+				}
+			}
+		}
 	}
 	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)

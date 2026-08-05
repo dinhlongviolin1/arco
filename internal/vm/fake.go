@@ -20,7 +20,10 @@ type Fake struct {
 	Agents    []core.AgentObs
 	Heads     map[string]string
 	PromptErr error
-	killed    []string
+	// AliveOnPrompt models "the agent spawned but Prompt still returned an error"
+	// (ambiguous launch): a prompted workspace is thereafter reported alive.
+	AliveOnPrompt bool
+	killed        []string
 }
 
 var _ core.VMClient = (*Fake)(nil)
@@ -32,6 +35,9 @@ func (f *Fake) Prompt(_ context.Context, workspace, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prompts = append(f.prompts, Prompted{workspace, text})
+	if f.AliveOnPrompt {
+		f.Agents = append(f.Agents, core.AgentObs{Workspace: workspace, Alive: true})
+	}
 	return f.PromptErr
 }
 

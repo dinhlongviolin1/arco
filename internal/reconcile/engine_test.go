@@ -69,6 +69,19 @@ func TestDispatch_LaunchErrorParksFailed(t *testing.T) {
 	require.Equal(t, core.WorkerFailed, w.State)
 }
 
+// Regression (qwen finding #2): an ambiguous launch error where the agent is
+// actually alive must be adopted running, not failed over a live process.
+func TestDispatch_AmbiguousLaunchErrorButAlive_AdoptsRunning(t *testing.T) {
+	e, s, fake := newEngine(t)
+	fake.AliveOnPrompt = true
+	fake.PromptErr = errors.New("connection dropped after spawn")
+	res, err := e.Dispatch(context.Background(), "", "task", true)
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State, "a live agent must be adopted, not failed")
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerRunning, w.State)
+}
+
 func TestApplyEvent_IdleWithHeadChange_Completes(t *testing.T) {
 	e, s, _ := newEngine(t)
 	res, err := e.Dispatch(context.Background(), "", "task", true)

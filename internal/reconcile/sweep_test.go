@@ -84,6 +84,26 @@ func TestSweep_ConfirmedMissingWithProgress_Candidate(t *testing.T) {
 	require.Equal(t, core.WorkerCompletedCandidate, w.State)
 }
 
+// Regression (qwen finding #1): a dispatched worker has no worktree, so HEAD
+// must be keyed by WORKSPACE — otherwise progress-then-death is misclassified
+// lost instead of completed_candidate.
+func TestSweep_DispatchedWorkerProgressKeyedByWorkspace_Candidate(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	res, err := e.Dispatch(context.Background(), "", "task", true) // no worktree set
+	require.NoError(t, err)
+	w0, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Empty(t, w0.Worktree, "dispatched worker has no worktree yet")
+
+	fake.Heads["arco_"+res.WorkerID] = "advanced" // HEAD keyed by workspace
+	fake.Agents = nil                             // then it vanished
+	_, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerCompletedCandidate, w.State, "progress-then-death must be candidate, not lost")
+}
+
 func TestSweep_SkipsTerminalWorkers(t *testing.T) {
 	e, s, fake := newEngine(t)
 	id := mkRunning(t, e, s, "/wt/e", "base")

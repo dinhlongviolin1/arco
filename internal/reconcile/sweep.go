@@ -37,9 +37,7 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 			continue
 		}
 		live = append(live, w)
-		if w.Worktree != "" {
-			worktrees[w.Worktree] = true
-		}
+		worktrees[headKey(w)] = true
 	}
 	if len(live) == 0 {
 		return res, nil
@@ -73,7 +71,7 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
 			alive = false
 		}
-		headNow := heads[w.Worktree]
+		headNow := heads[headKey(w)]
 		headChanged := headNow != "" && headNow != w.HeadCommit
 
 		if alive {
@@ -131,6 +129,16 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 	return err == nil, err
 }
 
+// headKey is the git-HEAD lookup key for a worker: its worktree if known, else
+// its workspace (a freshly-dispatched worker has no worktree yet, so keying only
+// on worktree would make completed_candidate unreachable — always lost).
+func headKey(w core.Worker) string {
+	if w.Worktree != "" {
+		return w.Worktree
+	}
+	return w.Workspace
+}
+
 func (e *Engine) bumpMiss(id string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -158,16 +166,22 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	alive := map[string]bool{}
+	aliveByWorkspace := map[string]core.AgentObs{}
 	for _, a := range agents {
 		if a.Alive {
-			alive[a.Workspace] = true
+			aliveByWorkspace[a.Workspace] = a
 		}
 	}
+	var firstErr error
 	for _, w := range starting {
+		obs, alive := aliveByWorkspace[w.Workspace]
+		// same PID-reuse identity guard as Sweep: don't adopt a recycled workspace.
+		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
+			alive = false
+		}
 		target := core.WorkerFailed
 		reason := "boot: dispatch_intent without dispatch_done, process not found"
-		if alive[w.Workspace] {
+		if alive {
 			target, reason = core.WorkerRunning, "boot: adopted live worker"
 		}
 		if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
@@ -182,10 +196,14 @@ func (e *Engine) Recover(ctx context.Context) error {
 				Kind: "reconcile", WorkerID: w.ID, SessionID: cur.OwnerSession,
 				Payload: fmt.Sprintf(`{"boot_recovery":true,"reason":%q}`, reason),
 			})
-		}); err != nil {
-			return err
+		}); err != nil && firstErr == nil {
+			firstErr = err // record but keep going: one bad worker mustn't skip the rest + the sweep
 		}
 	}
-	_, err = e.Sweep(ctx)
-	return err
+	// Always run the sweep, even if a per-worker recovery failed, so live-but-
+	// dead `running` workers are repaired.
+	if _, err := e.Sweep(ctx); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
 }

@@ -76,8 +76,7 @@ func (t *txn) TransitionWorker(id string, to core.WorkerState, expectedRev int64
 	if n == 0 {
 		return core.ErrRevMismatch
 	}
-	_, _, _, err = t.AppendEvent(e)
-	return err
+	return t.appendChecked(e)
 }
 
 // AppendEvent appends idempotently. Identity = (source, source_event_id).
@@ -110,9 +109,12 @@ func (t *txn) AppendEvent(e core.Event) (cursor int64, deduped bool, conflict bo
 			if existingHash.String == e.SourceEventHash {
 				return 0, true, false, nil // idempotent no-op
 			}
-			// same id, different hash → record an error event, signal conflict
+			// same id, different hash → record an error event, signal conflict.
+			// The error event carries a STABLE synthetic id so repeated poisoned
+			// re-deliveries dedup to a single error row (no amplification).
 			if _, _, _, ierr := t.insertEvent(core.Event{
-				Source: "internal", Kind: "error", SessionID: e.SessionID, WorkerID: e.WorkerID,
+				Source: "internal", SourceEventID: e.Source + ":" + e.SourceEventID + ":conflict",
+				Kind: "error", SessionID: e.SessionID, WorkerID: e.WorkerID,
 				Payload: fmt.Sprintf(`{"error":"source_event_hash mismatch","source":%q,"source_event_id":%q}`,
 					e.Source, e.SourceEventID),
 			}); ierr != nil {
@@ -134,13 +136,20 @@ func (t *txn) insertEvent(e core.Event) (int64, bool, bool, error) {
 	if e.Source == "" {
 		e.Source = "internal"
 	}
+	// ON CONFLICT DO NOTHING backstops the check-then-insert dedup with the real
+	// UNIQUE(source, source_event_id) constraint (NULL source_event_id never
+	// conflicts, so internal events always insert).
 	res, err := t.q.ExecContext(context.Background(),
-		`INSERT INTO events (`+eventCols+`) VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO events (`+eventCols+`) VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(source, source_event_id) DO NOTHING`,
 		e.Source, nullStr(e.SourceEventID), nullStr(e.SourceEventHash), nullStr(e.WorkerID),
 		nullStr(e.SessionID), e.Kind, e.Actor, e.CausationEventID, nullStr(e.CorrelationID),
 		e.Payload, e.OccurredAt, e.RecordedAt)
 	if err != nil {
 		return 0, false, false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, true, false, nil // dedup backstop hit
 	}
 	id, _ := res.LastInsertId()
 	return id, false, false, nil
@@ -180,6 +189,20 @@ func (t *txn) ObserveWorker(id string, obs core.WorkerObservation) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return core.ErrNotFound
+	}
+	return nil
+}
+
+// appendChecked appends an internal event and treats a hash-conflict as an
+// error so the surrounding CAS tx rolls back rather than committing a state
+// change with no corresponding event (build-guide "never a silent dedup").
+func (t *txn) appendChecked(e core.Event) error {
+	_, _, conflict, err := t.AppendEvent(e)
+	if err != nil {
+		return err
+	}
+	if conflict {
+		return fmt.Errorf("ledger: event conflict (hash mismatch) for %s:%s", e.Source, e.SourceEventID)
 	}
 	return nil
 }
@@ -240,11 +263,19 @@ func (t *txn) SetSessionStatus(id string, to core.SessionStatus, expectedRev int
 	if n, _ := res.RowsAffected(); n == 0 {
 		return core.ErrRevMismatch
 	}
-	_, _, _, err = t.AppendEvent(e)
-	return err
+	return t.appendChecked(e)
 }
 
 func (t *txn) AttachWorker(sessionID, workerID string) error {
+	// Validate the target: it must exist and not be the protected pool (release-
+	// to-pool is a PASS-3 op with its own path, not a bare attach).
+	s, err := t.GetSession(sessionID)
+	if err != nil {
+		return err
+	}
+	if s.Kind == core.SessionKindPool {
+		return core.ErrProtectedPool
+	}
 	res, err := t.q.ExecContext(context.Background(),
 		`UPDATE workers SET owner_session=? WHERE id=?`, sessionID, workerID)
 	if err != nil {
@@ -253,7 +284,9 @@ func (t *txn) AttachWorker(sessionID, workerID string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return core.ErrNotFound
 	}
-	return nil
+	return t.appendChecked(core.Event{
+		Kind: "note", SessionID: sessionID, WorkerID: workerID, Payload: `{"attach":true}`,
+	})
 }
 
 // Grant adds an active standing grant, bumps the session perm_rev, and appends
@@ -293,7 +326,7 @@ func (t *txn) Grant(sessionID, capability, grantedBy string, e core.Event) (int6
 	if err := t.bumpPermRev(sessionID, newRev); err != nil {
 		return 0, err
 	}
-	if _, _, _, err := t.AppendEvent(e); err != nil {
+	if err := t.appendChecked(e); err != nil {
 		return 0, err
 	}
 	return newRev, nil
@@ -337,7 +370,7 @@ func (t *txn) Revoke(sessionID, capability string, e core.Event) (int64, error) 
 		}
 	}
 	if revokedAny {
-		if _, _, _, err := t.AppendEvent(e); err != nil {
+		if err := t.appendChecked(e); err != nil {
 			return 0, err
 		}
 	}

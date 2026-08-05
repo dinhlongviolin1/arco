@@ -74,10 +74,13 @@ func TestMigrate_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	defer s.Close()
 	require.NoError(t, s.Migrate(context.Background()))
+	var n1 int
+	require.NoError(t, s.DB().QueryRow(`SELECT COUNT(1) FROM schema_migrations`).Scan(&n1))
 	require.NoError(t, s.Migrate(context.Background())) // second run is a no-op
-	var n int
-	require.NoError(t, s.DB().QueryRow(`SELECT COUNT(1) FROM schema_migrations`).Scan(&n))
-	require.Equal(t, 1, n)
+	var n2 int
+	require.NoError(t, s.DB().QueryRow(`SELECT COUNT(1) FROM schema_migrations`).Scan(&n2))
+	require.Equal(t, n1, n2, "re-running Migrate must not add rows")
+	require.GreaterOrEqual(t, n1, 2, "0001 + 0002 applied")
 }
 
 func TestMigrate_ReopenExistingDB(t *testing.T) {
