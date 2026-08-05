@@ -13,11 +13,13 @@ import (
 // pool-TTL reaper. Ownership is a single-owner invariant (workers.owner_session);
 // the pool sentinel (core.PoolSessionID) holds released, unowned workers.
 //
-// On every owner change the compiled config is invalidated (permissions_hash
-// cleared) so the reconcile recompiles the worker's capability tree against its
-// NEW owner before it acts again, and rev is bumped so any in-flight CAS that
-// assumed the old owner fails. arco's authoritative Allowed() gate always reads
-// the CURRENT owner_session (B14), so a stale worker-side config is layer-1 only.
+// On each release/claim/transfer op below (via reassign) the compiled config is
+// invalidated (permissions_hash cleared) so the reconcile recompiles the
+// worker's capability tree against its NEW owner before it acts again, and rev
+// is bumped so any in-flight CAS that assumed the old owner fails. arco's
+// authoritative Allowed() gate always reads the CURRENT owner_session (B14), so
+// a stale worker-side config is layer-1 only. (AttachWorker is a distinct,
+// currently-unused primitive that does NOT carry these invariants.)
 
 // ReleaseWorker hands a live worker back to the pool.
 func (t *txn) ReleaseWorker(workerID, actor string) error {
@@ -151,8 +153,12 @@ func (t *txn) ReapPooledWorkers(ttl time.Duration) (int, error) {
 		return 0, err
 	}
 	cutoff := now.Add(-ttl)
+	// Exclude already-paused workers: pausing does not clear pooled_at, and
+	// paused→paused is a legal self-edge, so without this the reaper would re-pause
+	// the same worker every sweep — churning rev + spamming the immutable event log
+	// (opus review). A paused pooled worker stays paused until claimed.
 	rows, err := t.q.QueryContext(context.Background(),
-		`SELECT id, pooled_at, state, rev FROM workers WHERE pooled_at IS NOT NULL`)
+		`SELECT id, pooled_at, state, rev FROM workers WHERE pooled_at IS NOT NULL AND state<>'paused'`)
 	if err != nil {
 		return 0, err
 	}

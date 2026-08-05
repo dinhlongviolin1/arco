@@ -229,4 +229,35 @@ func TestOwnership_ReapPooledPausesAfterTTL(t *testing.T) {
 	}))
 	require.Equal(t, 1, n)
 	require.Equal(t, core.WorkerPaused, getWorker(t, s, wid).State)
+
+	// Regression (opus MED): a second reap must NOT re-pause the already-paused
+	// worker (paused→paused self-edge would otherwise churn rev + spam events).
+	revBefore := getWorker(t, s, wid).Rev
+	countEvents := func() int {
+		evs, err := s.Reader().EventsSince(0, 100000)
+		require.NoError(t, err)
+		n := 0
+		for _, e := range evs {
+			if e.WorkerID == wid && e.Payload == `{"reason":"pool_ttl_pause"}` {
+				n++
+			}
+		}
+		return n
+	}
+	require.Equal(t, 1, countEvents())
+	clk.advance(25 * time.Hour)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var err error
+		n, err = tx.ReapPooledWorkers(24 * time.Hour)
+		return err
+	}))
+	require.Equal(t, 0, n, "already-paused pooled worker is not re-paused")
+	require.Equal(t, revBefore, getWorker(t, s, wid).Rev, "no rev churn")
+	require.Equal(t, 1, countEvents(), "no duplicate pool_ttl_pause event")
 }
+
+// NB: the worker-vanished B14 branch (grant refused when a worker-scoped
+// escalation's worker row is gone) is defensive-only and not unit-tested: FK
+// constraints (escalations.worker_id / events.worker_id → workers.id) keep the
+// worker row alive for as long as the escalation exists, so the branch is
+// unreachable in normal operation. The code guards it regardless.

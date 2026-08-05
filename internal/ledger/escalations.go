@@ -164,9 +164,16 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 			worker, haveWorker = w, true
 		}
 	}
+	// For a worker-scoped escalation the grant tracks the LIVE worker's owner; if
+	// the worker has since vanished there is no live owner, so promote nothing
+	// (an empty effSession disables wouldGrant) rather than granting to the stale
+	// recorded session. A session-scoped escalation (no worker) uses its session.
 	effSession := esc.SessionID
-	if haveWorker {
-		effSession = worker.OwnerSession
+	if esc.WorkerID != "" {
+		effSession = ""
+		if haveWorker {
+			effSession = worker.OwnerSession
+		}
 	}
 
 	// A grant is promoted only on a resuming decision (question, or an approved
