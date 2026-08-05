@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -13,11 +14,18 @@ var (
 	// ErrBrainAuthor rejects a brain-authored memory write (24a is manual-only;
 	// build-guide B13 — no author=brain auto-apply, ever).
 	ErrBrainAuthor = errors.New("memory: brain-authored writes are not allowed (manual memory)")
-	// ErrNoHuman rejects a write with no human decider.
+	// ErrNoHuman rejects a write with no (real) human decider.
 	ErrNoHuman = errors.New("memory: a human decided_by is required")
 	// ErrBadOp rejects an unknown op.
 	ErrBadOp = errors.New("memory: op must be add|update|expire")
+	// ErrEscape rejects a write whose resolved path escapes the store Dir (e.g.
+	// through a symlinked component).
+	ErrEscape = errors.New("memory: refusing a write that escapes the store directory")
 )
+
+// NOTE: the author/decided_by whitelist is defense-in-depth, NOT an
+// authorization boundary — the real enforcement is that only the human-approval
+// code path holds a reference to ApplyMemoryDiff; the brain path must not.
 
 // MemoryDiff is a proposed change to a topic file. Author must be user|external
 // (never brain); DecidedBy must be a human. Content is ignored for expire.
@@ -49,8 +57,8 @@ func (s *Store) ApplyMemoryDiff(d MemoryDiff, now func() time.Time) error {
 	if d.Author != "user" && d.Author != "external" {
 		return ErrBrainAuthor // fail closed on any non-human author, incl. ""
 	}
-	if d.DecidedBy == "" {
-		return ErrNoHuman
+	if strings.TrimSpace(d.DecidedBy) == "" || d.DecidedBy == "brain" {
+		return ErrNoHuman // blank or "brain" is not a real human decider
 	}
 	topic := cleanTopic(d.Topic)
 	if topic == "" {
@@ -62,12 +70,20 @@ func (s *Store) ApplyMemoryDiff(d MemoryDiff, now func() time.Time) error {
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 			return err
 		}
-		if err := os.WriteFile(p, []byte(d.Content), 0o600); err != nil {
+		if err := s.assertContained(p); err != nil {
+			return err
+		}
+		if err := writeAtomic(p, []byte(d.Content)); err != nil {
 			return err
 		}
 	case "expire":
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return err
+		if _, statErr := os.Lstat(p); statErr == nil {
+			if err := s.assertContained(p); err != nil {
+				return err
+			}
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				return err
+			}
 		}
 	default:
 		return ErrBadOp
@@ -76,6 +92,48 @@ func (s *Store) ApplyMemoryDiff(d MemoryDiff, now func() time.Time) error {
 		Op: d.Op, Topic: topic, Author: d.Author, DecidedBy: d.DecidedBy,
 		At: nowStr(now),
 	})
+}
+
+// assertContained verifies the resolved parent of p stays under the resolved
+// store Dir — defeats a symlinked component that would escape (opus P1).
+func (s *Store) assertContained(p string) error {
+	realDir, err := filepath.EvalSymlinks(s.Dir)
+	if err != nil {
+		return err
+	}
+	realParent, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		return err
+	}
+	if realParent != realDir && !strings.HasPrefix(realParent+string(os.PathSeparator), realDir+string(os.PathSeparator)) {
+		return ErrEscape
+	}
+	return nil
+}
+
+// writeAtomic writes via a temp file + fsync + rename, so a crash never leaves a
+// truncated source-of-truth file (opus P2).
+func writeAtomic(p string, data []byte) error {
+	tmp := p + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 func (s *Store) appendRevision(r revision) error {

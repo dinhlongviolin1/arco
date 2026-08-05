@@ -77,11 +77,23 @@ func (s *Store) Read(topic string) (TopicView, error) {
 	return v, nil
 }
 
-// parseLinks extracts unique, sorted [[wikilink]] targets from content.
+var fencedCode = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~")
+var inlineCode = regexp.MustCompile("`[^`]*`")
+
+// stripCode removes fenced and inline code so a file DOCUMENTING the [[topic]]
+// syntax doesn't register phantom links (the index is the retrieval surface).
+func stripCode(s string) string {
+	return inlineCode.ReplaceAllString(fencedCode.ReplaceAllString(s, ""), "")
+}
+
+// parseLinks extracts unique, sorted [[wikilink]] targets (code spans stripped,
+// empty targets dropped).
 func parseLinks(content string) []string {
 	set := map[string]bool{}
-	for _, m := range wikilink.FindAllStringSubmatch(content, -1) {
-		set[cleanTopic(m[1])] = true
+	for _, m := range wikilink.FindAllStringSubmatch(stripCode(content), -1) {
+		if t := cleanTopic(m[1]); t != "" {
+			set[t] = true
+		}
 	}
 	return sortedKeys(set)
 }

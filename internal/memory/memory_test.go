@@ -90,6 +90,37 @@ func TestApplyMemoryDiff_HumanOnly(t *testing.T) {
 	require.ErrorIs(t, s.ApplyMemoryDiff(MemoryDiff{Op: "delete", Topic: "x", Content: "c", Author: "user", DecidedBy: "long"}, time.Now), ErrBadOp)
 }
 
+// Regression (opus P1): a symlinked component must not let a write escape Dir.
+func TestApplyMemoryDiff_SymlinkEscapeBlocked(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "oss")))
+	s := New(dir)
+	err := s.ApplyMemoryDiff(MemoryDiff{Op: "add", Topic: "oss/x", Content: "escaped", Author: "user", DecidedBy: "long"}, time.Now)
+	require.ErrorIs(t, err, ErrEscape)
+	_, statErr := os.Stat(filepath.Join(outside, "x.md"))
+	require.Error(t, statErr, "nothing may be written outside Dir via a symlink")
+}
+
+// Regression (opus P2): [[links]] inside code fences are documentation, not links.
+func TestParseLinks_IgnoresCodeSpans(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "guide.md", "How to link:\n```\nuse [[b]] like this\n```\nand inline `[[c]]` too.\nReal: [[d]]")
+	s := New(dir)
+	v, _ := s.Read("guide")
+	require.Equal(t, []string{"d"}, v.OutLinks, "fenced/inline [[..]] are not links")
+
+	// so b/c get no phantom backlink from guide
+	vb, _ := s.Read("b")
+	require.Empty(t, vb.BackLinks)
+}
+
+func TestApplyMemoryDiff_RejectsFakeDecider(t *testing.T) {
+	s := New(t.TempDir())
+	require.ErrorIs(t, s.ApplyMemoryDiff(MemoryDiff{Op: "add", Topic: "x", Content: "c", Author: "user", DecidedBy: "brain"}, time.Now), ErrNoHuman)
+	require.ErrorIs(t, s.ApplyMemoryDiff(MemoryDiff{Op: "add", Topic: "x", Content: "c", Author: "user", DecidedBy: "  "}, time.Now), ErrNoHuman)
+}
+
 func TestApplyMemoryDiff_AddUpdateExpire(t *testing.T) {
 	dir := t.TempDir()
 	s := New(dir)
