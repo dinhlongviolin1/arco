@@ -90,6 +90,53 @@ Recommended same pass (cheap): realpath-canonicalize the fs hook + worktrees off
 
 ---
 
+## rev 4.2 — session hierarchy + worker ownership transfer (fable + qwen3.8-max reviewed; both **ADOPT-WITH-FIXES**)
+
+Two design additions, reviewed independently by fable and qwen3.8-max (full reviews are internal, not in this repo). Both converged: the DB-race half is already solved by the frozen machinery (single-writer + `workers.rev` CAS + per-worker `Exec.Submit` queues); the real work is at the **process / side-effect / permission boundary**. The finalized form:
+
+### Decision A — Worker ownership transfer between sessions (single-owner, transferable)
+A worker is owned by **exactly one session at a time** (invariant), but ownership is transferable. Three ops, each via the per-worker serialized queue + `workers.rev` CAS, each with the frozen **intent→execute→result** discipline + an append-only audit event:
+- **Release = PAUSE** (owner → `pool`): reuse Task 17 — commit dirty → detach → **kill the process** → reclaim PTY/worktree, release the `worker_pool_lease`; keep worktree + branch + `summary` + ledger row; then CAS owner→pool. *(A live "quiesced" process is a fiction — `settings.json` isn't hot-reloaded, and it launders runtime secrets/worktree/context into the next owner, defeating the capability tree temporally. "Keep the agent" = keep the **work product**, not the process.)*
+- **Claim** (`pool` → session): CAS (first wins; loser gets a typed `already-claimed` StepResult). Then **recompile permissions against the NEW session tree → Resume** (fresh scrubbed-env process, same worktree/branch/rollup).
+- **Transfer** (A → B): pause → stage new config → CAS owner+`rev` → resume. Every crash point leaves a **dead-process** worker that boot recovery re-drives (adopt-or-abort).
+- **Ownership changes are legal only from quiescent worker states** (`paused, blocked, waiting_for_user, completed_candidate`); from `running`, pause first → the recompile window is **zero**.
+- **Dispatch-gate on permission freshness** (reuses PASS-0 `permissions_hash`/`session_perm_rev`): **no prompt/dispatch to a worker whose `permissions_hash` ≠ hash of its current owner's tree@`perm_rev`.** A crashed mid-transfer worker is *stalled*, never *wide*.
+- **Every side effect re-validates `owner_session`+`rev` at execute time** (not enqueue) and drops/re-routes if the owner changed — closes the "brain decision for the OLD owner fires `herdr.Prompt` after a Claim" injection. `prompt_intent` records the acting owner.
+- **`pool` is a protected singleton session** (`sessions.kind='pool'`, seeded in `0001_init.sql`): rejects `Grant`/`Revoke` (else `arco grant pool` = fleet-wide privilege escalation), `dispatch`, manual-attach, status transitions, Telegram topic, session-budget rollup; a pooled worker's escalation → **immediate pause**; a **TTL→Pause reaper** prevents a zombie farm.
+- **Tracking = existing FK + append-only events** (no new table): bindings = `workers WHERE owner_session=?`; history = `worker_{release,claim,transfer}_{intent,ed}` events (with `from/to_session`, `perm_rev` before/after, `lease_id`, using frozen `causation_event_id`/`correlation_id`).
+- **P2 session-teardown default stays PAUSE/kill (Task 17), NOT release-to-pool.** Transfer/Claim/pool ship in **PASS-3** (their security prereqs live there). *(The sub-decision both reviewers said must be declared — declared.)*
+
+### Decision B — Session hierarchy / supersession (freeze the pointer; build depth-2 first)
+Sessions form a **single-parent tree** (`parent_session`, NULL=root); workers are leaves. Flat / supersession / nesting are points on one structure — but **ship less than the general folder-tree:**
+- **P2 = FLAT** (root + workers). **First tree feature = depth-2 "supersession"** (a root that monitors+drives all — the only mode with a concrete solo-operator use case today). **Depth-3 + move-subtree deferred** to measured need. *(General nesting for its own sake reproduces the multi-agent org-chart trap.)*
+- **Roll-up is O(fan-out), not O(1)** — a 100-child root assembles ~150K tokens, so "bounded context" is **false without a `max_children_per_session` fan-in cap (~6–15)**; depth is the *consequence* (K≈8 → ~200 workers at depth 3). Add **rollup coalescing** (≤1 root rollup brain call per interval) + a **per-session brain-rate cap**. Depth is a cost, not a feature.
+- **Structural authority, not behavioral:** **child-session tree ⊆ parent-session tree**, checked at `CreateSession`/`Grant` (makes "authority flows down" a theorem). Fleet ops (`fleet.claim/transfer/move`) are **capabilities in `capability_catalog`, default-off**, gated by the **acting** session's tree; a claim/transfer may not place a worker under a tree wider than the actor's.
+- **Injection closure:** rollup summaries are **advisory input** (like brain answers) — never the `granted_by` of a grant, never decide a confirm, never auto-promote autonomy; danger-class activity in a rollup carries `Tainted`/provenance.
+- **Sibling conflicts arbitrated by ledger LEASES, not parent vigilance** (the root only sees ~2K summaries): worktree per-path locks, `workers.rev` claim CAS, provider-pool leases, server-side branch protection. Parent allocates *goals*; leases arbitrate *resources*.
+- **Session ops never block on another worker's queue** — teardown/rebind write an intent event; the reconciler fans out per-worker jobs (open-and-return) → no cross-queue deadlock. **Move-subtree** needs a recursive-CTE **cycle check** + depth check inside the single-writer tx. Session-level caps are **separate** from the worker delegation caps.
+
+### PASS-0 schema-freeze delta (SQLite CHECK enums + FK columns need a table rebuild to change later — freeze NOW)
+```sql
+sessions.parent_session TEXT REFERENCES sessions(id),          -- NULL = root
+sessions.kind    TEXT NOT NULL DEFAULT 'work' CHECK(kind IN ('work','pool')),
+sessions.rev     INTEGER NOT NULL DEFAULT 0,                    -- CAS for rebind/status/rollup
+CREATE INDEX idx_sessions_parent ON sessions(parent_session);
+-- 0001_init.sql seeds exactly ONE kind='pool' row (fixed well-known ULID) BEFORE any workers INSERT.
+-- budgets/breakers scope CHECK: add 'subtree' now (unused until the tree ships):
+--   CHECK(scope IN ('fleet','session','pool','worker','subtree'))
+-- events.kind: name now (intent/result pairs): worker_release_intent|worker_released,
+--   worker_claim_intent|worker_claimed, worker_transfer_intent|worker_transferred, session_moved.
+-- workers.state: NO new value needed (Release = pause reuses 'paused').
+```
+No conflicts with the rev-4 freeze; the pool sentinel satisfies the frozen `owner_session NOT NULL`. **The `parent_session` pointer is the cheap part — what's actually trapped are the CHECK-enum values and the seeded pool row.**
+
+### Sequencing
+- **PASS-0/P2:** the schema delta above + the **permission-freshness dispatch gate** (makes every future ownership change crash-safe-narrow; reuses already-frozen columns). P2 stays flat; teardown = pause.
+- **PASS-3:** Release/Claim/Transfer (pause/recompile/resume + state-gates + execute-time owner re-validation + pool reaper) and depth-2 supersession (rollup + fan-in cap + coalescing).
+- **Later:** depth-3 + move-subtree (cycle/depth checks specified now, built on demand).
+
+---
+
 ## Revisions from review (rev 2)
 1. **Idempotent, crash-safe event intake** — herdr sends a stable `source_event_id`; intake dedups on admit. Push is now an *optimization over* an authoritative **periodic reconcile sweep** that repairs the ledger from process-liveness + git HEAD even when POSTs are dropped. *(New Task 7; Tasks 4, 6 changed.)*
 2. **Persist brain-call INTENT before invoking** + a **malformed-output / error / billing ladder** (re-prompt → fallback model → record `empty_response` & alert; never crash-loop; no hard `max_tokens` on the StepResult call; **no retry on a billing wall**). *(Task 12 reordered + expanded.)*
