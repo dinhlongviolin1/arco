@@ -30,6 +30,7 @@ func TestRun_QuarantinesRepoConfigHooksSubmodulesAttrs(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "src", ".gitattributes"), []byte("*.c diff=evil\n"), 0o644)) // subdir!
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".gitmodules"), []byte("[submodule \"x\"]\n\tpath=x\n\turl=../evil\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".lfsconfig"), []byte("[lfs]\n\turl=https://evil\n"), 0o644))
 	require.NoError(t, exec.Command("git", "-C", dir, "config", "core.fsmonitor", "/tmp/evil.sh").Run())
 
 	rep, err := Run(dir, "git")
@@ -40,8 +41,13 @@ func TestRun_QuarantinesRepoConfigHooksSubmodulesAttrs(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dir, ".gitattributes"))
 	require.NoFileExists(t, filepath.Join(dir, "src", ".gitattributes"))
 	require.NoFileExists(t, filepath.Join(dir, ".gitmodules"))
+	require.NoFileExists(t, filepath.Join(dir, ".lfsconfig"))
 	require.Contains(t, rep.Renamed, ".mcp.json")
 	require.Contains(t, rep.Renamed, ".claude")
+	require.Contains(t, rep.Renamed, ".lfsconfig")
+	// artifacts are excluded so a later `git add -A` can't commit them
+	excl, _ := os.ReadFile(filepath.Join(dir, ".git", "info", "exclude"))
+	require.Contains(t, string(excl), "*.arco-quarantined")
 	require.Equal(t, 2, rep.GitAttrs, "root + subdir .gitattributes")
 	require.Equal(t, 1, rep.GitModules)
 

@@ -26,12 +26,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // repoConfigFiles are the repo-shipped config/tool surfaces at the worktree root.
 var repoConfigFiles = []string{
-	".claude",   // repo settings.json / settings.local.json / hooks dir
-	".mcp.json", // auto-registered MCP tools that escape Allowed()
+	".claude",    // repo settings.json / settings.local.json / hooks dir
+	".mcp.json",  // auto-registered MCP tools that escape Allowed()
+	".lfsconfig", // git-lfs: lfs.url exfil + lfs.customtransfer.<id>.path = arbitrary binary
 }
 
 // Report lists what a quarantine pass neutralized.
@@ -76,7 +78,7 @@ func Run(worktree string, gitBin string) (Report, error) {
 	}
 	rep.HooksPath = true
 
-	rep.FSMonitor = unsetGitConfig(worktree, gitBin, "core.fsmonitor")
+	rep.FSMonitor = disableFSMonitor(worktree, gitBin)
 
 	// Submodule hook-injection defense: even in a fresh clone a malicious
 	// .gitmodules + protocol.file reopens the local-submodule vector, and the
@@ -113,7 +115,44 @@ func Run(worktree string, gitBin string) (Report, error) {
 	}); err != nil {
 		return rep, fmt.Errorf("quarantine: walk: %w", err)
 	}
+
+	// Keep the .arco-quarantined artifacts from being staged/committed by a later
+	// `git add -A` (which would propagate hostile content + destroy evidence).
+	addExclude(worktree, gitBin)
 	return rep, nil
+}
+
+// disableFSMonitor unsets a repo-local core.fsmonitor, then — if the value is
+// still EFFECTIVE (set in host global/system config, which --unset-all can't
+// reach) — shadows it to false at repo scope so the daemon hook can't run.
+func disableFSMonitor(worktree, gitBin string) bool {
+	_ = exec.Command(gitBin, "-C", worktree, "config", "--unset-all", "core.fsmonitor").Run()
+	out, _ := exec.Command(gitBin, "-C", worktree, "config", "--get", "core.fsmonitor").Output()
+	if strings.TrimSpace(string(out)) == "" {
+		return true
+	}
+	return exec.Command(gitBin, "-C", worktree, "config", "core.fsmonitor", "false").Run() == nil
+}
+
+// addExclude appends the quarantine glob to the repo's info/exclude (best-effort).
+func addExclude(worktree, gitBin string) {
+	out, err := exec.Command(gitBin, "-C", worktree, "rev-parse", "--git-path", "info/exclude").Output()
+	if err != nil {
+		return
+	}
+	p := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(worktree, p)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString("\n*.arco-quarantined\n")
 }
 
 // renameAside moves p to p.arco-quarantined (clearing any stale prior copy).
@@ -125,9 +164,4 @@ func renameAside(p string) error {
 
 func gitConfig(worktree, gitBin, key, val string) error {
 	return exec.Command(gitBin, "-C", worktree, "config", key, val).Run()
-}
-
-func unsetGitConfig(worktree, gitBin, key string) bool {
-	// --unset-all exits 5 if the key was absent; treat only exit 0 as "unset done".
-	return exec.Command(gitBin, "-C", worktree, "config", "--unset-all", key).Run() == nil
 }
