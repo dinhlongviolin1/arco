@@ -65,8 +65,12 @@ type Engine struct {
 }
 
 // New builds an Engine with default thresholds and an Exec (brain disabled).
+// MaxChildren defaults to a bounded fan-in (defense-in-depth: an Engine built
+// outside the daemon still can't spawn unbounded children); the daemon overrides
+// it from config. MaxDepth's 0→2 default is applied in Delegate.
 func New(store core.Store, vm core.VMClient) *Engine {
-	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3, misses: map[string]int{}}
+	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3,
+		MaxChildren: 8, misses: map[string]int{}}
 }
 
 // DispatchResult reports what a dispatch created. State is the worker's state

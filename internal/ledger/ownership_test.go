@@ -49,6 +49,32 @@ func getWorker(t *testing.T, s *Store, id string) core.Worker {
 	return w
 }
 
+// CountActiveWorkers hardcodes the terminal states in SQL while core defines
+// them in WorkerState.Terminal(); this behavioral test guarantees the two never
+// silently desync (qwen review: a future 12th state would otherwise slip
+// through). Same hardcoded set lives in ReapLeases — kept consistent here.
+func TestCountActiveWorkers_MirrorsTerminal(t *testing.T) {
+	s := newTestStore(t)
+	sid := mkSession(t, s)
+	activeWant := 0
+	for _, st := range core.AllWorkerStates {
+		id := ulid.Make().String()
+		state := st
+		require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+			return tx.CreateWorker(core.Worker{
+				ID: id, OwnerSession: sid, State: state,
+				Workspace: "arco_" + id, Task: "t", RunReason: "x",
+			})
+		}))
+		if !st.Terminal() {
+			activeWant++
+		}
+	}
+	n, err := s.Reader().CountActiveWorkers(sid)
+	require.NoError(t, err)
+	require.Equal(t, activeWant, n, "CountActiveWorkers exclusion list must mirror WorkerState.Terminal()")
+}
+
 func TestOwnership_ReleaseToPool(t *testing.T) {
 	s := newTestStore(t)
 	sid := mkSession(t, s)
