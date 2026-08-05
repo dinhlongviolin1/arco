@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
@@ -20,16 +21,45 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	if err != nil || (w.State != core.WorkerRunning && w.State != core.WorkerStarting) {
 		return
 	}
-	// Persist brain INTENT before the call (audit: "decided to ask"). NOTE: full
-	// crash re-drive of a dangling brain_intent is a later pass (boot recovery
-	// does not yet consume it).
+	// Per-session brain-rate admission + persist brain INTENT, in ONE write tx so
+	// the count→admit→insert is race-free under the single-writer lock (a burst of
+	// ambiguous workers in a session can't slip past the cap). Over the cap: record
+	// brain_rate_limited and skip the call — the worker stays as-is and is
+	// re-evaluated on its next ambiguous signal (no park, no retry storm). NOTE:
+	// full crash re-drive of a dangling brain_intent is a later pass.
+	proceed := true
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+		// Re-read the worker INSIDE the tx so the rate count + intent are attributed
+		// to its CURRENT owner — a concurrent ownership transfer between the read
+		// above and here must not mis-account this call to the prior session.
+		cur, err := tx.GetWorker(workerID)
+		if err != nil {
+			proceed = false
+			return nil
+		}
+		if e.BrainRate > 0 {
+			n, err := tx.CountRecentBrainCalls(cur.OwnerSession, time.Minute)
+			if err != nil {
+				return err
+			}
+			if n >= e.BrainRate {
+				proceed = false
+				_, _, _, e2 := tx.AppendEvent(core.Event{
+					Kind: "brain_rate_limited", WorkerID: workerID, SessionID: cur.OwnerSession, Actor: "brain",
+					Payload: fmt.Sprintf(`{"limit":%d,"window":"1m"}`, e.BrainRate),
+				})
+				return e2
+			}
+		}
 		_, _, _, e2 := tx.AppendEvent(core.Event{
-			Kind: "brain_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
-			Payload: fmt.Sprintf(`{"state":%q}`, w.State),
+			Kind: "brain_intent", WorkerID: workerID, SessionID: cur.OwnerSession, Actor: "brain",
+			Payload: fmt.Sprintf(`{"state":%q}`, cur.State),
 		})
 		return e2
 	})
+	if !proceed {
+		return
+	}
 
 	prompt := assemblePrompt(w)
 	if e.Redact != nil { // scrub BEFORE the prompt leaves for a third-party LLM

@@ -50,6 +50,10 @@ type Engine struct {
 	// the sweep pauses it (0 = reaping disabled). Set from config by the daemon.
 	PoolTTL time.Duration
 
+	// BrainRate caps brain calls per session per minute (0 = unlimited). Guards
+	// clavis/provider rate quotas against a single session storming the brain.
+	BrainRate int
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }

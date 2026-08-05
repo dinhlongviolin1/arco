@@ -153,6 +153,11 @@ type Tx interface {
 	// ReapPooledWorkers pauses workers pooled longer than ttl (pool-TTL reaper):
 	// an unclaimed worker shouldn't run forever. Returns the number paused.
 	ReapPooledWorkers(ttl time.Duration) (int, error)
+
+	// CountRecentBrainCalls counts brain_intent events for sessionID within the
+	// last window — per-session brain-rate admission. Called inside the write tx
+	// that records the next brain_intent so the count→admit→insert is race-free.
+	CountRecentBrainCalls(sessionID string, window time.Duration) (int, error)
 }
 
 // ErrHighBlastScope is returned when a caller tries to promote a high-blast
