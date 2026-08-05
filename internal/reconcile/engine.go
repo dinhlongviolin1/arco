@@ -37,6 +37,9 @@ type Engine struct {
 	// request ctx (which would cancel when an intake HTTP request returns). The
 	// daemon sets it to a ctx it cancels on shutdown; nil → context.Background().
 	BgCtx context.Context
+	// Redact scrubs the brain prompt before it leaves for a third-party LLM (the
+	// biggest exfil surface, build-guide B4). nil → no scrub.
+	Redact core.Scrubber
 
 	// MissThreshold is how many consecutive sweeps a worker may be unobserved
 	// before it is finalized (suspect_missing → lost / completed_candidate).

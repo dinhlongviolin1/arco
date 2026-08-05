@@ -15,14 +15,15 @@ import (
 // uncommitted writes, and adds the write methods (CAS-guarded).
 type txn struct {
 	*reader
-	q   *sql.Tx
-	now func() string
+	q     *sql.Tx
+	now   func() string
+	scrub core.Scrubber
 }
 
 var _ core.Tx = (*txn)(nil)
 
-func newTxn(q *sql.Tx, now func() string) *txn {
-	return &txn{reader: &reader{q: q}, q: q, now: now}
+func newTxn(q *sql.Tx, now func() string, scrub core.Scrubber) *txn {
+	return &txn{reader: &reader{q: q}, q: q, now: now, scrub: scrub}
 }
 
 func (t *txn) CreateWorker(w core.Worker) error {
@@ -135,6 +136,11 @@ func (t *txn) insertEvent(e core.Event) (int64, bool, bool, error) {
 	}
 	if e.Source == "" {
 		e.Source = "internal"
+	}
+	// Write-time redaction chokepoint: EVERY event payload is scrubbed here, the
+	// single insert path, so a secret never lands verbatim in the immutable log.
+	if t.scrub != nil {
+		e.Payload, _ = t.scrub.Scrub(e.Payload)
 	}
 	// ON CONFLICT DO NOTHING backstops the check-then-insert dedup with the real
 	// UNIQUE(source, source_event_id) constraint (NULL source_event_id never

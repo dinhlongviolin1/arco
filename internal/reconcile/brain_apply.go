@@ -31,8 +31,12 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 		return e2
 	})
 
+	prompt := assemblePrompt(w)
+	if e.Redact != nil { // scrub BEFORE the prompt leaves for a third-party LLM
+		prompt, _ = e.Redact.Scrub(prompt)
+	}
 	res := brain.Invoke(ctx, brain.Config{Profile: e.Brain.Profile, Model: e.Brain.Model},
-		assemblePrompt(w), e.Brain.Runner)
+		prompt, e.Brain.Runner)
 
 	if res.Billing {
 		e.park(ctx, workerID, "brain billing wall — parked, not retried")
