@@ -53,7 +53,7 @@
 - **Pause/resume** — park idle workers (commit → detach → reclaim worktree/PTY), resume later — required to reach hundreds of workers on finite machines.
 - **Diff-gated completion** — a worker only moves `completed_candidate → completed_verified` after its base→head diff is reviewed (human or auto-verifier), not on a guess.
 - **Scheduler** — arco can schedule its own follow-ups (cron); natural-language → schedule.
-- **Cost accounting** — per-worker/per-model token+cost, first-class.
+- ~~**Cost accounting**~~ — **CUT from the MVP (rev 6)**; cost tracking + metering deferred post-MVP. Focus is task orchestration; provider pools/leases stay for rate-limit/concurrency only.
 - **CLI** — `arco status | sessions | session | workers | dispatch | grant | revoke | answer | logs | attach | pause | resume | kill | schedule | playbook`.
 
 ### Optional add-on: Telegram (forum-topic UX)

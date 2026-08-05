@@ -140,7 +140,7 @@
         <li><b>Event intake + reconcile sweep</b> — idempotent push + authoritative liveness/HEAD repair.</li>
         <li><b>State fusion</b> · <b>worker lifecycle</b> (spawn/pause/resume/kill + diff) · <b>dispatch/routing</b> · <b>diff-gated completion</b>.</li>
         <li><b>Concurrency</b> — serialize per-worker, parallel across; throttle + jitter backoff.</li>
-        <li><b>Cost accounting</b> — per-worker/model tokens incl. cache hits.</li>
+        <li><b>Cost accounting</b> — <s>per-worker/model tokens incl. cache hits</s> <b>CUT (rev 6)</b>; cost tracking + metering deferred post-MVP. Provider pools/leases stay for rate-limit/concurrency only.</li>
       </ul>
     </div>
     <div class="card opt">

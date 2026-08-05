@@ -28,11 +28,13 @@
 
 Legend: **FROZEN** = locked; **PROVISIONAL — confirm** = my default, override anytime before that task is built.
 
-1. **Worker-agent LLM spend metering (rev5 oq#1 → B10).** `usage` accepts `call_kind='agent'` rows from
-   the start (freeze-safe regardless). *Whether* clavis/herdr can surface per-turn cost is verified in the
-   PASS-0.5 integration spike (Task S). If unavailable, pool/session/worker USD budgets ship **brain-only
-   with a loud `budget_scope_note` caveat**; token/cost breakers still trip on brain + any agent rows we do
-   get. **PROVISIONAL — confirm** the brain-only fallback is acceptable if the spike finds no agent usage.
+1. **Cost tracking + metering — CUT from the design (maintainer directive, 2026-08-05).** No `usage`,
+   `budgets`, or `breakers` tables; no `daily_usd_cap`, no `arco freeze/unfreeze`, no B10 worker-spend
+   metering. Single-operator subscription setup — cost is not a constraint; the focus is **task
+   orchestration**. Cost tracking + metering are **deferred to a post-MVP sub-plan** (revisit later).
+   Provider pools + `worker_pool_leases` **remain**, but for **rate-limit / concurrency orchestration only**
+   (max_active, starts/min, 429 cooldown, admission) — their cost fields are removed. This **supersedes
+   rev-5 B10** and every budget/breaker item in the hardening report (now moot).
 2. **B7 revoke propagation — cascade vs ancestor-walk.** **Cascade-materialize.** `Allowed()` stays an
    O(1) single-row read on the per-event hot path; a parent `Revoke` cascades over the subtree (recursive
    CTE) at revoke time (rare), removing the capability from every descendant grant + bumping each
@@ -53,10 +55,7 @@ Legend: **FROZEN** = locked; **PROVISIONAL — confirm** = my default, override 
    **FROZEN** for P2.
 7. **Grant expiry.** Freeze `session_grants.expires_at` now; **no P2 path sets it** (the expiry reaper is
    defined-but-inert in P2). `arco grant --expires` is a P3 addition. **FROZEN.**
-8. **Budget reset + freeze durability.** `daily_usd_cap` resets at **UTC midnight**. Soft trip at **0.8×**
-   cap, hard at **1.0×**; hysteresis re-arm at **0.5×**. A hard freeze persists in `breakers` and requires
-   explicit `arco unfreeze` — it does **not** auto-recover at rollover (safety over convenience).
-   **PROVISIONAL — confirm** the trip/hysteresis fractions.
+8. **~~Budget reset + freeze durability~~ — REMOVED.** Moot: cost tracking + metering are cut (see #1).
 9. **`Deps` field set + ctx.** `Deps{ Store; VM VMClient; Cfg Config; Exec *Exec; Classify CapabilityOf;
    Clock func() time.Time; Log *slog.Logger; Redact Scrubber }` — `Classify` **is** `CapabilityOf` (one
    function, not two). `ctx context.Context` is threaded explicitly on all `Store`/`Tx`/`VMClient` methods;
@@ -75,7 +74,7 @@ New decisions this consolidation forces:
   in-memory sub-state, NOT a persisted status. **FROZEN** (CHECK-enum value — must be in `0001_init.sql`).
 - **D-spike:** add **Task S (PASS-0.5): freeze + verify the clavis/herdr contract** before PASS-2 (opus P1-3):
   hook registration + stable `source_event_id`, transcript format/location per agent, structured StepResult
-  return, prompt-echo observability (B9), usage surfacing (B10, oq#1), and the pinned `interactive-in-pane`
+  return, prompt-echo observability (B9), and the pinned `interactive-in-pane`
   spawn mode (never headless `-p`). **FROZEN** as a gate on PASS-2.
 
 ---
@@ -279,7 +278,9 @@ CREATE UNIQUE INDEX idx_escalations_pending
   ON escalations(worker_id, COALESCE(capability,'')) WHERE status='pending';
 CREATE INDEX idx_escalations_status ON escalations(session_id, status);
 
--- ---- provider pools + leases (leases acquired BEFORE dispatch_intent) ------
+-- ---- provider pools + leases (RATE-LIMIT / CONCURRENCY orchestration only; NO cost) -------
+-- Leases acquired BEFORE dispatch_intent. Pools cap concurrency + start-rate + 429 cooldown.
+-- Cost fields intentionally omitted (cost tracking/metering deferred post-MVP; §A #1).
 CREATE TABLE provider_pools (
   id                 TEXT PRIMARY KEY,
   provider           TEXT NOT NULL,
@@ -288,9 +289,8 @@ CREATE TABLE provider_pools (
   model_class        TEXT NOT NULL DEFAULT '',
   max_active         INTEGER NOT NULL DEFAULT 35,
   max_starts_per_min INTEGER NOT NULL DEFAULT 10,
-  daily_usd_cap_microusd INTEGER NOT NULL DEFAULT 0,
   state              TEXT NOT NULL DEFAULT 'ok'
-                       CHECK(state IN ('ok','cooldown','billing','disabled')),
+                       CHECK(state IN ('ok','cooldown','disabled')),
   cooldown_until     TEXT,
   created_at         TEXT NOT NULL
 );
@@ -305,27 +305,8 @@ CREATE TABLE worker_pool_leases (
 );
 CREATE INDEX idx_leases_pool_active ON worker_pool_leases(pool_id) WHERE released_at IS NULL;
 
--- ---- budgets + breakers (integer microusd; scope incl. subtree) -----------
-CREATE TABLE budgets (
-  id            TEXT PRIMARY KEY,
-  scope         TEXT NOT NULL CHECK(scope IN ('fleet','session','pool','worker','subtree')),
-  scope_id      TEXT NOT NULL DEFAULT '',
-  soft_usd_microusd INTEGER NOT NULL DEFAULT 0,
-  hard_usd_microusd INTEGER NOT NULL DEFAULT 0,
-  soft_tokens   INTEGER NOT NULL DEFAULT 0,
-  hard_tokens   INTEGER NOT NULL DEFAULT 0,
-  window        TEXT NOT NULL DEFAULT 'utc_day' CHECK(window IN ('utc_day','rolling_24h','total')),
-  created_at    TEXT NOT NULL
-);
-CREATE TABLE breakers (
-  id         TEXT PRIMARY KEY,
-  scope      TEXT NOT NULL CHECK(scope IN ('fleet','session','pool','worker','subtree')),
-  scope_id   TEXT NOT NULL DEFAULT '',
-  state      TEXT NOT NULL DEFAULT 'closed' CHECK(state IN ('closed','soft','hard')),
-  reason     TEXT NOT NULL DEFAULT '',
-  tripped_at TEXT,
-  cleared_at TEXT
-);
+-- ---- budgets + breakers: CUT (cost tracking/metering deferred post-MVP; §A #1) -------------
+-- Intentionally NOT created. If reintroduced later, add via a new migration.
 
 -- ---- observation plane -----------------------------------------------------
 CREATE TABLE vms (
@@ -345,32 +326,10 @@ CREATE TABLE vm_observations (
 );
 CREATE INDEX idx_vmobs_vm ON vm_observations(vm_id, observed_at);
 
--- ---- usage (integer microusd; every call_kind) ----------------------------
-CREATE TABLE usage (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  worker_id    TEXT,
-  session_id   TEXT,
-  provider     TEXT NOT NULL DEFAULT '',
-  model        TEXT NOT NULL DEFAULT '',
-  call_kind    TEXT NOT NULL
-                 CHECK(call_kind IN ('brain_decision','brain_classify','rollup','agent',
-                                      'checkpoint','hindsight')),
-  event_id     INTEGER REFERENCES events(id),
-  prompt_hash  TEXT NOT NULL DEFAULT '',                              -- over the exact bytes sent (post-Scrub)
-  context_rev  INTEGER NOT NULL DEFAULT 0,
-  perm_rev     INTEGER NOT NULL DEFAULT 0,
-  input_tok    INTEGER NOT NULL DEFAULT 0,
-  output_tok   INTEGER NOT NULL DEFAULT 0,
-  cache_read   INTEGER NOT NULL DEFAULT 0,
-  cache_write  INTEGER NOT NULL DEFAULT 0,
-  cost_microusd INTEGER NOT NULL DEFAULT 0,
-  success      INTEGER NOT NULL DEFAULT 1,
-  billing_error INTEGER NOT NULL DEFAULT 0,
-  at           TEXT NOT NULL
-);
-CREATE INDEX idx_usage_session ON usage(session_id, at);
-CREATE INDEX idx_usage_worker ON usage(worker_id, at);
-CREATE INDEX idx_usage_at ON usage(at);
+-- ---- usage / cost tracking: CUT (deferred post-MVP; §A #1) -----------------
+-- No `usage` table in the MVP. Brain/agent token+cost accounting and prompt-cache telemetry are
+-- deferred; the reconciler records decisions as `events`, not usage rows. If prompt-cache measurement
+-- is later wanted (rev-4.1 #5), reintroduce a minimal telemetry table via a new migration.
 
 -- ---- memory revisions (provenance for the manual memory writes) -----------
 CREATE TABLE memory_revisions (
@@ -424,7 +383,7 @@ INSERT INTO capability_catalog (capability, action_class, tier, default_allowed,
  ('fleet.move',          'ambiguous','high_blast',0,1,0,'move a session subtree'),
  ('git.push.main',       'danger','high_blast',0,1,0,'push to main/protected (arco-executed after confirm)'),
  ('external.deploy',     'danger','high_blast',0,1,0,'deploy'),
- ('external.spend',      'danger','high_blast',0,1,0,'spend money / paid API beyond budget'),
+ ('external.spend',      'danger','high_blast',0,1,0,'spend money / call a paid external API (safety cap, not cost tracking)'),
  ('external.send',       'danger','high_blast',0,1,0,'send outbound comms'),
  ('secrets.read',        'danger','high_blast',0,1,0,'read secrets'),
  ('fs.destructive',      'danger','high_blast',0,1,0,'destructive delete outside worktree');
@@ -464,7 +423,7 @@ type Tx interface {
     Grant(sessionID, cap string, e Event) (newPermRev int64, err error)              // cascades allowed at boundary
     Revoke(sessionID, cap string, e Event) (newPermRev int64, err error)             // cascades to subtree (dec #2)
     Checkpoint(sessionID string, expectedCtxRev int64, watermark int64) error        // CAS; fold rows id<=watermark
-    // ... AttachWorker, OpenEscalation, DecideConfirm/AnswerQuestion, lease ops, usage, etc.
+    // ... AttachWorker, OpenEscalation, DecideConfirm/AnswerQuestion, lease ops, etc. (no usage — cost cut)
 }
 type Reader interface {
     ListWorkers(f WorkerFilter) ([]Worker, error)
@@ -552,7 +511,7 @@ kill_done, reconcile, resume_intent, error, note`.
 | `escalation_timeout` | 30min → auto-pause | `auto_answer_budget_N` | 10/session (inert in P2 shadow) |
 | `max_children_per_session` | 8 | `rollup_interval` | 5min |
 | `per_session_brain_rate` | 6/min | `pool_ttl` | 24h → pause reaper |
-| `lease_ttl` | 15min | budget soft/hard/re-arm | 0.8× / 1.0× / 0.5× |
+| `lease_ttl` | 15min | — | — |
 
 ---
 
@@ -570,8 +529,8 @@ rev-5 B1/B2/B3/B6-schema/M7/M11 + D-lost.)*
 **PASS-0.5 — Task S (clavis/herdr contract spike, GATES PASS-2).** Freeze + verify against a real
 clavis/herdr: hook registration + stable `source_event_id`; per-agent transcript format/location;
 `interactive-in-pane` spawn (never headless `-p`); **B9** prompt-echo observability (a `Prompt` with an
-embedded ULID appears in the normalized transcript); **B10/oq#1** whether per-turn agent usage/cost is
-surfaced. Output: a frozen `VMClient` fake matching reality + a go/no-go on agent-spend metering.
+embedded ULID appears in the normalized transcript). Output: a frozen `VMClient` fake matching reality.
+*(Agent usage/cost surfacing is out of scope — cost tracking deferred, §A #1.)*
 
 **PASS-1 — spine.** T1 module/config (+defaults table) → T2 Store+migrations (`Migrate`/`WithTx`, single-writer)
 → **T-redact `internal/redact/`** (wired into `AppendEvent` now, not PASS-3) → T3 workers CRUD + CAS
@@ -580,7 +539,7 @@ hash over scrubbed canonical bytes) → T20a sessions CRUD + **capability_catalo
 `CapabilityOf` (fail-closed) → T5 API over unix socket (0600, dedicated group) + `/healthz` → T-client CLI.
 
 **PASS-2 — single-VM walking skeleton (headless).** T10 `LocalVMClient` (GitHeads/Prompt/Kill/Diff) → T9
-normalize (+`billing`/`rate_limited`/`agent_usage` kinds, M9/B10) → T8 fusion (VMClient liveness, not PID) →
+normalize (+`billing`/`rate_limited` failure kinds, M9 — park-not-crashloop; no cost metering) → T8 fusion (VMClient liveness, not PID) →
 T6 intake `POST /v1/events` (idempotent) → T14 spawn (pre-gen ULID → lease → `dispatch_intent`+`CreateWorker`
 → side-effect → `dispatch_done`; env-scrubbed; config staged **outside** the worktree, B6) → T23 permcompile
 (`--settings`; net-fetch OFF; high-blast never compiled) → T13 Exec (per-worker CAS queues, cross-worker
@@ -595,8 +554,8 @@ SHADOW: drafts stored in `escalations.draft_answer`, human decides) → T15 esca
 re-sync + **runtime recompile-on-Grant/Revoke** (M5, coalesced) → T24a memory (manual; `[[wikilinks]]` +
 derived `memory_links`; `Scrub`; `trust:external`+`Tainted`) → **integration test `dispatch→hook→complete`**.
 
-**PASS-3 — hardening + security preconditions (the "real repos/creds" gate).** Budgets+breakers+`arco freeze`/
-`unfreeze` (UTC-day reset; 0.8/1.0/0.5) → provider-pool leases at scale → per-VM admission → **6 preconditions
+**PASS-3 — hardening + security preconditions (the "real repos/creds" gate).** Provider-pool leases at scale
+(rate-limit / concurrency admission — no cost) → per-VM admission → **6 preconditions
 as dedicated tasks each with an S1 test**: (P1) OS-user separation + scrubbed spawn env; (P2) **quarantine
 task** (repo `.claude`/`.mcp.json`/`settings.local.json`/hooks/`core.fsmonitor`/`.gitattributes`); (P3)
 managed-settings deny + no high-blast creds + server-side branch protection + per-worker fine-grained tokens
@@ -605,8 +564,8 @@ on mutating endpoints (high-blast `Grant` = local-CLI only); (P5) redaction egre
 corpus; (P6) pinned spawn mode + net-fetch/spawn default-off + **B8 detection path** (fusion scans transcript
 tails for deny-listed calls → auto-pause + danger escalation) → worker ownership transfer (release/claim/
 transfer + pool TTL reaper + execute-time owner re-validation + B14 pending-escalation settlement) → depth-2
-supersession (rollup + fan-in cap `max_children_per_session` + coalescing + `call_kind='rollup'` admission
-priority, M19/M20) → `arco unfreeze`/`escalations`/`autonomy` CLI + systemd `Type=notify` `WatchdogSec` +
+supersession (rollup + fan-in cap `max_children_per_session` + coalescing + per-session brain-rate admission
+priority, M19/M20) → `arco escalations`/`autonomy` CLI + systemd `Type=notify` `WatchdogSec` +
 `.service` unit (M21).
 
 **Later (own sub-plans):** SSH `VMClient` + cross-VM + provider pools at scale + Postgres/queue (>150 workers
