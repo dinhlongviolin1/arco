@@ -80,6 +80,39 @@ func TestAPI_IntakeUnknownWorkerIsAccepted(t *testing.T) {
 	require.Equal(t, "unknown worker_ref", r.Note)
 }
 
+func TestAPI_IntakeHashConflictIsRejectedNotApplied(t *testing.T) {
+	ts := newTestAPI(t)
+	var d DispatchResp
+	post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d)
+	require.Equal(t, "running", d.State)
+
+	// first delivery: idle + HEAD advance → completed_candidate
+	ev := EventReq{Source: "herdr:vm0", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/events", ev, &EventResp{}))
+
+	// poisoned redelivery: SAME id, DIFFERENT hash + a state that would drive
+	// the worker elsewhere. Must be rejected (409) and NOT applied.
+	bad := ev
+	bad.Hash = "h2"
+	bad.HerdrState = "done"
+	bad.Alive = false
+	bad.ObservedHead = ""
+	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/events", bad, &EventResp{}))
+
+	resp, _ := http.Get(ts.URL + "/v1/workers")
+	defer resp.Body.Close()
+	var ws WorkersResp
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ws))
+	require.Equal(t, "completed_candidate", ws.Workers[0].State, "poisoned redelivery must not re-drive the worker")
+}
+
+func TestAPI_DispatchReportsState(t *testing.T) {
+	ts := newTestAPI(t)
+	var d DispatchResp
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d))
+	require.Equal(t, "running", d.State)
+}
+
 func TestAPI_IntakeDedup(t *testing.T) {
 	ts := newTestAPI(t)
 	var d DispatchResp

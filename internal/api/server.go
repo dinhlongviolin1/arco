@@ -54,6 +54,7 @@ type DispatchReq struct {
 type DispatchResp struct {
 	SessionID string `json:"session_id"`
 	WorkerID  string `json:"worker_id"`
+	State     string `json:"state"` // worker state after dispatch (running, or failed if launch failed)
 }
 
 type WorkerDTO struct {
@@ -142,10 +143,10 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	newSession := req.New || req.Session == ""
 	res, err := s.eng.Dispatch(r.Context(), req.Session, req.Task, newSession)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		writeErr(w, errStatus(err), err)
 		return
 	}
-	writeJSON(w, http.StatusOK, DispatchResp{SessionID: res.SessionID, WorkerID: res.WorkerID})
+	writeJSON(w, http.StatusOK, DispatchResp{SessionID: res.SessionID, WorkerID: res.WorkerID, State: string(res.State)})
 }
 
 // intake is the herdr-hook target: append the raw delivery (idempotent dedup on
@@ -162,9 +163,11 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
-		// Unknown worker: record a note, ack 202 (never fail the hook).
+		// Unknown worker: record a note (deduped on the delivery id so herdr
+		// retries don't flood events) and ack 202 (never fail the hook).
 		_ = s.store.WithTx(r.Context(), func(tx core.Tx) error {
 			_, _, _, e := tx.AppendEvent(core.Event{Kind: "note", Source: srcOrDefault(req.Source),
+				SourceEventID: req.SourceEventID, SourceEventHash: req.Hash,
 				Payload: `{"note":"event for unknown worker_ref"}`})
 			return e
 		})
@@ -172,18 +175,24 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var deduped bool
+	var deduped, conflict bool
 	err = s.store.WithTx(r.Context(), func(tx core.Tx) error {
-		_, d, _, e := tx.AppendEvent(core.Event{
+		_, d, c, e := tx.AppendEvent(core.Event{
 			Source: srcOrDefault(req.Source), SourceEventID: req.SourceEventID, SourceEventHash: req.Hash,
 			Kind: "state_change", WorkerID: workerID, OccurredAt: req.OccurredAt,
 			Payload: `{"delivery":"herdr"}`,
 		})
-		deduped = d
+		deduped, conflict = d, c
 		return e
 	})
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	if conflict {
+		// same source_event_id, different hash → poisoned redelivery. The ledger
+		// recorded an error event; do NOT reconcile off unverified content.
+		writeJSON(w, http.StatusConflict, EventResp{Note: "source_event_hash conflict"})
 		return
 	}
 	if deduped {
@@ -194,7 +203,7 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		WorkerID: workerID, HerdrState: req.HerdrState, Alive: req.Alive,
 		ObservedHead: req.ObservedHead, WaitingInput: req.WaitingInput,
 	}); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		writeErr(w, errStatus(err), err)
 		return
 	}
 	writeJSON(w, http.StatusOK, EventResp{Deduped: false})
@@ -237,4 +246,18 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]string{"error": err.Error()})
+}
+
+// errStatus maps domain sentinels to HTTP status codes.
+func errStatus(err error) int {
+	switch {
+	case errors.Is(err, core.ErrNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, core.ErrProtectedPool):
+		return http.StatusConflict
+	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch):
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }

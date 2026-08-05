@@ -54,6 +54,47 @@ func TestGrantThenRevoke_FlipsAllowedAndBumpsPermRev(t *testing.T) {
 	require.GreaterOrEqual(t, got.PermRev, int64(2)) // bumped by grant and revoke
 }
 
+func TestGrant_IdempotentNoDuplicateOrDoubleBump(t *testing.T) {
+	s := newTestStore(t)
+	sess := newWork(t, s)
+
+	var r1, r2 int64
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		r1, e = tx.Grant(sess, "git.pr.merge", "cli", core.Event{Kind: "grant", SessionID: sess})
+		return e
+	}))
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		r2, e = tx.Grant(sess, "git.pr.merge", "cli", core.Event{Kind: "grant", SessionID: sess})
+		return e
+	}))
+	require.Equal(t, r1, r2, "re-granting an active capability must not bump perm_rev")
+
+	var rows int
+	require.NoError(t, s.DB().QueryRow(
+		`SELECT COUNT(1) FROM session_grants WHERE session_id=? AND capability=? AND status='active'`,
+		sess, "git.pr.merge").Scan(&rows))
+	require.Equal(t, 1, rows, "no duplicate active grant row")
+}
+
+func TestRevoke_NoOpDoesNotBumpPermRevOrEmitEvent(t *testing.T) {
+	s := newTestStore(t)
+	sess := newWork(t, s)
+	before, _ := s.Reader().GetSession(sess)
+
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		_, e := tx.Revoke(sess, "git.pr.merge", core.Event{Kind: "revoke", SessionID: sess})
+		return e
+	}))
+	after, _ := s.Reader().GetSession(sess)
+	require.Equal(t, before.PermRev, after.PermRev, "revoking a never-granted capability must not churn perm_rev")
+
+	var n int
+	require.NoError(t, s.DB().QueryRow(`SELECT COUNT(1) FROM events WHERE kind='revoke'`).Scan(&n))
+	require.Equal(t, 0, n, "no revoke event for a no-op revoke")
+}
+
 // Revoke on a parent cascades to descendant sessions (child ⊆ parent).
 func TestRevoke_CascadesToSubtree(t *testing.T) {
 	s := newTestStore(t)

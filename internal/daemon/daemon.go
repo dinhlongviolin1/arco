@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/api"
@@ -33,6 +35,16 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.Socket), 0o700); err != nil {
 		return err
 	}
+
+	// Single-instance guard: an exclusive advisory lock on the DB. Two daemons
+	// on one DB file would each have their own single-writer mutex, breaking the
+	// single-writer invariant (only busy_timeout would mitigate). Refuse to start.
+	unlock, err := lockDB(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	store, err := ledger.Open(cfg.DBPath)
 	if err != nil {
 		return err
@@ -64,8 +76,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		return fmt.Errorf("daemon: listen %s: %w", cfg.Socket, err)
 	}
 
+	httpSrv := &http.Server{Handler: srv.Handler()}
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Serve(ln) }()
+	go func() { errCh <- httpSrv.Serve(ln) }()
 
 	// Authoritative reconcile sweep on a ticker (push is an optimization over it).
 	ticker := time.NewTicker(cfg.SweepInterval)
@@ -83,11 +96,36 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 
 	select {
 	case <-ctx.Done():
-		ln.Close()
+		// Graceful: stop accepting, drain in-flight requests, THEN let the
+		// deferred store.Close run (no write-after-close on an active request).
+		sh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(sh)
 		_ = os.Remove(cfg.Socket)
 		return nil
 	case err := <-errCh:
 		_ = os.Remove(cfg.Socket)
+		if err == http.ErrServerClosed {
+			return nil
+		}
 		return err
 	}
+}
+
+// lockDB takes an exclusive, non-blocking advisory lock on a lockfile next to
+// the DB, returning an unlock func. It fails if another daemon holds it.
+func lockDB(dbPath string) (func(), error) {
+	lockPath := dbPath + ".lock"
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("daemon: another arco instance holds %s (%w)", lockPath, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }

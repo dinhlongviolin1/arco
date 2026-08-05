@@ -34,10 +34,13 @@ func New(store core.Store, vm core.VMClient) *Engine {
 	return &Engine{Store: store, VM: vm, MissThreshold: 3, misses: map[string]int{}}
 }
 
-// DispatchResult reports what a dispatch created.
+// DispatchResult reports what a dispatch created. State is the worker's state
+// after the launch attempt (running, or failed if the launch failed) so callers
+// can distinguish "launched" from "created-then-failed" without a follow-up list.
 type DispatchResult struct {
 	SessionID string
 	WorkerID  string
+	State     core.WorkerState
 }
 
 // Dispatch creates (or reuses) a session and spawns a worker for task, crash-safe:
@@ -92,25 +95,27 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 	launchErr := e.VM.Prompt(ctx, workspace, task)
 
 	// Phase 3: durable result + state.
+	finalState := core.WorkerRunning
+	if launchErr != nil {
+		finalState = core.WorkerFailed
+	}
 	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
 		}
+		payload := "{}"
 		if launchErr != nil {
-			return tx.TransitionWorker(workerID, core.WorkerFailed, w.Rev, core.Event{
-				Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID,
-				Payload: fmt.Sprintf(`{"error":%q}`, launchErr.Error()),
-			})
+			payload = fmt.Sprintf(`{"error":%q}`, launchErr.Error())
 		}
-		return tx.TransitionWorker(workerID, core.WorkerRunning, w.Rev, core.Event{
-			Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID, Payload: "{}",
+		return tx.TransitionWorker(workerID, finalState, w.Rev, core.Event{
+			Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID, Payload: payload,
 		})
 	})
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	return DispatchResult{SessionID: sessionID, WorkerID: workerID}, nil
+	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
 }
 
 // EventInput is a normalized worker state-change from the herdr hook / intake.

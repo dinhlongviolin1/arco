@@ -125,15 +125,28 @@ func (s *Store) Migrate(ctx context.Context) error {
 			}
 			continue
 		}
-		// Run the migration's DDL. PRAGMAs at the top require this NOT be wrapped
-		// in a transaction (journal_mode can't change inside a tx).
-		if _, err := s.db.ExecContext(ctx, m.sqlText); err != nil {
+		// Apply the DDL AND the bookkeeping row in ONE transaction, so a crash
+		// mid-migration never leaves tables without a schema_migrations row (which
+		// would re-run the file on next boot and collide). PRAGMAs live in the DSN,
+		// not the file, so DDL is transaction-safe.
+		if err := func() error {
+			mtx, err := s.db.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			if _, err := mtx.ExecContext(ctx, m.sqlText); err != nil {
+				_ = mtx.Rollback()
+				return err
+			}
+			if _, err := mtx.ExecContext(ctx,
+				`INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?,?,?,?)`,
+				m.version, m.name, m.sum, s.now()); err != nil {
+				_ = mtx.Rollback()
+				return err
+			}
+			return mtx.Commit()
+		}(); err != nil {
 			return fmt.Errorf("ledger: migration %d (%s): %w", m.version, m.name, err)
-		}
-		if _, err := s.db.ExecContext(ctx,
-			`INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (?,?,?,?)`,
-			m.version, m.name, m.sum, s.now()); err != nil {
-			return fmt.Errorf("ledger: record migration %d: %w", m.version, err)
 		}
 	}
 	return nil

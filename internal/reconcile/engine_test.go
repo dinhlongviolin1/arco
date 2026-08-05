@@ -64,6 +64,7 @@ func TestDispatch_LaunchErrorParksFailed(t *testing.T) {
 	fake.PromptErr = errors.New("clavis boom")
 	res, err := e.Dispatch(context.Background(), "", "task", true)
 	require.NoError(t, err) // dispatch itself succeeds; the worker is parked failed
+	require.Equal(t, core.WorkerFailed, res.State, "DispatchResult.State must report the launch failure")
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerFailed, w.State)
 }

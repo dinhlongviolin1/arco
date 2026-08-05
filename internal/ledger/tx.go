@@ -271,6 +271,17 @@ func (t *txn) Grant(sessionID, capability, grantedBy string, e core.Event) (int6
 	} else if !ok {
 		return 0, fmt.Errorf("ledger: unknown capability %q", capability)
 	}
+	// Idempotent: an existing active grant is a no-op (no duplicate row, no
+	// perm_rev churn that would force needless worker recompiles).
+	var existing int
+	if err := t.q.QueryRowContext(context.Background(),
+		`SELECT COUNT(1) FROM session_grants WHERE session_id=? AND capability=? AND status='active'`,
+		sessionID, capability).Scan(&existing); err != nil {
+		return 0, err
+	}
+	if existing > 0 {
+		return s.PermRev, nil
+	}
 	newRev := s.PermRev + 1
 	_, err = t.q.ExecContext(context.Background(),
 		`INSERT INTO session_grants (id,session_id,capability,status,scope,granted_by,created_perm_rev,created_at)
@@ -296,7 +307,14 @@ func (t *txn) Revoke(sessionID, capability string, e core.Event) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
-	var rootRev int64
+	// Track the root's perm_rev; only bump a session (and emit the event) when a
+	// grant was actually revoked there — a no-op revoke must not churn perm_rev.
+	root, err := t.GetSession(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	rootRev := root.PermRev
+	revokedAny := false
 	for _, id := range ids {
 		res, err := t.q.ExecContext(context.Background(),
 			`UPDATE session_grants SET status='revoked', revoked_at=?
@@ -304,7 +322,8 @@ func (t *txn) Revoke(sessionID, capability string, e core.Event) (int64, error) 
 		if err != nil {
 			return 0, err
 		}
-		if n, _ := res.RowsAffected(); n > 0 || id == sessionID {
+		if n, _ := res.RowsAffected(); n > 0 {
+			revokedAny = true
 			s, err := t.GetSession(id)
 			if err != nil {
 				return 0, err
@@ -317,8 +336,10 @@ func (t *txn) Revoke(sessionID, capability string, e core.Event) (int64, error) 
 			}
 		}
 	}
-	if _, _, _, err := t.AppendEvent(e); err != nil {
-		return 0, err
+	if revokedAny {
+		if _, _, _, err := t.AppendEvent(e); err != nil {
+			return 0, err
+		}
 	}
 	return rootRev, nil
 }

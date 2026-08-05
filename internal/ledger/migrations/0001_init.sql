@@ -1,9 +1,8 @@
 -- arco schema — migration 0001_init (frozen; build-guide-rev6 §B).
 -- DDL ONLY. This file NEVER self-INSERTs into schema_migrations; Store.Migrate is
 -- the sole writer of the bookkeeping row (checksum = sha256 of this file's bytes).
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
-PRAGMA busy_timeout=5000;
+-- PRAGMAs (journal_mode/foreign_keys/busy_timeout) are set on the connection DSN
+-- in Open(), NOT here — so each migration can run inside one atomic transaction.
 
 CREATE TABLE schema_migrations (
   version    INTEGER PRIMARY KEY,
