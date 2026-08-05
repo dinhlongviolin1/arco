@@ -12,6 +12,20 @@ import (
 // ordered) plus an exact in-Go instant compare. The prefilter bounds the scanned
 // set to ~one window of this session's brain_intent events.
 func (t *txn) CountRecentBrainCalls(sessionID string, window time.Duration) (int, error) {
+	return t.countRecentEventsByKind(sessionID, "brain_intent", window)
+}
+
+// CountRecentRollups counts rollup_intent events for a session within the last
+// window — the coalescing denominator for supersession rollup (≤1 per interval).
+func (t *txn) CountRecentRollups(sessionID string, window time.Duration) (int, error) {
+	return t.countRecentEventsByKind(sessionID, "rollup_intent", window)
+}
+
+// countRecentEventsByKind counts a session's events of one kind within the last
+// window. Coarse whole-second SQL prefilter (RFC3339Nano trims fractional zeros
+// → a full-precision string range isn't chronologically ordered) + exact in-Go
+// instant compare; the prefilter bounds the scanned set to ~one window.
+func (t *txn) countRecentEventsByKind(sessionID, kind string, window time.Duration) (int, error) {
 	now, err := time.Parse(time.RFC3339Nano, t.now())
 	if err != nil {
 		return 0, err
@@ -19,8 +33,8 @@ func (t *txn) CountRecentBrainCalls(sessionID string, window time.Duration) (int
 	cutoff := now.Add(-window)
 	pre := cutoff.Add(-time.Second).UTC().Format(secondFmt)
 	rows, err := t.q.QueryContext(context.Background(),
-		`SELECT recorded_at FROM events WHERE session_id=? AND kind='brain_intent' AND recorded_at>=?`,
-		sessionID, pre)
+		`SELECT recorded_at FROM events WHERE session_id=? AND kind=? AND recorded_at>=?`,
+		sessionID, kind, pre)
 	if err != nil {
 		return 0, err
 	}
