@@ -29,23 +29,31 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	// full crash re-drive of a dangling brain_intent is a later pass.
 	proceed := true
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+		// Re-read the worker INSIDE the tx so the rate count + intent are attributed
+		// to its CURRENT owner — a concurrent ownership transfer between the read
+		// above and here must not mis-account this call to the prior session.
+		cur, err := tx.GetWorker(workerID)
+		if err != nil {
+			proceed = false
+			return nil
+		}
 		if e.BrainRate > 0 {
-			n, err := tx.CountRecentBrainCalls(w.OwnerSession, time.Minute)
+			n, err := tx.CountRecentBrainCalls(cur.OwnerSession, time.Minute)
 			if err != nil {
 				return err
 			}
 			if n >= e.BrainRate {
 				proceed = false
 				_, _, _, e2 := tx.AppendEvent(core.Event{
-					Kind: "brain_rate_limited", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
+					Kind: "brain_rate_limited", WorkerID: workerID, SessionID: cur.OwnerSession, Actor: "brain",
 					Payload: fmt.Sprintf(`{"limit":%d,"window":"1m"}`, e.BrainRate),
 				})
 				return e2
 			}
 		}
 		_, _, _, e2 := tx.AppendEvent(core.Event{
-			Kind: "brain_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
-			Payload: fmt.Sprintf(`{"state":%q}`, w.State),
+			Kind: "brain_intent", WorkerID: workerID, SessionID: cur.OwnerSession, Actor: "brain",
+			Payload: fmt.Sprintf(`{"state":%q}`, cur.State),
 		})
 		return e2
 	})
