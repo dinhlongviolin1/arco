@@ -54,6 +54,41 @@ func TestAudit_IdempotentOnRedelivery(t *testing.T) {
 	require.Len(t, escs, 1, "still exactly one pending escalation")
 }
 
+// Regression (opus F1): even a NON-high-blast capability (net.fetch) attempted
+// via the deny-listed path cannot be promoted to a standing grant — the
+// escalation's recorded danger class blocks scope=session, not just the
+// catalog's high_blast flag.
+func TestAudit_NonHighBlastCapStillBlockedFromGrant(t *testing.T) {
+	e, s, _ := newEngine(t)
+	wid := dispatchRunning(t, e)
+	require.NoError(t, e.AuditDeniedAttempt(context.Background(), wid, "net.fetch", "x", "evt-nf"))
+	escs, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: wid})
+	require.Len(t, escs, 1)
+	err := s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.DecideConfirm(escs[0].ID, true, core.ScopeSession, core.Event{Kind: "confirm_dec", WorkerID: wid, SessionID: mustWorker(t, s, wid).OwnerSession, Payload: "{}"})
+	})
+	require.ErrorIs(t, err, core.ErrHighBlastScope, "a danger-class escalation blocks scope=session even for a non-high-blast cap")
+}
+
+// Regression (opus F2): a deny-listed attempt must SURFACE as the pending
+// escalation even when a benign question was already pending (which would
+// otherwise shadow it and resume the worker on being answered).
+func TestAudit_DangerSurfacesPastPendingQuestion(t *testing.T) {
+	e, s, _ := newEngine(t)
+	wid := dispatchRunning(t, e)
+	// a pre-existing benign question
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		_, err := tx.OpenEscalation(core.Escalation{WorkerID: wid, SessionID: mustWorker(t, s, wid).OwnerSession, Kind: "question", QuestionClass: "clarify", ActionClass: core.ClassAmbiguous, Tier: core.TierMedium, Action: "which framework?"})
+		return err
+	}))
+	require.NoError(t, e.AuditDeniedAttempt(context.Background(), wid, "git.push.main", "x", "evt-q"))
+
+	escs, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: wid})
+	require.Len(t, escs, 1, "exactly one pending escalation")
+	require.Equal(t, "confirm", escs[0].Kind, "the danger confirm surfaces, not the shadowing question")
+	require.Equal(t, core.ClassDanger, escs[0].ActionClass)
+}
+
 // The danger escalation is high_blast, so approving it can NOT promote a standing
 // session grant (a probed deny-listed capability never laundered into a grant).
 func TestAudit_ConfirmCannotPromoteStandingGrant(t *testing.T) {

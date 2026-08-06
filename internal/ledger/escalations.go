@@ -192,7 +192,12 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 		if !ok {
 			return fmt.Errorf("ledger: cannot grant unknown capability %q via an escalation", esc.Capability) // fail closed
 		}
-		if row.HighBlast {
+		// Block a standing grant when EITHER the capability is high-blast in the
+		// catalog OR the escalation itself is recorded danger/high-blast — the
+		// recorded tier/class is authoritative, not decorative (opus review). This
+		// keeps a worker from laundering a probed deny-listed / danger action into a
+		// session grant on one operator approval; such grants require an explicit CLI grant.
+		if row.HighBlast || esc.Tier == core.TierHighBlast || esc.ActionClass == core.ClassDanger {
 			return core.ErrHighBlastScope
 		}
 	}
