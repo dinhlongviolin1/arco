@@ -258,9 +258,20 @@ spawn→autonomous-completion loop, but an operator should know them:
   `running` worker (MED, audit round 2).** Spawn commits `running` then delivers
   the first prompt async via Exec; a crash in that window leaves a live, idle,
   lease-holding worker that boot `Recover` (which only re-drives `starting`) never
-  re-prompts. Fix: reconcile a `running` worker whose latest `prompt_intent` has no
-  delivery (the same correlation trick the brain re-drive uses). Narrow crash
-  window; deferred.
+  re-prompts. **Deliberately NOT auto-recovered** — an attempt (a `prompt_delivered`
+  marker + a sweep re-delivery of the dangling `prompt_intent`) was built and
+  **rejected in review as unsafe**: a Claude agent that already FINISHED the task
+  stays alive at its input prompt reporting herdr status `idle` (the process does
+  not exit → it never becomes `done`), which is **indistinguishable** from a
+  never-delivered idle agent. Re-typing `w.Task` in that state re-executes a
+  completed, possibly side-effectful task (open a PR, push, delete) — the same
+  double-dispatch class that got the naive brain re-drive rejected. A safe
+  auto-recovery needs a positive "this agent never received input" signal (agent
+  working-history), which the current herdr signals (`alive` + git HEAD) don't
+  provide — HEAD can be unchanged for a finished no-commit task. **Operator remedy
+  today:** the stranded worker is visible as `running`+idle with HEAD==base; `arco
+  kill <id>` it and re-dispatch. Revisiting this needs richer agent-status history
+  (track first-observed-working), a larger design task.
 
 - **Agent actuation is PARTIAL (MED-3).** Two pieces have landed: `arco kill
   <worker>` terminates a worker and stops its agent (`VM.Kill` = `herdr workspace
