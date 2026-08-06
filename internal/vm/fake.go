@@ -71,6 +71,11 @@ func (f *Fake) Prompt(_ context.Context, workspace, text string) error {
 	return f.PromptErr
 }
 
+// PromptReady records like Prompt (the Fake has no readiness race to confirm).
+func (f *Fake) PromptReady(ctx context.Context, workspace, text string) error {
+	return f.Prompt(ctx, workspace, text)
+}
+
 func (f *Fake) Prompts() []Prompted {
 	f.mu.Lock()
 	defer f.mu.Unlock()

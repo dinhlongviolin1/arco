@@ -177,6 +177,7 @@ func TestSpawn_DeliversInitialTaskToPane(t *testing.T) {
 	res, err := e.Spawn(context.Background(), "", "do the thing", true, repo, "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
+	e.Exec.Wait() // initial delivery is async
 
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	prompts := fake.Prompts()
@@ -224,6 +225,7 @@ func TestSpawn_InitialTaskDeliveryFailure_StaysRunning(t *testing.T) {
 	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
+	e.Exec.Wait() // async delivery + its error event
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerRunning, w.State, "a failed delivery must not park the worker")
 	evs, _ := s.Reader().RecentWorkerEvents(res.WorkerID, 50)
@@ -246,6 +248,7 @@ func TestSpawn_ThenRunAgain_TargetsPane(t *testing.T) {
 	require.NoError(t, err)
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.NotEmpty(t, w.AgentRef)
+	e.Exec.Wait() // let the async initial delivery land first
 
 	before := len(fake.Prompts())
 	e.applyStep(context.Background(), res.WorkerID, "cid-ra", core.StepResult{Kind: "run_again", Instruction: "keep going"})

@@ -18,9 +18,13 @@ func newEngine(t *testing.T) (*Engine, *ledger.Store, *vm.Fake) {
 	s, err := ledger.Open(filepath.Join(t.TempDir(), "e.db"))
 	require.NoError(t, err)
 	require.NoError(t, s.Migrate(context.Background()))
-	t.Cleanup(func() { s.Close() })
 	fake := vm.NewFake()
-	return New(s, fake), s, fake
+	eng := New(s, fake)
+	// Drain off-write-path work (brain classify, async initial-task delivery)
+	// BEFORE closing the store, mirroring the daemon's shutdown order — else an
+	// Exec goroutine could tx against a closed store at end of test.
+	t.Cleanup(func() { eng.Exec.Stop(); s.Close() })
+	return eng, s, fake
 }
 
 func TestDispatch_NewSession_CrashSafeIntentThenRunning(t *testing.T) {
