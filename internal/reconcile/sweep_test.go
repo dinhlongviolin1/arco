@@ -177,3 +177,56 @@ func TestSweep_CorrelatesByAgentRef(t *testing.T) {
 	w, _ = s.Reader().GetWorker(id)
 	require.Equal(t, core.WorkerLost, w.State, "ref absent → not alive → finalized")
 }
+
+// MED-4: a BLOCKED worker (e.g. parked at a billing wall) whose agent then
+// advances HEAD and dies must TERMINALIZE, not wedge. completed_candidate is
+// illegal from blocked, so finalize falls back to lost.
+func TestSweep_BlockedAdvancedHeadThenGone_FinalizesLost(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	id := mkRunning(t, e, s, "/wt/b", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerBlocked, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+	fake.Agents = nil                // agent gone
+	fake.Heads["/wt/b"] = "advanced" // it committed before dying → would-be completed_candidate
+
+	_, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerLost, w.State, "blocked+advanced+gone terminalizes to lost, not wedged")
+}
+
+// MED-2: terminalizing a waiting worker expires its pending escalation, and a
+// late answer can't resurrect the (now terminal) worker.
+func TestSweep_TerminalizeExpiresEscalation_NoResurrect(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	id := mkRunning(t, e, s, "/wt/w", "base")
+	var escID string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		if err := tx.TransitionWorker(id, core.WorkerWaitingForUser, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"}); err != nil {
+			return err
+		}
+		var e2 error
+		escID, e2 = tx.OpenEscalation(core.Escalation{WorkerID: id, SessionID: w.OwnerSession, Kind: "question", Action: "clarify?"})
+		return e2
+	}))
+	fake.Agents = nil // agent died while waiting
+
+	_, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	w, _ := s.Reader().GetWorker(id)
+	require.True(t, w.State.Terminal(), "dead waiting worker terminalized")
+	pend, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: id})
+	require.Empty(t, pend, "pending escalation expired on terminalize")
+
+	// A late answer must not drive the terminal worker back to running.
+	_ = s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.AnswerQuestion(escID, "go ahead", core.ScopeOnce, core.Event{Kind: "escalation_answered", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	})
+	w2, _ := s.Reader().GetWorker(id)
+	require.True(t, w2.State.Terminal(), "a late answer must not resurrect a terminal worker")
+}

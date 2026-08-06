@@ -245,7 +245,12 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	}
 	resumedAt := ""
 	transitioned := false
-	if haveWorker && core.LegalWorkerTransition(worker.State, target) {
+	// Never resume a TERMINAL worker: lost→running is a "legal" transition, so a
+	// human answering a stale escalation on a worker the sweep already finalized
+	// would resurrect a dead worker (its agent is gone). The answer/grant is still
+	// recorded; the worker just isn't driven. Escalations are also expired on
+	// terminalize (sweep finalize/Recover), so this is the belt for the race window.
+	if haveWorker && !worker.State.Terminal() && core.LegalWorkerTransition(worker.State, target) {
 		if err := t.TransitionWorker(esc.WorkerID, target, worker.Rev, e); err != nil {
 			return err
 		}

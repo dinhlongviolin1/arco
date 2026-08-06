@@ -273,19 +273,35 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 		if err != nil {
 			return err
 		}
-		if cur.State.Terminal() || !core.LegalWorkerTransition(cur.State, target) {
+		if cur.State.Terminal() {
 			return nil
+		}
+		// The HEAD-advanced target is completed_candidate, but that's illegal from
+		// blocked/paused/waiting_* — fall back to `lost` (legal from every
+		// non-terminal state) so a dead worker in one of those states TERMINALIZES
+		// instead of wedging forever (finalize would no-op every sweep, and its
+		// misses entry would never be reset → an unbounded map leak). Capstone audit.
+		if !core.LegalWorkerTransition(cur.State, target) {
+			if !core.LegalWorkerTransition(cur.State, core.WorkerLost) {
+				return nil
+			}
+			target = core.WorkerLost
 		}
 		if headNow != "" {
 			if err := tx.ObserveWorker(w.ID, core.WorkerObservation{HeadCommit: headNow}); err != nil {
 				return err
 			}
 		}
-		e := tx.TransitionWorker(w.ID, target, cur.Rev, core.Event{
+		if err := tx.TransitionWorker(w.ID, target, cur.Rev, core.Event{
 			Kind: "reconcile", WorkerID: w.ID, SessionID: cur.OwnerSession,
 			Payload: fmt.Sprintf(`{"sweep":true,"target":%q}`, target),
-		})
-		return e
+		}); err != nil {
+			return err
+		}
+		// Expire any pending escalation as the worker terminalizes, so a later human
+		// answer can't drive lost→running and resurrect a dead worker (capstone audit).
+		_, xerr := tx.ExpirePendingForWorker(w.ID)
+		return xerr
 	})
 	if errors.Is(err, core.ErrRevMismatch) {
 		return false, nil
