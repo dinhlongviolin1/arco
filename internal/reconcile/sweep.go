@@ -163,8 +163,13 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		}
 		if changed {
 			res.Transitions++
-			e.resetMiss(w.ID)
 		}
+		// Reset the miss counter whether or not we finalized: if we did, it's moot;
+		// if we couldn't (e.g. a completed_candidate — no legal edge to lost — whose
+		// agent is expectedly gone, or a rev race), NOT resetting would re-bump every
+		// sweep and grow the in-memory misses map without bound (whole-system audit
+		// LOW-5). A still-missing worker simply re-accrues from zero next sweep.
+		e.resetMiss(w.ID)
 	}
 	return res, nil
 }

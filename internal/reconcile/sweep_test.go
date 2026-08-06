@@ -118,6 +118,31 @@ func TestSweep_SkipsTerminalWorkers(t *testing.T) {
 	require.Equal(t, 0, r.Observed) // terminal worker not observed
 }
 
+// LOW-5 (whole-system audit): a completed_candidate worker has no legal edge to
+// lost, so finalize no-ops when its (expectedly-gone) agent is missing. The miss
+// counter must still be RESET each sweep — else it re-bumps forever and grows the
+// in-memory misses map without bound.
+func TestSweep_UnfinalizeableDoesNotLeakMisses(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	id := mkRunning(t, e, s, "/wt/cc", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerCompletedCandidate, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+	fake.Agents = nil // agent gone — expected once a worker is completed_candidate
+
+	for i := 0; i < 3; i++ {
+		_, err := e.Sweep(context.Background())
+		require.NoError(t, err)
+	}
+	require.Equal(t, core.WorkerCompletedCandidate, mustWorker(t, s, id).State, "stays candidate — no legal edge to lost")
+	e.mu.Lock()
+	_, present := e.misses[id]
+	e.mu.Unlock()
+	require.False(t, present, "miss counter reset each sweep, not leaked unboundedly")
+}
+
 func TestRecover_StartingWorkerResolvedByLiveness(t *testing.T) {
 	e, s, fake := newEngine(t)
 	// Simulate a crash mid-dispatch: a worker stuck in `starting`.

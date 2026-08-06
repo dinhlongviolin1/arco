@@ -230,12 +230,39 @@ delete/update` CLI.
 
 ## 12. Known limitations & prioritized follow-ups (whole-system capstone audit)
 
-A final integrated-system audit (opus) confirmed the crash-safety, concurrency,
-and secret-at-rest core sound. Five findings were fixed (PRs #55–#58: worker
+Two integrated-system audits (opus) confirmed the crash-safety, concurrency, and
+secret-at-rest core sound. Round one fixed five findings (PRs #55–#58: worker
 terminalization can't wedge or resurrect a corpse; worker Read is worktree-gated;
-the local hook signs intake under P4; EscalationTimeout auto-pauses stuck
-waiting workers). The rest are **explicitly scoped-out known limitations** — none
-block the core spawn→autonomous-completion loop, but an operator should know them:
+the local hook signs intake under P4; EscalationTimeout auto-pauses stuck waiting
+workers). A second whole-system audit (post-#62) fixed four more:
+- **HIGH — scoped provider creds leaked into the ledger/LLM via herdr `--env`
+  argv rendered into launch error strings** → redacted at the source (PR #63).
+- **MED — a human answer could drive a POOL-OWNED worker to running**, bypassing
+  the pool-inert invariant every brain path enforces → `decide()` now guards it.
+- **MED — the escalation resume event was recorded UNATTRIBUTED** (NULL worker_id,
+  invisible to the brain/audit) → `decide()` stamps it to the worker.
+- **LOW — a `completed_candidate` worker's miss counter grew unboundedly** (no
+  legal edge to lost, so finalize no-ops) → the counter is reset each sweep.
+
+The rest are **explicitly scoped-out known limitations** — none block the core
+spawn→autonomous-completion loop, but an operator should know them:
+
+- **Human-answer delivery is not wired to the agent (MED, audit round 2).**
+  `AnswerQuestion`/`DecideConfirm` resume the worker in the LEDGER (→ running) and
+  now attribute the event, but the answer TEXT is never delivered to the worker's
+  herdr agent — there is no `VM.Prompt` on the resume path (unlike the brain's
+  `run_again`). So a human-answered worker's agent sits idle and the next sweep can
+  mis-finalize it. Wiring this is the answer-delivery analog of `deliverInitialTask`
+  (route the API answer/confirm through an Engine method that async-delivers the
+  answer to the pane post-commit) — a focused follow-up, deferred with the rest of
+  the human-in-the-loop delivery work.
+- **A crash between `dispatch_done` and initial-task delivery strands a taskless
+  `running` worker (MED, audit round 2).** Spawn commits `running` then delivers
+  the first prompt async via Exec; a crash in that window leaves a live, idle,
+  lease-holding worker that boot `Recover` (which only re-drives `starting`) never
+  re-prompts. Fix: reconcile a `running` worker whose latest `prompt_intent` has no
+  delivery (the same correlation trick the brain re-drive uses). Narrow crash
+  window; deferred.
 
 - **Agent actuation is PARTIAL (MED-3).** Two pieces have landed: `arco kill
   <worker>` terminates a worker and stops its agent (`VM.Kill` = `herdr workspace
