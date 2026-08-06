@@ -103,6 +103,8 @@ type Reader interface {
 
 	// GetPool returns a provider pool by id.
 	GetPool(id string) (ProviderPool, error)
+	// ListPools returns all provider pools (operator view / `arco pool list`).
+	ListPools() ([]ProviderPool, error)
 	// CountActiveLeases returns how many un-released leases the pool holds.
 	CountActiveLeases(poolID string) (int, error)
 	// CountActiveWorkers returns how many NON-terminal workers a session owns
@@ -135,6 +137,8 @@ type Tx interface {
 	BindLaunch(workerID, worktree, base, ref string) error
 
 	CreateSession(s Session) error
+	// CreatePool inserts a provider pool (operator config; `arco pool create`).
+	CreatePool(p ProviderPool) error
 	SetSessionStatus(id string, to SessionStatus, expectedRev int64, e Event) error
 	AttachWorker(sessionID, workerID string) error
 

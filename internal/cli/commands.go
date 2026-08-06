@@ -35,6 +35,68 @@ func newDispatchCmd() *cobra.Command {
 	return cmd
 }
 
+func newPoolCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "pool", Short: "manage provider pools (worker credential profiles)"}
+	cmd.AddCommand(newPoolCreateCmd(), newPoolListCmd())
+	return cmd
+}
+
+func newPoolCreateCmd() *cobra.Command {
+	var profile, provider string
+	var maxActive, maxStarts int
+	cmd := &cobra.Command{
+		Use:   "create <id>",
+		Short: "create a provider pool; workers leased from it launch with --profile's clavis creds",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if profile == "" {
+				return fmt.Errorf("--profile (a clavis profile name) is required")
+			}
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			p, err := c.CreatePool(context.Background(), api.PoolReq{
+				ID: args[0], ClavisProfile: profile, Provider: provider,
+				MaxActive: maxActive, MaxStartsPerMin: maxStarts,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "pool %s created (profile %s, max_active %d)\n", p.ID, p.ClavisProfile, p.MaxActive)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&profile, "profile", "", "clavis profile name the pool's workers authenticate with (required)")
+	cmd.Flags().StringVar(&provider, "provider", "", "provider label (informational)")
+	cmd.Flags().IntVar(&maxActive, "max-active", 0, "concurrency cap (0 → schema default)")
+	cmd.Flags().IntVar(&maxStarts, "max-starts-per-min", 0, "start-rate cap (0 → schema default)")
+	return cmd
+}
+
+func newPoolListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "list provider pools",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.Pools(context.Background())
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tPROFILE\tPROVIDER\tMAX_ACTIVE\tSTATE")
+			for _, p := range res.Pools {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", p.ID, p.ClavisProfile, p.Provider, p.MaxActive, p.State)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
 func newWorkersCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "workers",

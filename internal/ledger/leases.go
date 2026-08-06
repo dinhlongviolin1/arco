@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/admission"
@@ -18,6 +19,59 @@ import (
 const secondFmt = "2006-01-02T15:04:05Z07:00"
 
 // GetPool returns a provider pool by id (ErrNotFound if absent).
+// CreatePool inserts a provider pool (operator config: `arco pool create`).
+// Requires id + clavis_profile (the scoped credential a leased worker launches
+// with); other fields default to the schema defaults. Fails if the id exists.
+func (t *txn) CreatePool(p core.ProviderPool) error {
+	if p.ID == "" || p.ClavisProfile == "" {
+		return fmt.Errorf("ledger: CreatePool requires id and clavis_profile")
+	}
+	if p.CreatedAt == "" {
+		p.CreatedAt = t.now()
+	}
+	if p.Provider == "" {
+		p.Provider = "custom"
+	}
+	if p.MaxActive <= 0 {
+		p.MaxActive = 35
+	}
+	if p.MaxStartsPerMin <= 0 {
+		p.MaxStartsPerMin = 10
+	}
+	if p.State == "" {
+		p.State = core.PoolOK
+	}
+	_, err := t.q.ExecContext(context.Background(),
+		`INSERT INTO provider_pools(id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at)
+		 VALUES(?,?,?,?,?,?,?,?,NULL,?)`,
+		p.ID, p.Provider, p.Org, p.ClavisProfile, p.ModelClass, p.MaxActive, p.MaxStartsPerMin, string(p.State), p.CreatedAt)
+	return err
+}
+
+// ListPools returns all provider pools, id-ordered (operator view).
+func (r *reader) ListPools() ([]core.ProviderPool, error) {
+	rows, err := r.q.QueryContext(context.Background(),
+		`SELECT id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at
+		   FROM provider_pools ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []core.ProviderPool
+	for rows.Next() {
+		var p core.ProviderPool
+		var org, model, state string
+		var cooldown sql.NullString
+		if err := rows.Scan(&p.ID, &p.Provider, &org, &p.ClavisProfile, &model,
+			&p.MaxActive, &p.MaxStartsPerMin, &state, &cooldown, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		p.Org, p.ModelClass, p.State, p.CooldownUntil = org, model, core.PoolState(state), cooldown.String
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *reader) GetPool(id string) (core.ProviderPool, error) {
 	row := r.q.QueryRowContext(context.Background(),
 		`SELECT id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at
