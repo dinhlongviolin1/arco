@@ -38,9 +38,14 @@ func Provision(ctx context.Context, gitBin, repo, base, dest string) (head strin
 		return "", fmt.Errorf("worktree: dest %q already exists (clone-per-worker needs a fresh dir)", dest)
 	}
 
-	// Full clone into the fresh per-worker gitdir. `--` ends options so a repo
-	// path can't be parsed as a flag.
-	if out, e := run(ctx, gitBin, "clone", "--", repo, dest); e != nil {
+	// Full clone into the fresh per-worker gitdir. Hardening: `protocol.ext.allow=
+	// never` blocks the `ext::<cmd>` remote-helper that would EXECUTE an arbitrary
+	// command on clone (the leading-'-' guard alone doesn't catch `ext::…`);
+	// GIT_TERMINAL_PROMPT=0 (in run) stops a bad URL hanging on a credential
+	// prompt. `--` ends options so a repo path can't be parsed as a flag. No
+	// --recurse-submodules (submodule hooks live in a gitdir the superproject's
+	// hooksPath doesn't cover); quarantine.Run neutralizes the rest post-clone.
+	if out, e := run(ctx, gitBin, "-c", "protocol.ext.allow=never", "clone", "--", repo, dest); e != nil {
 		return "", fmt.Errorf("worktree: clone: %v: %s", e, out)
 	}
 	// Detached checkout at base (if given) so the worker starts from a known point
@@ -69,7 +74,11 @@ func Remove(dest string) error {
 // combined output for the error message.
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = spawnenv.Scrub(os.Environ())
+	// Scrubbed env (P1) + no interactive credential prompt (a bad URL must fail,
+	// not hang). The dangerous ext:: command-exec transport is blocked per-command
+	// via protocol.ext.allow=never; we do NOT set GIT_PROTOCOL_FROM_USER=0 because
+	// it would also block the `file` transport legit local-path clones need.
+	cmd.Env = append(spawnenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

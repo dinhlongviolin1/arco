@@ -80,6 +80,20 @@ func TestProvision_Guards(t *testing.T) {
 	require.Error(t, err)
 }
 
+// The ext:: remote helper executes an arbitrary command on clone; provisioning
+// must refuse it (protocol.ext.allow=never) rather than run it. Uses a sentinel
+// file the helper would create if it ran.
+func TestProvision_BlocksExtTransport(t *testing.T) {
+	sentinel := filepath.Join(t.TempDir(), "pwned")
+	// ext::sh -c '... touch sentinel ...' — if the transport were allowed, git
+	// would execute this and create the sentinel.
+	repo := "ext::sh -c \"touch " + sentinel + "; false\""
+	dest := filepath.Join(t.TempDir(), "wt")
+	_, err := Provision(context.Background(), "git", repo, "", dest)
+	require.Error(t, err, "ext:: clone must fail (transport blocked)")
+	require.NoFileExists(t, sentinel, "the ext helper command must NOT have executed")
+}
+
 func TestRemove(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "wt")
 	require.NoError(t, os.MkdirAll(d, 0o700))
