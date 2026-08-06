@@ -24,6 +24,8 @@ const maxPatchBytes = 1 << 20 // 1 MiB
 // CONFIRMED against herdr 0.7.5 (Task-S spike): the agent_status enum is exactly
 // idle|working|blocked|done|unknown — only `done` means the agent finished;
 // idle/working/blocked/unknown are alive (a pane absent from the list = gone).
+// NB: a pane that PERSISTS as "unknown" stays alive; its cleanup relies on the
+// pane eventually dropping from `agent list` (real process death), not on status.
 var terminalHerdrStatus = map[string]bool{"done": true}
 
 // LocalVMClient drives agents on the local machine: git for HEAD/diff (real,
@@ -35,6 +37,11 @@ var terminalHerdrStatus = map[string]bool{"done": true}
 // so Prompt/Kill's target must be the herdr pane_id captured at launch; (2) the
 // launch itself (`herdr agent start <name> --kind <kind> --pane <id> -- <args>`)
 // is not yet wired (arco currently only prompts an existing pane).
+//
+// DO NOT set use_local_vm before (1) is wired: the sweep looks up liveness by
+// w.Workspace ("arco_<ulid>") against herdr's workspace_id ("wB"), which NEVER
+// matches, so every live worker would miss and be false-finalized Lost/Failed.
+// It is not merely inert — enabling it early actively nukes the fleet.
 type LocalVMClient struct {
 	Herdr string
 	Git   string

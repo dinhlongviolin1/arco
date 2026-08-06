@@ -56,6 +56,11 @@ exist.)
    `pane_id` (and `workspace_id`/`terminal_id`) **at launch** and store them on
    the worker row, then target Prompt/Kill/liveness by `pane_id` and correlate
    `ListAgents` results by the stored ids — not by arco's workspace string.
+   **Consequence — do NOT set `use_local_vm` before this is wired:** the sweep
+   looks up liveness by `w.Workspace` ("arco_<ulid>") against herdr's
+   `workspace_id` ("wB"), which never matches, so every live worker would miss
+   and be false-finalized `Lost`/`Failed` (and a launch-error fallback →
+   `Failed`). It is not merely inert; enabling it early nukes the fleet.
 2. **Launch path.** `reconcile.Dispatch`/`Delegate` currently only `Prompt` an
    existing pane. The real spawn is `herdr agent start <name> --kind <kind>
    --pane <id> -- <args>`, where `<args>` are `permcompile.LaunchArgs` and the
