@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dinhlongviolin1/arco/internal/api"
 	"github.com/dinhlongviolin1/arco/internal/client"
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/vm"
@@ -74,4 +75,40 @@ func TestGracefulShutdown(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("daemon did not shut down gracefully")
 	}
+}
+
+// MED-6: with a shared intake secret (P4), the LOCAL hook bridge must still work
+// — the client signs /v1/events; an unsigned poster is 401'd.
+func TestSignedIntake_LocalHookWorksUnderP4(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	cfg.DBPath = filepath.Join(dir, "arco.db")
+	cfg.Socket = filepath.Join(dir, "arco.sock")
+	cfg.SweepInterval = time.Hour
+	cfg.IntakeSecret = "topsecret-shared-key-1234567890"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, Deps{VM: vm.NewFake()}) }()
+
+	signed := client.New(cfg.Socket)
+	signed.SetIntakeSecret(cfg.IntakeSecret)
+	require.Eventually(t, func() bool {
+		h, err := signed.Health(context.Background())
+		return err == nil && h.Status == "ok"
+	}, 5*time.Second, 20*time.Millisecond)
+
+	// signed → accepted (202 for unknown worker_ref; the point is it's NOT 401)
+	_, err := signed.PostEvent(context.Background(), api.EventReq{WorkerRef: "unknown", SourceEventID: "e1"})
+	require.NoError(t, err, "a signed local event is accepted under P4")
+
+	// unsigned client → 401
+	unsigned := client.New(cfg.Socket)
+	_, err = unsigned.PostEvent(context.Background(), api.EventReq{WorkerRef: "unknown", SourceEventID: "e2"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "401", "an unsigned event is rejected under P4")
+
+	cancel()
+	<-done
 }

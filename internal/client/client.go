@@ -6,6 +6,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +20,8 @@ import (
 
 // Client talks to the daemon at a unix socket path.
 type Client struct {
-	hc *http.Client
+	hc           *http.Client
+	intakeSecret string // when set, HMAC-signs POST /v1/events (P4)
 }
 
 // New returns a Client dialing the given unix socket.
@@ -31,14 +35,20 @@ func New(socket string) *Client {
 	}}
 }
 
+// SetIntakeSecret makes the client HMAC-sign POST /v1/events. Set from
+// cfg.IntakeSecret so the local `arco hook` bridge keeps working once a shared
+// intake secret is configured (else the server's P4 gate 401s the local hook).
+func (c *Client) SetIntakeSecret(s string) { c.intakeSecret = s }
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
+	var raw []byte
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(b)
+		raw, body = b, bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://unix"+path, body)
 	if err != nil {
@@ -46,6 +56,14 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	// Sign the intake body so the server's P4 HMAC gate accepts a locally-posted
+	// event (the hook bridge) once a shared secret is configured. Only /v1/events
+	// is verified server-side; signing it over the EXACT marshaled bytes.
+	if c.intakeSecret != "" && path == "/v1/events" && raw != nil {
+		mac := hmac.New(sha256.New, []byte(c.intakeSecret))
+		mac.Write(raw)
+		req.Header.Set("X-Arco-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
