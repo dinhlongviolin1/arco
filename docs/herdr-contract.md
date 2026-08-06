@@ -61,10 +61,28 @@ exist.)
    `workspace_id` ("wB"), which never matches, so every live worker would miss
    and be false-finalized `Lost`/`Failed` (and a launch-error fallback →
    `Failed`). It is not merely inert; enabling it early nukes the fleet.
-2. **Launch path.** `reconcile.Dispatch`/`Delegate` currently only `Prompt` an
-   existing pane. The real spawn is `herdr agent start <name> --kind <kind>
-   --pane <id> -- <args>`, where `<args>` are `permcompile.LaunchArgs` and the
-   process env is `spawnenv.Scrub`'d and a provider lease is acquired first. This
-   needs a new `core.VMClient` launch method + a herdr pane to start into.
+2. **Launch path — IMPLEMENTED (Fake-tested), live-verify pending.**
+   `Engine.Spawn` (repo dispatch) now composes provision → quarantine → compile →
+   `LaunchArgs` → `spawnenv.Scrub` → `VMClient.Launch`, and `LocalVMClient.Launch`
+   implements the real chain to the CONFIRMED shapes:
+   `workspace create --no-focus --label <name> --cwd <workdir> [--env …]` →
+   resolve `workspace_id` by label (`workspace list`) → resolve `pane_id`
+   (`pane list`) → `agent start <name> --kind <kind> --pane <pane_id> -- <args>`;
+   ref = `pane_id`. IDs are parsed only from the read-only list envelopes
+   (confirmed), not create responses. **Remaining live-verify (why `use_local_vm`
+   stays default-off + guarded):** (a) that create→list→start works end-to-end on
+   a live server (needs spawning a real agent); (b) whether
+   `workspace create --env` REPLACES or AUGMENTS the pane's shell env — P1's
+   scrubbed-spawn-env fully holds only if it replaces (else herdr's own env may
+   leak to the worker); (c) **pane-readiness race** — `agent start` requires the
+   pane at a shell prompt, but Launch fires `pane list`+`agent start` right after
+   `workspace create` returns; if create returns before the pane's shell is
+   ready, `agent start` may land early — a readiness guard (`agent wait` / retry,
+   or confirming create blocks until prompt-ready) is needed. Also: the
+   launch-ERROR liveness fallback in `Engine.Spawn` correlates by arco's
+   workspace, but `LocalVMClient.ListAgents` reports herdr's `workspace_id`, so it
+   won't match for the real client — a half-spawned agent whose ref-capture
+   errored would be false-`Failed` (gated behind `use_local_vm`; fix when lifting
+   the gate). A provider lease at spawn is still TODO (no pool selection policy).
 3. **`send-keys` key token.** Confirm `C-c` (Ctrl-C) is accepted for the
    best-effort `Kill`, or use the documented canonical key names.

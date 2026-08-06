@@ -135,3 +135,50 @@ func TestFake_Launch(t *testing.T) {
 	require.Equal(t, ref, agents[0].Ref)
 	require.True(t, agents[0].Alive)
 }
+
+func TestLocal_Launch(t *testing.T) {
+	bin := t.TempDir()
+	startLog := filepath.Join(bin, "start.log")
+	// fake herdr answering the launch chain (workspace create → list → pane list →
+	// agent start) with the CONFIRMED envelope shapes.
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2\" in\n" +
+		"'workspace create') exit 0 ;;\n" +
+		"'workspace list') printf '%s' '{\"result\":{\"workspaces\":[{\"workspace_id\":\"wZ\",\"label\":\"arco_test\"}]}}' ; exit 0 ;;\n" +
+		"'pane list') printf '%s' '{\"result\":{\"panes\":[{\"pane_id\":\"wZ:p1\",\"workspace_id\":\"wZ\"}]}}' ; exit 0 ;;\n" +
+		"'agent start') echo \"$@\" >> " + startLog + " ; exit 0 ;;\n" +
+		"esac\nexit 0\n"
+	herdrPath := filepath.Join(bin, "herdr")
+	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
+
+	l := NewLocal(herdrPath) // absolute path — never the real ~/.local/bin/herdr
+	ref, err := l.Launch(context.Background(), core.LaunchSpec{
+		Name: "arco_test", Kind: "claude", Workdir: "/wt", Args: []string{"--settings", "/cfg"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "wZ:p1", ref, "ref is the resolved pane_id (matches ListAgents Ref)")
+
+	b, err := os.ReadFile(startLog)
+	require.NoError(t, err)
+	got := string(b)
+	require.Contains(t, got, "agent start arco_test")
+	require.Contains(t, got, "--kind claude")
+	require.Contains(t, got, "--pane wZ:p1")
+	require.Contains(t, got, "-- --settings /cfg", "pinned launch args passed after --")
+}
+
+func TestLocal_LaunchErrors(t *testing.T) {
+	// workspace with no matching pane → error (not a silent bad launch)
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2\" in\n" +
+		"'workspace create') exit 0 ;;\n" +
+		"'workspace list') printf '%s' '{\"result\":{\"workspaces\":[{\"workspace_id\":\"wZ\",\"label\":\"arco_test\"}]}}' ; exit 0 ;;\n" +
+		"'pane list') printf '%s' '{\"result\":{\"panes\":[]}}' ; exit 0 ;;\n" +
+		"esac\nexit 0\n"
+	herdrPath := filepath.Join(bin, "herdr")
+	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
+	_, err := NewLocal(herdrPath).Launch(context.Background(), core.LaunchSpec{Name: "arco_test", Kind: "claude"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no pane in workspace")
+}

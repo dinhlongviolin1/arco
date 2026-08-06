@@ -136,20 +136,111 @@ func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 	return newCmd(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
 }
 
-// Launch would start a new agent via the confirmed herdr contract:
+// Launch starts a new agent via the herdr contract (all confirmed against herdr
+// 0.7.5, Task-S spike):
 //
-//	herdr workspace create → herdr tab create → herdr agent start <name>
-//	  --kind <spec.Kind> --pane <pane_id> -- <spec.Args...>   (env = spec.Env)
+//	herdr workspace create --no-focus --label <name> --cwd <workdir> [--env …]
+//	→ resolve the new workspace_id by label (confirmed `workspace list` shape)
+//	→ resolve its pane_id (confirmed `pane list` shape)
+//	→ herdr agent start <name> --kind <kind> --pane <pane_id> -- <args…>
 //
-// The `agent start` signature is confirmed (herdr 0.7.5, Task-S spike), but the
-// workspace/tab/pane PROVISIONING chain — creating a pane and capturing its
-// pane_id from the create responses — is NOT verified against a live server
-// (verifying it mutates a running herdr + spawns a real agent). Rather than ship
-// unverified JSON-parsing as if it worked, this fails explicitly. The Fake
-// VMClient is the default; do not set use_local_vm until this is wired + live-
-// verified (see docs/herdr-contract.md open item #2).
+// The returned ref is the pane_id (matches ListAgents' Ref, so the sweep
+// correlates). --no-focus avoids stealing the operator's view. IDs are parsed
+// only from the read-only list envelopes (confirmed shapes — NOT the create
+// responses), so this doesn't repeat the assumed-schema bug the spike fixed.
+//
+// LIVE-VERIFY CAVEATS (still gated; default stays Fake, use_local_vm guarded):
+// (1) that create→list→start works end-to-end on a live server, and (2) whether
+// `workspace create --env` REPLACES or merely augments the pane's shell env —
+// P1's scrubbed-spawn-env only fully holds if it replaces (else herdr's own env,
+// which may carry creds, leaks to the worker). See docs/herdr-contract.md.
 func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (string, error) {
-	return "", fmt.Errorf("vm: LocalVMClient.Launch not wired — the herdr workspace/tab/pane provisioning chain is unverified against a live server (Task-S open item; use the Fake VMClient, see docs/herdr-contract.md)")
+	kind := spec.Kind
+	if kind == "" {
+		kind = "claude"
+	}
+	create := []string{"workspace", "create", "--no-focus", "--label", spec.Name}
+	if spec.Workdir != "" {
+		create = append(create, "--cwd", spec.Workdir)
+	}
+	for _, kv := range spec.Env { // scrubbed env for the launched process (P1)
+		create = append(create, "--env", kv)
+	}
+	if out, err := runOutput(ctx, l.Herdr, create...); err != nil {
+		return "", fmt.Errorf("herdr workspace create: %w: %s", err, out)
+	}
+	wsID, err := l.workspaceIDByLabel(ctx, spec.Name)
+	if err != nil {
+		return "", err
+	}
+	paneID, err := l.paneInWorkspace(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+	start := []string{"agent", "start", spec.Name, "--kind", kind, "--pane", paneID}
+	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
+		start = append(append(start, "--"), spec.Args...)
+	}
+	if out, err := runOutput(ctx, l.Herdr, start...); err != nil {
+		return "", fmt.Errorf("herdr agent start: %w: %s", err, out)
+	}
+	return paneID, nil
+}
+
+// workspaceIDByLabel finds the workspace_id of the (most recent) workspace with
+// the given label, from the confirmed `workspace list` envelope.
+func (l *LocalVMClient) workspaceIDByLabel(ctx context.Context, label string) (string, error) {
+	out, err := runOutput(ctx, l.Herdr, "workspace", "list")
+	if err != nil {
+		return "", fmt.Errorf("herdr workspace list: %w", err)
+	}
+	var resp struct {
+		Result struct {
+			Workspaces []struct {
+				WorkspaceID string `json:"workspace_id"`
+				Label       string `json:"label"`
+			} `json:"workspaces"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("herdr workspace list: bad json: %w", err)
+	}
+	id := ""
+	for _, w := range resp.Result.Workspaces {
+		if w.Label == label {
+			id = w.WorkspaceID // last match wins (most recently created)
+		}
+	}
+	if id == "" {
+		return "", fmt.Errorf("herdr: no workspace with label %q after create", label)
+	}
+	return id, nil
+}
+
+// paneInWorkspace returns a pane_id belonging to workspace wsID, from the
+// confirmed `pane list` envelope.
+func (l *LocalVMClient) paneInWorkspace(ctx context.Context, wsID string) (string, error) {
+	out, err := runOutput(ctx, l.Herdr, "pane", "list")
+	if err != nil {
+		return "", fmt.Errorf("herdr pane list: %w", err)
+	}
+	var resp struct {
+		Result struct {
+			Panes []struct {
+				PaneID      string `json:"pane_id"`
+				WorkspaceID string `json:"workspace_id"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("herdr pane list: bad json: %w", err)
+	}
+	for _, p := range resp.Result.Panes {
+		if p.WorkspaceID == wsID {
+			return p.PaneID, nil
+		}
+	}
+	return "", fmt.Errorf("herdr: no pane in workspace %q", wsID)
 }
 
 // Diff returns the base→head numstat summary + a size-capped patch.
