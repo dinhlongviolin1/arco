@@ -24,6 +24,58 @@ func waitingWorker(t *testing.T, s *Store) (worker, session string) {
 	return worker, session
 }
 
+// MED-4 (whole-system audit): a human answer must NOT drive a POOL-OWNED worker
+// back to running — the pool sentinel is inert to being driven on every other
+// path (brain, delegate, rollup). The answer/grant is recorded; the worker is
+// left in the pool. Reachable because ReleaseWorker does not expire a pending
+// escalation.
+func TestDecide_PoolOwnedWorkerNotResumed(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	var escID string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		escID, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "question", Action: "q?"})
+		return e
+	}))
+	// release to the pool (ownership → sentinel; state stays waiting_for_user), THEN answer
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error { return tx.ReleaseWorker(worker, "cli") }))
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.AnswerQuestion(escID, "go", core.ScopeOnce, core.Event{Kind: "question_ans", Payload: `{"decided_by":"human"}`})
+	}))
+
+	w := getWorker(t, s, worker)
+	require.Equal(t, core.PoolSessionID, w.OwnerSession, "still pool-owned")
+	require.Equal(t, core.WorkerWaitingForUser, w.State, "a pool-owned worker must NOT be driven to running by a human answer")
+	esc, err := s.Reader().GetEscalation(escID)
+	require.NoError(t, err)
+	require.Equal(t, "answered", esc.Status, "the answer is still recorded")
+}
+
+// MED-2 (audit): the resume event the API passes is UNATTRIBUTED (empty WorkerID);
+// decide() must stamp it to the escalation's worker so it lands in the worker's
+// event stream (visible to the brain's RecentWorkerEvents + the audit tail), not
+// recorded with a NULL worker_id. A normal (non-pool) worker still resumes.
+func TestDecide_AttributesResumeEventToWorker(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	_ = session
+	var escID string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		escID, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "question", Action: "q?"})
+		return e
+	}))
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.AnswerQuestion(escID, "go", core.ScopeOnce, core.Event{Kind: "question_ans", Payload: `{"decided_by":"human"}`})
+	}))
+	require.Equal(t, core.WorkerRunning, getWorker(t, s, worker).State, "a normally-owned worker resumes running")
+	var n int
+	require.NoError(t, s.DB().QueryRow(
+		`SELECT COUNT(1) FROM events WHERE kind='question_ans' AND worker_id=?`, worker).Scan(&n))
+	require.Equal(t, 1, n, "the resume event is attributed to the worker, not recorded with a NULL worker_id")
+}
+
 func TestOpenEscalation_OnePendingPerWorker(t *testing.T) {
 	s := newTestStore(t)
 	worker, session := waitingWorker(t, s)

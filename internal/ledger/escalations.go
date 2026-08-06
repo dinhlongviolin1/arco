@@ -187,6 +187,21 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 		}
 	}
 
+	// Attribute the resume/answer event to the escalation's worker + effective
+	// session so it lands in the worker's event stream. The API passes an
+	// UNATTRIBUTED event (empty WorkerID/SessionID), which would otherwise be
+	// recorded with a NULL worker_id — invisible to RecentWorkerEvents (so the
+	// brain never sees the answer) and to the worker's audit tail (whole-system
+	// audit MED-2). Only stamp a worker when its row exists (FK-safe).
+	if haveWorker {
+		e.WorkerID = esc.WorkerID
+		if e.SessionID == "" {
+			e.SessionID = worker.OwnerSession
+		}
+	} else if e.SessionID == "" {
+		e.SessionID = esc.SessionID
+	}
+
 	// A grant is promoted only on a resuming decision (question, or an approved
 	// confirm) with scope=session and a capability. A rejection never grants — so
 	// the high-blast gate must NOT block a rejection. A worker now owned by the
@@ -250,7 +265,12 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	// would resurrect a dead worker (its agent is gone). The answer/grant is still
 	// recorded; the worker just isn't driven. Escalations are also expired on
 	// terminalize (sweep finalize/Recover), so this is the belt for the race window.
-	if haveWorker && !worker.State.Terminal() && core.LegalWorkerTransition(worker.State, target) {
+	// Likewise never drive a POOL-OWNED worker (released via handoff, pending
+	// claim): the pool sentinel is inert to the brain on every other entry path, so
+	// a human answer must not be the one door that drives it back to running under
+	// the pool owner (whole-system audit MED-4). Answer/grant recorded, not driven.
+	if haveWorker && !worker.State.Terminal() && worker.OwnerSession != core.PoolSessionID &&
+		core.LegalWorkerTransition(worker.State, target) {
 		if err := t.TransitionWorker(esc.WorkerID, target, worker.Rev, e); err != nil {
 			return err
 		}
