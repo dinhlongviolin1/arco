@@ -184,11 +184,19 @@ Spike checklist:
   for enabling cross-VM — don't let this scoping quietly downgrade it. Also noted: NUL bytes are
   rejected by exec before any shell, and Linux's 128 KB argv-element cap bounds
   very large quote-dense payloads (per-task failure, not injection).
-- **Still needed before live cross-VM:** remote worktree provisioning (the spawn
-  path provisions worktrees on THIS host), a VM-routing/admission policy for
+- **Cross-host VALIDATED against a real second host (vm1).** Env-gated integration
+  tests (`ssh_integration_test.go`, run with `ARCO_TEST_SSH_HOST=<host>` — no
+  hostnames hardcoded) exercise the REAL transport over the network: the
+  herdr-chain `ListAgents` against a remote fake herdr; a 10-payload hostile
+  injection corpus (`$(rm -rf /)`, backticks, newlines, `-oProxyCommand=...`)
+  delivered byte-exact to the remote through the real login shell; and real remote
+  git (`GitHeads` reading a repo created on the remote). All pass; remote
+  scaffolding self-cleans.
+- **Still needed before live cross-VM:** the spawn path's worktree provisioning
+  runs on THIS host (needs a remote variant), a VM-routing/admission policy for
   multiple hosts, the signed cross-host intake (§5) from remote workers' hooks, and
-  a second host for true validation. Until then `NewRemote` is a reviewed building
-  block, deliberately not wired into the daemon.
+  herdr installed + configured on the remote host. Until then `NewRemote` is a
+  cross-host-validated building block, deliberately not wired into the daemon.
 - Beyond ~150 live workers or ~100 events/s sustained, move the ledger to
   Postgres + a queue (the `Store`/`Reader` ports were kept engine-agnostic for
   this).
