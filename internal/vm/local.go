@@ -165,14 +165,43 @@ func (l *LocalVMClient) PromptReady(ctx context.Context, workspace, text string)
 		if !retryablePromptErr(err) {
 			return err // a real error (bad target, etc.) — don't spin
 		}
+		// Before re-submitting on a stall, check the agent DIDN'T actually react:
+		// --wait can report agent_prompt_stalled even when the prompt landed if the
+		// working transition wasn't observed within the window (herdr poll lag). Only
+		// a still-idle agent is safe to re-prompt — else we'd double-submit the task.
+		// (Safety rests on two premises: a too-early prompt is DROPPED by the not-ready
+		// TUI, and a landed prompt leaves the agent observably non-idle here.)
+		if st := l.agentStatusOf(ctx, workspace); st != "" && st != "idle" && st != "unknown" {
+			return nil // reacted (working/blocked/…) — treat as delivered, don't re-type
+		}
 	}
 	return fmt.Errorf("prompt not confirmed after %d attempts: %w", promptReadyAttempts, last)
 }
 
 const (
-	promptReadyAttempts = 6
-	promptReadyTimeout  = "8000" // ms per --wait attempt; a stall (~5s) doubles as the settle
+	promptReadyAttempts = 5
+	promptReadyTimeout  = "6000" // ms per --wait attempt; a stall (~5s) doubles as the settle
 )
+
+// agentStatusOf returns an agent's herdr agent_status ("" if unknown/absent) —
+// used to tell a landed-but-unobserved prompt from a genuinely-dropped one.
+func (l *LocalVMClient) agentStatusOf(ctx context.Context, target string) string {
+	out, err := l.herdrRun(ctx, "agent", "get", target)
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Result struct {
+			Agent struct {
+				AgentStatus string `json:"agent_status"`
+			} `json:"agent"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &resp) != nil {
+		return ""
+	}
+	return resp.Result.Agent.AgentStatus
+}
 
 // retryablePromptErr is a herdr "the agent wasn't ready" prompt outcome (still
 // booting), as opposed to a hard error (unknown target, etc.).
