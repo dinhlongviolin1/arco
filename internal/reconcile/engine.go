@@ -338,6 +338,43 @@ func isWaiting(s core.WorkerState) bool {
 	return s == core.WorkerWaitingForUser || s == core.WorkerWaitingConfirmation
 }
 
+// KillWorker terminates a worker on operator request: transition it to `killed`
+// (if legal and not already terminal), expire any pending escalation, and STOP
+// its herdr agent. The ledger change is durable; stopping the agent is a
+// best-effort post-commit side effect (its worker is already killed regardless).
+// This is the operator's way to terminate a runaway/wedged worker + reclaim its
+// agent (capstone audit MED-3).
+func (e *Engine) KillWorker(ctx context.Context, workerID string) error {
+	var ref string
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		w, err := tx.GetWorker(workerID)
+		if err != nil {
+			return err
+		}
+		if w.State.Terminal() {
+			return nil // already done — idempotent
+		}
+		if !core.LegalWorkerTransition(w.State, core.WorkerKilled) {
+			return fmt.Errorf("%w: cannot kill from %s", core.ErrIllegalTransition, w.State)
+		}
+		ref = w.AgentRef
+		if _, err := tx.ExpirePendingForWorker(workerID); err != nil {
+			return err
+		}
+		return tx.TransitionWorker(workerID, core.WorkerKilled, w.Rev, core.Event{
+			Kind: "state_change", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "operator",
+			Payload: `{"reason":"operator_kill"}`,
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if ref != "" {
+		_ = e.VM.Kill(ctx, ref) // best-effort: stop the agent + reclaim its pane
+	}
+	return nil
+}
+
 // promptTarget is the VM target for prompting/killing a worker: its captured
 // backend handle (herdr pane_id, in AgentRef) when arco launched it, else the
 // workspace label. herdr's `agent prompt`/`send-keys` address a PANE, so a

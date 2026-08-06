@@ -101,6 +101,10 @@ func (c *Client) Workers(ctx context.Context) (api.WorkersResp, error) {
 	return r, err
 }
 
+func (c *Client) KillWorker(ctx context.Context, workerID string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/kill", nil, nil)
+}
+
 func (c *Client) CreatePool(ctx context.Context, req api.PoolReq) (api.PoolDTO, error) {
 	var r api.PoolDTO
 	err := c.do(ctx, http.MethodPost, "/v1/pools", req, &r)

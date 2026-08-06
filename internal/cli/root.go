@@ -47,6 +47,7 @@ func newRoot() *cobra.Command {
 		newDaemonCmd(),
 		newDispatchCmd(),
 		newPoolCmd(),
+		newKillCmd(),
 		newWorkersCmd(),
 		newSessionsCmd(),
 		newVerifyCmd(),

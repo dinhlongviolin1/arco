@@ -107,6 +107,13 @@ func (f *Fake) Kill(_ context.Context, workspace string) error {
 	return nil
 }
 
+// Killed returns the targets passed to Kill (test inspection).
+func (f *Fake) Killed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.killed...)
+}
+
 func (f *Fake) Diff(context.Context, string, string, string) (core.Diff, error) {
 	return core.Diff{}, nil
 }
