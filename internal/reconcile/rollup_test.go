@@ -34,7 +34,7 @@ func TestRollup_FiresOnChildCompletionWithContext(t *testing.T) {
 		}}
 
 	parent := dispatchRunning(t, e)
-	child, err := e.Delegate(context.Background(), parent, "subtask alpha")
+	child, err := e.Delegate(context.Background(), parent, "subtask alpha", "")
 	require.NoError(t, err)
 	completeChild(t, s, child.WorkerID)
 
@@ -73,8 +73,8 @@ func TestRollup_CoalescesWithinInterval(t *testing.T) {
 		}}
 
 	parent := dispatchRunning(t, e)
-	c1, _ := e.Delegate(context.Background(), parent, "c1")
-	c2, _ := e.Delegate(context.Background(), parent, "c2")
+	c1, _ := e.Delegate(context.Background(), parent, "c1", "")
+	c2, _ := e.Delegate(context.Background(), parent, "c2", "")
 	completeChild(t, s, c1.WorkerID)
 	completeChild(t, s, c2.WorkerID)
 
@@ -104,11 +104,11 @@ func TestRollup_PerParentNotPerSession(t *testing.T) {
 		}}
 
 	root := dispatchRunning(t, e)
-	childA, err := e.Delegate(context.Background(), root, "A") // depth 1, a parent-to-be
+	childA, err := e.Delegate(context.Background(), root, "A", "") // depth 1, a parent-to-be
 	require.NoError(t, err)
-	childB, err := e.Delegate(context.Background(), root, "B") // depth 1, root's terminal child
+	childB, err := e.Delegate(context.Background(), root, "B", "") // depth 1, root's terminal child
 	require.NoError(t, err)
-	grandchild, err := e.Delegate(context.Background(), childA.WorkerID, "gc") // depth 2, childA's child
+	grandchild, err := e.Delegate(context.Background(), childA.WorkerID, "gc", "") // depth 2, childA's child
 	require.NoError(t, err)
 
 	completeChild(t, s, childB.WorkerID)     // → root has a terminal child
@@ -131,7 +131,7 @@ func TestRollup_DisabledByZeroInterval(t *testing.T) {
 			return []byte(`{"kind":"run_again"}`), nil
 		}}
 	parent := dispatchRunning(t, e)
-	child, _ := e.Delegate(context.Background(), parent, "c")
+	child, _ := e.Delegate(context.Background(), parent, "c", "")
 	completeChild(t, s, child.WorkerID)
 
 	res, err := e.Sweep(context.Background())
@@ -151,7 +151,7 @@ func TestRollup_SkippedWhenParentTerminal(t *testing.T) {
 			return []byte(`{"kind":"run_again"}`), nil
 		}}
 	parent := dispatchRunning(t, e)
-	child, _ := e.Delegate(context.Background(), parent, "c")
+	child, _ := e.Delegate(context.Background(), parent, "c", "")
 	completeChild(t, s, child.WorkerID)
 	// parent itself goes terminal → nothing to steer
 	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {

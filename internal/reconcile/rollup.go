@@ -87,7 +87,10 @@ func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
 		e.errorEvent(ctx, parentWorkerID, "rollup brain call unusable")
 		return
 	}
-	e.applyStep(ctx, parentWorkerID, res.Step)
+	// Empty cid: the rollup path records a rollup_intent, not a brain_intent, so it
+	// is outside the stale-brain-intent re-drive (its own interval-coalescing
+	// bounds a lost rollup call); no side-effect correlation is needed here.
+	e.applyStep(ctx, parentWorkerID, "", res.Step)
 }
 
 // terminalChildren returns the parent's completed/failed child workers (the

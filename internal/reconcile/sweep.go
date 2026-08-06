@@ -4,9 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
+
+// brainCallTimeout mirrors the brain.Invoke default (invoke.go): the wall-clock
+// ceiling on one classification. The stale-intent grace must exceed it so a
+// still-in-flight call is never mistaken for a crash-lost one.
+const brainCallTimeout = 120 * time.Second
+
+// defaultBrainIntentGrace bounds how old a dangling brain_intent must be before
+// the sweep re-drives it. 2.5× the call timeout — comfortably past an in-flight
+// call, and the floor a misconfigured BrainIntentGrace is clamped up to.
+const defaultBrainIntentGrace = 5 * time.Minute
 
 // SweepResult summarizes one sweep pass (handy for logging/tests).
 type SweepResult struct {
@@ -15,6 +26,7 @@ type SweepResult struct {
 	LeasesReaped     int // leaked/stale provider-pool leases released (B10-lease)
 	PooledPaused     int // workers paused after sitting unclaimed past the pool TTL
 	RollupsTriggered int // parents with completed children enqueued for a coalesced rollup
+	BrainRedrives    int // dangling brain_intents (crash-lost calls) re-submitted
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -47,6 +59,15 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// which path made a child terminal) is safe.
 	if e.RollupInterval > 0 && e.Brain.Enabled {
 		res.RollupsTriggered = e.triggerRollups(all)
+	}
+	// Re-drive brain classifications lost to a crash in the off-write-path call
+	// window (brain_intent committed, applyStep never ran). The sweep's alive path
+	// only records observations — it never re-runs fusion — so absent a fresh push
+	// event a lost call would otherwise never retry. Runs at boot too (Recover →
+	// Sweep). Detection is correlation-based (StaleBrainIntents), so a re-drive can
+	// never duplicate a prompt/child; brainClassify re-guards state/pool/rate.
+	if e.Brain.Enabled && e.Exec != nil {
+		res.BrainRedrives = e.redriveStaleBrainIntents()
 	}
 	var live []core.Worker
 	worktrees := map[string]bool{}
@@ -114,6 +135,27 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// redriveStaleBrainIntents re-submits brainClassify (off the write path) for
+// every worker whose most-recent brain_intent is dangling (unresolved by any
+// cid-sibling) and older than the grace. Returns how many were re-submitted. The
+// grace is floored to ≥ 2× the brain-call timeout so a still-in-flight call is
+// never re-driven; brainClassify re-guards worker state, pool ownership, and the
+// per-session brain-rate cap. Caller has checked Brain.Enabled && Exec != nil.
+func (e *Engine) redriveStaleBrainIntents() int {
+	grace := e.BrainIntentGrace
+	if grace < 2*brainCallTimeout {
+		grace = defaultBrainIntentGrace
+	}
+	ids, err := e.Store.Reader().StaleBrainIntents(e.Store.Now().Add(-grace))
+	if err != nil {
+		return 0 // best-effort: a read error just skips this sweep's re-drive
+	}
+	for _, id := range ids {
+		e.Exec.Submit(id, func() { e.brainClassify(e.bg(), id) })
+	}
+	return len(ids)
 }
 
 // reapLeases releases leaked/stale provider-pool leases in one tx (B10-lease).

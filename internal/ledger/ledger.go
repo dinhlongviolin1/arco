@@ -212,6 +212,10 @@ func (s *Store) Reader() core.Reader { return &reader{q: s.db} }
 
 func (s *Store) now() string { return s.clock().UTC().Format(time.RFC3339Nano) }
 
+// Now exposes the injected clock to the app layer (core.Store) so time cutoffs
+// there share the same source that stamps recorded_at.
+func (s *Store) Now() time.Time { return s.clock() }
+
 // querier is satisfied by *sql.DB (reads) and *sql.Tx (reads within a write tx).
 type querier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

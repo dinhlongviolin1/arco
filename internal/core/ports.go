@@ -80,6 +80,12 @@ type Reader interface {
 	// RecentWorkerEvents returns up to limit of a worker's most recent events in
 	// chronological (id-ascending) order — the tail used to assemble brain context.
 	RecentWorkerEvents(workerID string, limit int) ([]Event, error)
+	// StaleBrainIntents returns the IDs of running/starting, non-pool workers whose
+	// most-recent brain_intent was recorded before `before` and has no event
+	// sharing its correlation_id — a classification lost to a crash before it acted.
+	// The sweep re-drives these; a fired side effect leaves a cid-sibling, so the
+	// re-drive can never duplicate a prompt or a delegated child.
+	StaleBrainIntents(before time.Time) ([]string, error)
 	ListEscalations(f EscalationFilter) ([]Escalation, error)
 	GetEscalation(id string) (Escalation, error)
 	Capability(name string) (CatalogRow, bool, error)
@@ -210,6 +216,11 @@ type Store interface {
 	Migrate(ctx context.Context) error
 	WithTx(ctx context.Context, fn func(Tx) error) error
 	Reader() Reader
+	// Now returns the store's current time from its injected clock — the SAME
+	// source that stamps event recorded_at, so app-layer time cutoffs (the sweep's
+	// stale-brain-intent grace) stay consistent with the ledger and controllable by
+	// tests via SetClock.
+	Now() time.Time
 	Close() error
 }
 
