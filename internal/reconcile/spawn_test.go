@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,4 +191,64 @@ func TestSpawn_DeliversInitialTaskToPane(t *testing.T) {
 func TestPromptTarget_PrefersAgentRefElseWorkspace(t *testing.T) {
 	require.Equal(t, "wE:p1", promptTarget(core.Worker{Workspace: "arco_1", AgentRef: "wE:p1"}))
 	require.Equal(t, "arco_1", promptTarget(core.Worker{Workspace: "arco_1"}))
+}
+
+// A launch that errored but whose agent is alive is adopted RUNNING, but with an
+// unknown ref (bound ""), so NO initial task is delivered (delivering by the
+// workspace label would target the wrong thing on real herdr). The worker stays
+// running + re-promptable.
+func TestSpawn_LaunchErrorAdopted_DeliversNoTask(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	fake.LaunchErr = context.DeadlineExceeded
+	fake.LaunchAliveOnErr = true
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State, "adopted by liveness")
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Empty(t, w.AgentRef, "ref unknown after launch error")
+	require.Empty(t, fake.Prompts(), "no initial task delivered when the pane is unknown")
+}
+
+// A failed initial-task delivery is recorded but does NOT fail/park the worker —
+// it is running + claimable/re-promptable.
+func TestSpawn_InitialTaskDeliveryFailure_StaysRunning(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	fake.PromptErr = errors.New("prompt boom")
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State)
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerRunning, w.State, "a failed delivery must not park the worker")
+	evs, _ := s.Reader().RecentWorkerEvents(res.WorkerID, 50)
+	var sawErr bool
+	for _, ev := range evs {
+		if ev.Kind == "error" && strings.Contains(ev.Payload, "initial task delivery failed") {
+			sawErr = true
+		}
+	}
+	require.True(t, sawErr, "the delivery failure is recorded")
+}
+
+// After a repo-spawn, a brain run_again re-prompts the worker at its PANE
+// (AgentRef), not the workspace label.
+func TestSpawn_ThenRunAgain_TargetsPane(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	repo, _ := localRepo(t)
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.NotEmpty(t, w.AgentRef)
+
+	before := len(fake.Prompts())
+	e.applyStep(context.Background(), res.WorkerID, "cid-ra", core.StepResult{Kind: "run_again", Instruction: "keep going"})
+	prompts := fake.Prompts()
+	require.Greater(t, len(prompts), before, "run_again delivered a prompt")
+	require.Equal(t, w.AgentRef, prompts[len(prompts)-1].Workspace, "run_again targets the pane, not the label")
 }
