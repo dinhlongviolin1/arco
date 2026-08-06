@@ -41,6 +41,19 @@ var toolPatterns = map[string][]string{
 	"net.fetch":         {"WebFetch", "WebSearch"},
 	"git.pr.merge":      {"Bash(gh pr merge:*)"},
 	"git.push.shared":   {"Bash(git push:* --force:*)"},
+
+	// High-blast caps are compiled_worker=0 (never GRANTED to a worker), but a
+	// worker with Bash could still invoke the raw dangerous SHAPE directly — so
+	// the deny layer (esp. managed-settings, which survives
+	// --dangerously-skip-permissions) must list those shapes. Best-effort (string
+	// matching is defeatable; the hook + arco's Allowed() are the real gates), and
+	// fleet.*/external.spend are arco-orchestration ops with no worker tool shape,
+	// so they intentionally have no patterns.
+	"git.push.main":   {"Bash(git push:* origin main:*)", "Bash(git push:* origin master:*)", "Bash(git push:* main:*)", "Bash(git push:* master:*)"},
+	"external.deploy": {"Bash(kubectl:*)", "Bash(helm:*)", "Bash(terraform apply:*)", "Bash(terraform destroy:*)", "Bash(aws:*)", "Bash(gcloud:*)", "Bash(flyctl:*)", "Bash(vercel:*)"},
+	"external.send":   {"Bash(mail:*)", "Bash(sendmail:*)", "Bash(msmtp:*)"},
+	"secrets.read":    {"Read(**/*.pem)", "Read(**/id_rsa*)", "Read(**/*.key)", "Read(**/.aws/**)", "Read(**/credentials)"},
+	"fs.destructive":  {"Bash(rm -rf:*)", "Bash(rm -r:*)", "Bash(dd:*)", "Bash(mkfs:*)", "Bash(shred:*)"},
 }
 
 // staticDeny is always denied regardless of the tree — the highest-blast tool
