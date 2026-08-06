@@ -58,6 +58,7 @@ type Config struct {
 	MaxChildrenPerSession int           `toml:"max_children_per_session"`
 	DefaultVM             string        `toml:"default_vm"`         // VM new workers are assigned to ("" = unassigned)
 	MaxWorkersPerVM       int           `toml:"max_workers_per_vm"` // per-VM concurrency cap (0 = unlimited)
+	DefaultPool           string        `toml:"default_pool"`       // provider pool a spawned worker leases from ("" = no lease)
 	RollupInterval        time.Duration `toml:"rollup_interval"`
 	PerSessionBrainRate   int           `toml:"per_session_brain_rate"`
 	PoolTTL               time.Duration `toml:"pool_ttl"`

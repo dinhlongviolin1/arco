@@ -91,6 +91,16 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
 	eng.GitBin = "git"
+	eng.DefaultPool = cfg.DefaultPool
+	eng.LeaseTTL = cfg.LeaseTTL
+	// Fail LOUD at startup on a misconfigured pool rather than failing every spawn
+	// (AcquireLease→GetPool would ErrNotFound per dispatch). NB: leases gate only
+	// the repo-spawn path today; the prompt-path Dispatch is uncapped (follow-up).
+	if cfg.DefaultPool != "" {
+		if _, err := store.Reader().GetPool(cfg.DefaultPool); err != nil {
+			return fmt.Errorf("daemon: default_pool %q not found: %w", cfg.DefaultPool, err)
+		}
+	}
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
 	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
