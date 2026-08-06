@@ -83,6 +83,18 @@ func (c *Client) Workers(ctx context.Context) (api.WorkersResp, error) {
 	return r, err
 }
 
+func (c *Client) CreatePool(ctx context.Context, req api.PoolReq) (api.PoolDTO, error) {
+	var r api.PoolDTO
+	err := c.do(ctx, http.MethodPost, "/v1/pools", req, &r)
+	return r, err
+}
+
+func (c *Client) Pools(ctx context.Context) (api.PoolsResp, error) {
+	var r api.PoolsResp
+	err := c.do(ctx, http.MethodGet, "/v1/pools", nil, &r)
+	return r, err
+}
+
 // Sessions lists all sessions.
 func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	var r api.SessionsResp

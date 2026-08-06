@@ -263,3 +263,32 @@ func TestLease_ReapLeakedAndTerminalButNotLive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
+
+func TestCreatePool_AndListPools(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.WithTx(ctx, func(tx core.Tx) error {
+		return tx.CreatePool(core.ProviderPool{ID: "p1", ClavisProfile: "deepseek-1", Provider: "deepseek"})
+	}))
+	// defaults applied
+	p, err := s.Reader().GetPool("p1")
+	require.NoError(t, err)
+	require.Equal(t, "deepseek-1", p.ClavisProfile)
+	require.Equal(t, core.PoolOK, p.State)
+	require.Equal(t, 35, p.MaxActive, "schema default max_active")
+
+	// a second pool + list (id-ordered)
+	require.NoError(t, s.WithTx(ctx, func(tx core.Tx) error {
+		return tx.CreatePool(core.ProviderPool{ID: "p0", ClavisProfile: "qwen-1", MaxActive: 5})
+	}))
+	pools, err := s.Reader().ListPools()
+	require.NoError(t, err)
+	require.Len(t, pools, 2)
+	require.Equal(t, "p0", pools[0].ID)
+	require.Equal(t, 5, pools[0].MaxActive)
+	require.Equal(t, "p1", pools[1].ID)
+
+	// missing required field
+	err = s.WithTx(ctx, func(tx core.Tx) error { return tx.CreatePool(core.ProviderPool{ID: "bad"}) })
+	require.Error(t, err, "clavis_profile required")
+}

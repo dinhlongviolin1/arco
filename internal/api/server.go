@@ -42,6 +42,8 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /v1/workers", s.listWorkers)
 	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /v1/dispatch", s.dispatch)
+	s.mux.HandleFunc("GET /v1/pools", s.listPools)
+	s.mux.HandleFunc("POST /v1/pools", s.createPool)
 	s.mux.HandleFunc("POST /v1/events", s.intake)
 	s.mux.HandleFunc("GET /v1/workers/{id}/diff", s.workerDiff)
 	s.mux.HandleFunc("POST /v1/workers/{id}/verify", s.verify)
@@ -190,6 +192,63 @@ func (s *Server) listWorkers(w http.ResponseWriter, _ *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// PoolReq creates a provider pool (operator config; `arco pool create`).
+type PoolReq struct {
+	ID              string `json:"id"`
+	ClavisProfile   string `json:"clavis_profile"` // the scoped creds a leased worker launches with
+	Provider        string `json:"provider"`
+	MaxActive       int    `json:"max_active"`
+	MaxStartsPerMin int    `json:"max_starts_per_min"`
+}
+
+// PoolDTO / PoolsResp are the pool read shape.
+type PoolDTO struct {
+	ID            string `json:"id"`
+	ClavisProfile string `json:"clavis_profile"`
+	Provider      string `json:"provider"`
+	MaxActive     int    `json:"max_active"`
+	State         string `json:"state"`
+}
+type PoolsResp struct {
+	Pools []PoolDTO `json:"pools"`
+}
+
+func (s *Server) listPools(w http.ResponseWriter, _ *http.Request) {
+	ps, err := s.store.Reader().ListPools()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := PoolsResp{}
+	for _, p := range ps {
+		out.Pools = append(out.Pools, PoolDTO{ID: p.ID, ClavisProfile: p.ClavisProfile, Provider: p.Provider, MaxActive: p.MaxActive, State: string(p.State)})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
+	var req PoolReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.ID == "" || req.ClavisProfile == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("id and clavis_profile required"))
+		return
+	}
+	if err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
+		return tx.CreatePool(core.ProviderPool{
+			ID: req.ID, ClavisProfile: req.ClavisProfile, Provider: req.Provider,
+			MaxActive: req.MaxActive, MaxStartsPerMin: req.MaxStartsPerMin,
+		})
+	}); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	p, _ := s.store.Reader().GetPool(req.ID)
+	writeJSON(w, http.StatusCreated, PoolDTO{ID: p.ID, ClavisProfile: p.ClavisProfile, Provider: p.Provider, MaxActive: p.MaxActive, State: string(p.State)})
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
