@@ -26,6 +26,10 @@ type Fake struct {
 	killed        []string
 	launched      []core.LaunchSpec
 	LaunchErr     error
+	// LaunchAliveOnErr models a launch that SPAWNED the agent but still returned an
+	// error (ref-capture timeout / transient post-spawn error): the agent shows
+	// alive by workspace despite LaunchErr, so the caller must resolve by liveness.
+	LaunchAliveOnErr bool
 }
 
 // Launched returns the LaunchSpecs seen (test inspection).
@@ -42,6 +46,9 @@ func (f *Fake) Launch(_ context.Context, spec core.LaunchSpec) (string, error) {
 	defer f.mu.Unlock()
 	f.launched = append(f.launched, spec)
 	if f.LaunchErr != nil {
+		if f.LaunchAliveOnErr { // spawned-but-errored: agent is alive despite the error
+			f.Agents = append(f.Agents, core.AgentObs{Workspace: spec.Name, Alive: true})
+		}
 		return "", f.LaunchErr
 	}
 	ref := "pane:" + spec.Name

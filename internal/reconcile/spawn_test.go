@@ -65,7 +65,7 @@ func TestSpawn_ProvisionsCompilesLaunchesAndCorrelates(t *testing.T) {
 	}
 }
 
-func TestSpawn_BadRepoMarksFailed(t *testing.T) {
+func TestSpawn_BadRepoMarksFailedAndCleansUp(t *testing.T) {
 	e, s, _ := newEngine(t)
 	e.ConfigDir = t.TempDir()
 	res, err := e.Spawn(context.Background(), "", "task", true, filepath.Join(t.TempDir(), "nonexistent-repo"), "")
@@ -73,6 +73,27 @@ func TestSpawn_BadRepoMarksFailed(t *testing.T) {
 	require.Equal(t, core.WorkerFailed, res.State, "provision failure → worker failed")
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerFailed, w.State)
+	// F1: the partial per-worker dir is cleaned up on a pre-launch failure (no leak)
+	require.NoDirExists(t, filepath.Join(e.ConfigDir, res.WorkerID), "orphan worktree cleaned up")
+}
+
+// F2: a launch that spawned the agent but returned an error must be adopted
+// RUNNING via liveness (not left terminal while the agent runs unmanaged), and
+// correlated by workspace (ref unrecoverable → AgentRef empty).
+func TestSpawn_LaunchErrorButAgentAliveIsAdopted(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	fake.LaunchErr = context.DeadlineExceeded
+	fake.LaunchAliveOnErr = true
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State, "half-spawned agent adopted running, not left terminal")
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	require.Equal(t, core.WorkerRunning, w.State)
+	require.Empty(t, w.AgentRef, "ref unrecoverable on launch error → correlate by workspace")
+	require.NotEmpty(t, w.Worktree, "worktree still recorded")
 }
 
 func TestSpawn_RequiresRepoAndConfigDir(t *testing.T) {

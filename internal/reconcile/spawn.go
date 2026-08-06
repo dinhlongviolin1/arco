@@ -23,7 +23,9 @@ import (
 //
 // Crash-safe like Dispatch: dispatch_intent + the worker row commit BEFORE the
 // external side effects (clone/launch); a crash between leaves a recoverable
-// `starting` worker (+ possibly an orphan worktree the sweep GCs). Additive —
+// `starting` worker (boot Recover resolves by liveness) + an orphan per-worker
+// dir (cleaned up on a pre-launch *error*; a *crash* orphan awaits a sweep-GC
+// follow-up — there is no GC today). Additive —
 // it does NOT touch the prompt-based Dispatch path; the API routes here only
 // when a repo is supplied. NOTE: with the default Fake VMClient this runs
 // end-to-end; the real LocalVMClient.Launch backend is Task-S-gated (a stub),
@@ -85,10 +87,22 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	// Phase 2: external side effects (provision → quarantine → compile → launch).
 	ref, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted)
 
-	// Phase 3: durable result + state.
+	// Phase 3: durable result + state. On a Phase-2 error the launch may still have
+	// spawned the agent before erroring (ref-capture timeout, transient post-spawn
+	// error) — resolve by liveness like Dispatch rather than blindly marking a live
+	// agent's worker terminal (which would leave it running unmanaged forever). A
+	// provision/compile failure launched nothing → no agent matches → failed.
 	finalState := core.WorkerRunning
 	if perr != nil {
 		finalState = core.WorkerFailed
+		if agents, aerr := e.VM.ListAgents(ctx); aerr == nil {
+			for _, a := range agents {
+				if a.Alive && a.Workspace == workspace {
+					finalState = core.WorkerRunning
+					break
+				}
+			}
+		}
 	}
 	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
@@ -98,8 +112,17 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		payload := "{}"
 		if perr != nil {
 			payload = fmt.Sprintf(`{"error":%q}`, perr.Error())
-		} else if err := tx.BindLaunch(workerID, wt, head, ref); err != nil {
-			return err
+		}
+		if finalState == core.WorkerRunning {
+			// ref is unrecoverable when Launch errored → bind "" so the sweep
+			// correlates this adopted worker by workspace instead.
+			r := ref
+			if perr != nil {
+				r = ""
+			}
+			if err := tx.BindLaunch(workerID, wt, head, r); err != nil {
+				return err
+			}
 		}
 		return tx.TransitionWorker(workerID, finalState, w.Rev, core.Event{
 			Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID, Payload: payload,
@@ -112,26 +135,35 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 }
 
 // provisionAndLaunch does the external spawn side effects and returns the backend
-// ref, worktree path, and checked-out head. Any step failing aborts (the worker
-// is marked failed by the caller); a partial worktree is left for sweep GC.
+// ref, worktree path, and checked-out head. A failure BEFORE launch removes the
+// partial per-worker dir (no live agent can exist yet, so cleanup is safe); a
+// LAUNCH failure leaves the dir (the agent may be live and adopted by the caller).
+// NB: a crash mid-provision still orphans the dir — a sweep-side GC of terminal
+// workers' ConfigDir subtrees is a documented follow-up (there is no GC today).
 func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool) (ref, wt, head string, err error) {
 	root := filepath.Join(e.ConfigDir, workerID)
 	wt = filepath.Join(root, "worktree")
 	cfgDir := filepath.Join(root, "cfg") // sibling of the worktree (config OUTSIDE it, B6)
+	// cleanup removes the partial per-worker dir on a pre-launch failure.
+	cleanup := func(e error, stage string) (string, string, string, error) {
+		_ = worktree.Remove(root)
+		return "", wt, head, fmt.Errorf("%s: %w", stage, e)
+	}
 
 	head, err = worktree.Provision(ctx, e.GitBin, repo, base, wt)
 	if err != nil {
-		return "", wt, "", fmt.Errorf("provision: %w", err)
+		head = ""
+		return cleanup(err, "provision")
 	}
 	if _, err = quarantine.Run(wt, e.GitBin); err != nil {
-		return "", wt, head, fmt.Errorf("quarantine: %w", err)
+		return cleanup(err, "quarantine")
 	}
 	cat, err := e.Store.Reader().Catalog()
 	if err != nil {
-		return "", wt, head, err
+		return cleanup(err, "catalog")
 	}
 	if err = permcompile.Compile(cfgDir, wt, granted, cat); err != nil {
-		return "", wt, head, fmt.Errorf("permcompile: %w", err)
+		return cleanup(err, "permcompile")
 	}
 	spec := core.LaunchSpec{
 		Name: workspace, Kind: "claude", Workdir: wt,
@@ -140,6 +172,7 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 	}
 	ref, err = e.VM.Launch(ctx, spec)
 	if err != nil {
+		// Do NOT remove — the agent may have spawned; the caller resolves by liveness.
 		return "", wt, head, fmt.Errorf("launch: %w", err)
 	}
 	return ref, wt, head, nil
