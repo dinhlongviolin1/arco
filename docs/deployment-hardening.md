@@ -243,10 +243,15 @@ block the core spawn→autonomous-completion loop, but an operator should know t
   agents of TERMINAL workers** (PR #62) — a crash between `arco kill`'s commit and
   its best-effort agent-stop, or any lingering `lost`/`failed` pane, is cleaned up
   on the next sweep. The reaper is *identity-strict*: it closes a pane only on a
-  positive `terminal_id` match (never on a recycled/ambiguous ref), so a worker
-  terminalized **before any sweep observed it alive** (hence no recorded
-  terminal_id) is deliberately left for manual cleanup — a rare, non-destructive
-  miss chosen over the risk of closing an innocent recycled workspace. STILL
+  positive `terminal_id` match (never on a recycled/ambiguous ref). Identity is
+  established **at launch** (captured from herdr right after `agent start`,
+  persisted by `BindLaunch`) and thereafter only *confirmed* by liveness — never
+  *established* by it — so a stranger occupying a recycled pane can never be
+  recorded as a worker's identity and then wrongly closed (dual-review closed both
+  the inert-guard and first-observe-poisoning paths). A worker whose launch-capture
+  didn't resolve an id stays unidentifiable and is simply left for manual cleanup —
+  a rare, non-destructive miss chosen over any risk of closing an innocent
+  workspace. STILL
   missing: arco does not AUTO-stop an agent when the sweep *pauses* a worker
   (`escalation_timeout`/`pool_ttl`) or when a brain `handoff` releases it to the
   pool — a **paused** worker's agent is intentionally NOT reaped, because pausing

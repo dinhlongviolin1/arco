@@ -130,9 +130,21 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 
 		if alive {
 			e.resetMiss(w.ID)
+			// Identity is established ONCE, at launch (BindLaunch). Observation only
+			// CONFIRMS it, never ESTABLISHES a new one: if launch-capture missed
+			// (w.BootID==""), we must NOT stamp the observed agent's terminal_id onto
+			// the row, because a stranger on a recycled pane would then be recorded as
+			// this worker's identity and later give the DESTRUCTIVE orphan reaper a
+			// false positive match (opus+qwen review — the empty-at-birth poisoning
+			// window). Such a worker stays unidentifiable and the reaper declines it —
+			// a non-destructive miss, the same trade made throughout MED-3.
+			obsBootID := ""
+			if w.BootID != "" {
+				obsBootID = obs.BootID
+			}
 			_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 				return tx.ObserveWorker(w.ID, core.WorkerObservation{
-					HeadCommit: headNow, BootID: obs.BootID, PIDStartTime: obs.PIDStartTime,
+					HeadCommit: headNow, BootID: obsBootID, PIDStartTime: obs.PIDStartTime,
 				})
 			})
 			continue

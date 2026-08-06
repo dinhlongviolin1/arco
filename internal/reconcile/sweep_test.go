@@ -352,6 +352,38 @@ func TestSweep_DoesNotReapLiveWorkerAgent(t *testing.T) {
 	require.Empty(t, fake.Killed())
 }
 
+// Regression (opus+qwen review): the "empty-at-birth" poisoning window. A worker
+// whose launch-capture missed (no boot_id) must NOT absorb an observed agent's
+// terminal_id via the liveness path — else a stranger on a recycled pane becomes
+// the worker's recorded identity and the reaper later destructively closes that
+// innocent agent. Observation only CONFIRMS an identity; it never ESTABLISHES one.
+func TestSweep_LivenessDoesNotEstablishIdentity(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 5
+	id := mkRunning(t, e, s, "/wt/x", "base")
+	// launch-capture missed: ref bound, but identity ("") never captured at birth
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.BindLaunch(id, "/wt/x", "base", "wQ:p1", "")
+	}))
+	// a STRANGER now holds that pane (herdr recycled it), with its OWN terminal_id
+	fake.Agents = []core.AgentObs{{Ref: "wQ:p1", Workspace: "arco_" + id, BootID: "term_STRANGER", Alive: true}}
+
+	_, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, mustWorker(t, s, id).BootID,
+		"liveness must NOT stamp a stranger's identity onto an empty-at-birth worker")
+
+	// terminalize it; the reaper must decline (identity was never established)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerKilled, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped, "no positive identity → never reap")
+	require.Empty(t, fake.Killed(), "the innocent recycled-pane agent must survive")
+}
+
 // Regression (opus review): the reaper must NEVER close a workspace it can't
 // positively identify. If our agent died and herdr recycled the pane_id to an
 // UNRELATED live agent (different terminal_id), reaping by ref alone would wrongly
