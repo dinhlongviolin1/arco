@@ -31,18 +31,19 @@ var terminalHerdrStatus = map[string]bool{"done": true}
 // LocalVMClient drives agents on the local machine: git for HEAD/diff (real,
 // deterministic) and the herdr CLI over its socket API for liveness + prompting.
 // The herdr JSON mapping is CONFIRMED against herdr 0.7.5 (Task-S spike; see
-// docs/herdr-contract.md). ListAgents/Prompt/Kill and Launch (the real
-// workspace/tab/pane → agent-start chain) are all implemented; still default=Fake
-// pending LIVE verification (Launch's create→list→start end-to-end + `--env`
-// semantics needs spawning a real agent).
+// docs/herdr-contract.md). LIVE-VERIFIED on a real host: the repo-spawn
+// create→list→start chain works, and the sweep correlates a Launch-spawned
+// worker by its AgentRef (herdr pane_id, captured via BindLaunch). herdrRun
+// treats a herdr error envelope (exit 0) as an error, and Launch tears down the
+// workspace it created on any post-create failure (no orphan).
 //
-// DO NOT set use_local_vm until that live verification is done: the sweep looks
-// up liveness by a worker's AgentRef (herdr pane_id, captured at launch via
-// BindLaunch) and correctly correlates for Launch-spawned workers — BUT the
-// repo-spawn launch-ERROR fallback + the Prompt-model path correlate by
-// workspace, where arco's "arco_<ulid>" never matches herdr's workspace_id, so a
-// non-Launch-correlated live worker would be false-finalized. See
-// docs/herdr-contract.md open items before enabling.
+// KNOWN GAPs (not blockers for the repo-spawn path; use_local_vm is now used):
+//   - a launch-ERROR liveness fallback + the legacy Prompt-model path correlate
+//     by workspace label ("arco_<ulid>"), which never matches herdr's
+//     workspace_id — so a NON-Launch-correlated live worker isn't adopted;
+//   - a spawned agent still needs SCOPED credentials (spawnenv strips the
+//     inherited key by design) — the provider-pool→clavis-profile wiring is the
+//     open worker-auth item. See docs/herdr-contract.md.
 type LocalVMClient struct {
 	Herdr string
 	Git   string
@@ -83,7 +84,7 @@ type herdrAgent struct {
 // terminal one. Empty stdout is an empty list (not an error).
 func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error) {
 	// `agent list` (NOT `--json` — that flag is rejected; list is JSON by default).
-	out, err := runOutput(ctx, l.Herdr, "agent", "list")
+	out, err := l.herdrRun(ctx, "agent", "list")
 	if err != nil {
 		return nil, err
 	}
@@ -129,12 +130,16 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 // by ctx). The Task-S spike should add a `--` end-of-options guard so a prompt
 // beginning with `-` can't be parsed as a flag.
 func (l *LocalVMClient) Prompt(ctx context.Context, workspace, text string) error {
-	return newCmd(ctx, l.Herdr, "agent", "prompt", workspace, text).Run()
+	// Via herdrRun so an exit-0 error envelope (e.g. a bad target) is a real error,
+	// not a silent no-op — Prompt is on the live task-delivery + run_again path.
+	_, err := l.herdrRun(ctx, "agent", "prompt", workspace, text)
+	return err
 }
 
 // Kill interrupts an agent (best-effort Ctrl-C).
 func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
-	return newCmd(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
+	_, err := l.herdrRun(ctx, "agent", "send-keys", workspace, "C-c")
+	return err
 }
 
 // Launch starts a new agent via the herdr contract (all confirmed against herdr
@@ -149,12 +154,10 @@ func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 // correlates). --no-focus avoids stealing the operator's view. IDs are parsed
 // only from the read-only list envelopes (confirmed shapes — NOT the create
 // responses), so this doesn't repeat the assumed-schema bug the spike fixed.
-//
-// LIVE-VERIFY CAVEATS (still gated; default stays Fake, use_local_vm guarded):
-// (1) that create→list→start works end-to-end on a live server, and (2) whether
-// `workspace create --env` REPLACES or merely augments the pane's shell env —
-// P1's scrubbed-spawn-env only fully holds if it replaces (else herdr's own env,
-// which may carry creds, leaks to the worker). See docs/herdr-contract.md.
+// LIVE-VERIFIED end-to-end on herdr 0.7.5 (create→list→start; agent correlated by
+// pane_id). herdrRun catches exit-0 error envelopes; a post-create failure closes
+// the workspace so a failed launch never orphans one.
+
 // herdrAgentName maps arco's workspace label ("arco_<ULID>", where the Crockford
 // ULID is UPPERCASE) to a name herdr's `agent start` accepts: 1–32 chars,
 // starting with a lowercase letter, only [a-z0-9_-]. Lowercasing satisfies the
@@ -174,15 +177,20 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	for _, kv := range spec.Env { // scrubbed env for the launched process (P1)
 		create = append(create, "--env", kv)
 	}
-	if out, err := runOutput(ctx, l.Herdr, create...); err != nil {
-		return "", fmt.Errorf("herdr workspace create: %w: %s", err, out)
+	if _, err := l.herdrRun(ctx, create...); err != nil {
+		return "", fmt.Errorf("herdr workspace create: %w", err)
 	}
 	wsID, err := l.workspaceIDByLabel(ctx, spec.Name)
 	if err != nil {
+		// The workspace was created but we can't resolve its id to clean it up
+		// (rare). Return the error; a sweep-GC follow-up reaps the orphan.
 		return "", err
 	}
+	// From here the workspace exists → tear it down on ANY failure so a failed
+	// launch never orphans a live herdr workspace (capstone audit; no GC today).
 	paneID, err := l.paneInWorkspace(ctx, wsID)
 	if err != nil {
+		l.closeWorkspace(ctx, wsID)
 		return "", err
 	}
 	// herdr `agent start <name>` requires 1–32 chars, starting with a lowercase
@@ -195,16 +203,55 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
 		start = append(append(start, "--"), spec.Args...)
 	}
-	if out, err := runOutput(ctx, l.Herdr, start...); err != nil {
-		return "", fmt.Errorf("herdr agent start: %w: %s", err, out)
+	if _, err := l.herdrRun(ctx, start...); err != nil {
+		l.closeWorkspace(ctx, wsID) // don't orphan the workspace on a failed agent start
+		return "", fmt.Errorf("herdr agent start: %w", err)
 	}
 	return paneID, nil
+}
+
+// closeWorkspace best-effort tears down a workspace (used to avoid orphaning one
+// after a partial launch). A close failure is swallowed — the caller is already
+// returning a launch error, and the orphan (if any) awaits the sweep-GC follow-up.
+func (l *LocalVMClient) closeWorkspace(ctx context.Context, wsID string) {
+	_, _ = l.herdrRun(ctx, "workspace", "close", wsID)
+}
+
+// herdrRun runs a herdr command and fails on BOTH a non-zero exit AND a herdr
+// error envelope returned WITH exit 0 (`{"error":{...}}`) — herdr does the latter
+// for some errors (e.g. invalid_agent_name), so a clean exit code alone is not
+// success. Centralizes the check for every herdr call (git calls stay on runOutput).
+func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, error) {
+	out, err := runOutput(ctx, l.Herdr, args...)
+	if err != nil {
+		return nil, err
+	}
+	if e := herdrEnvelopeError(out); e != nil {
+		return nil, fmt.Errorf("%s: %w", strings.Join(args, " "), e)
+	}
+	return out, nil
+}
+
+// herdrEnvelopeError returns a non-nil error if out is a herdr error envelope
+// ({"error":{"code","message"}}). Non-envelope / non-JSON output yields nil (the
+// caller's own parser handles a malformed body).
+func herdrEnvelopeError(out []byte) error {
+	var env struct {
+		Error *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(out, &env) == nil && env.Error != nil {
+		return fmt.Errorf("herdr error %s: %s", env.Error.Code, env.Error.Message)
+	}
+	return nil
 }
 
 // workspaceIDByLabel finds the workspace_id of the (most recent) workspace with
 // the given label, from the confirmed `workspace list` envelope.
 func (l *LocalVMClient) workspaceIDByLabel(ctx context.Context, label string) (string, error) {
-	out, err := runOutput(ctx, l.Herdr, "workspace", "list")
+	out, err := l.herdrRun(ctx, "workspace", "list")
 	if err != nil {
 		return "", fmt.Errorf("herdr workspace list: %w", err)
 	}
@@ -234,7 +281,7 @@ func (l *LocalVMClient) workspaceIDByLabel(ctx context.Context, label string) (s
 // paneInWorkspace returns a pane_id belonging to workspace wsID, from the
 // confirmed `pane list` envelope.
 func (l *LocalVMClient) paneInWorkspace(ctx context.Context, wsID string) (string, error) {
-	out, err := runOutput(ctx, l.Herdr, "pane", "list")
+	out, err := l.herdrRun(ctx, "pane", "list")
 	if err != nil {
 		return "", fmt.Errorf("herdr pane list: %w", err)
 	}

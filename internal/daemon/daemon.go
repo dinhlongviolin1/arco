@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -77,6 +78,15 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		// herdr LocalVMClient via use_local_vm / ARCO_LOCAL_VM once the Task-S
 		// spike has confirmed herdr's `agent list --json` schema on this host.
 		if cfg.UseLocalVM {
+			// Fail fast + clear if the herdr binary is missing, rather than a cryptic
+			// "exec: herdr: not found" from the first ListAgents in boot Recover.
+			bin := cfg.HerdrBin
+			if bin == "" {
+				bin = "herdr"
+			}
+			if _, err := exec.LookPath(bin); err != nil {
+				return fmt.Errorf("daemon: use_local_vm set but herdr binary %q not found: %w", bin, err)
+			}
 			vmc = vm.NewLocal(cfg.HerdrBin)
 		} else {
 			vmc = vm.NewFake()

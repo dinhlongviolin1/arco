@@ -193,3 +193,24 @@ func TestHerdrAgentName_SatisfiesHerdrRule(t *testing.T) {
 	require.Regexp(t, `^[a-z][a-z0-9_-]{0,31}$`, got, "must match herdr's agent-name rule")
 	require.LessOrEqual(t, len(got), 32)
 }
+
+// herdr can return an error envelope WITH exit 0 (e.g. invalid_agent_name), so a
+// clean exit is not success. herdrEnvelopeError detects those; benign/list
+// bodies (and non-JSON) yield nil so the caller's own parser proceeds.
+func TestHerdrEnvelopeError(t *testing.T) {
+	// error envelope → detected
+	err := herdrEnvelopeError([]byte(`{"error":{"code":"invalid_agent_name","message":"bad name"},"id":"cli:agent:start"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid_agent_name")
+
+	// normal success envelopes → nil
+	require.NoError(t, herdrEnvelopeError([]byte(`{"result":{"type":"agent_list","agents":[]}}`)))
+	require.NoError(t, herdrEnvelopeError([]byte(`{"result":{"type":"ok"}}`)))
+	require.NoError(t, herdrEnvelopeError([]byte(`{"result":{"workspaces":[{"workspace_id":"wD","label":"arco_x"}]}}`)))
+
+	// empty / non-JSON → nil (caller's parser handles a malformed body)
+	require.NoError(t, herdrEnvelopeError(nil))
+	require.NoError(t, herdrEnvelopeError([]byte("not json")))
+	// a non-object "error" key must not false-positive
+	require.NoError(t, herdrEnvelopeError([]byte(`{"error":null}`)))
+}
