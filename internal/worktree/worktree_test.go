@@ -94,6 +94,36 @@ func TestProvision_BlocksExtTransport(t *testing.T) {
 	require.NoFileExists(t, sentinel, "the ext helper command must NOT have executed")
 }
 
+// A host-global git filter driver must NOT execute on a fresh clone/checkout of
+// attacker-committed content (opus F1: it would run in the daemon context before
+// quarantine). Provision nulls GIT_CONFIG_GLOBAL/SYSTEM, so a committed
+// .gitattributes referencing a global-only filter finds no driver → no exec.
+func TestProvision_NeutralizesHostGlobalFilter(t *testing.T) {
+	home := t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "filter-ran")
+	cfg := "[filter \"evil\"]\n\tsmudge = touch " + sentinel + "\n\tclean = cat\n"
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o644))
+	t.Setenv("HOME", home) // env-scrub preserves HOME; the global cfg is "live"
+
+	src := t.TempDir()
+	git(t, src, "init", "-q", "-b", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(src, ".gitattributes"), []byte("*.txt filter=evil\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f.txt"), []byte("hi\n"), 0o644))
+	git(t, src, "add", ".")
+	git(t, src, "commit", "-q", "-m", "c")
+
+	dest := filepath.Join(t.TempDir(), "wt")
+	_, err := Provision(context.Background(), "git", src, "", dest)
+	require.NoError(t, err)
+	require.NoFileExists(t, sentinel, "host-global smudge filter must not run on clone (GIT_CONFIG_GLOBAL nulled)")
+}
+
+func TestProvision_RejectsFileURL(t *testing.T) {
+	_, err := Provision(context.Background(), "git", "file:///tmp/x", "", filepath.Join(t.TempDir(), "wt"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file://")
+}
+
 func TestRemove(t *testing.T) {
 	d := filepath.Join(t.TempDir(), "wt")
 	require.NoError(t, os.MkdirAll(d, 0o700))

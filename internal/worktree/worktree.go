@@ -34,18 +34,31 @@ func Provision(ctx context.Context, gitBin, repo, base, dest string) (head strin
 	if strings.HasPrefix(repo, "-") || strings.HasPrefix(base, "-") || strings.HasPrefix(dest, "-") {
 		return "", fmt.Errorf("worktree: refusing option-shaped arg (repo/base/dest may not start with '-')")
 	}
+	// Reject file:// URLs: they force the git transport → source-repo `upload-pack`
+	// hooks (uploadpack.packObjectsHook) execute at clone time (opus F3). A plain
+	// local PATH uses git's copy optimization (no upload-pack) and is fine; remote
+	// https/ssh sources are assumed operator-trusted.
+	if strings.HasPrefix(strings.ToLower(repo), "file://") {
+		return "", fmt.Errorf("worktree: refusing file:// source (use a plain path or a remote URL)")
+	}
 	if _, statErr := os.Lstat(dest); statErr == nil {
 		return "", fmt.Errorf("worktree: dest %q already exists (clone-per-worker needs a fresh dir)", dest)
 	}
 
-	// Full clone into the fresh per-worker gitdir. Hardening: `protocol.ext.allow=
-	// never` blocks the `ext::<cmd>` remote-helper that would EXECUTE an arbitrary
-	// command on clone (the leading-'-' guard alone doesn't catch `ext::…`);
-	// GIT_TERMINAL_PROMPT=0 (in run) stops a bad URL hanging on a credential
-	// prompt. `--` ends options so a repo path can't be parsed as a flag. No
-	// --recurse-submodules (submodule hooks live in a gitdir the superproject's
-	// hooksPath doesn't cover); quarantine.Run neutralizes the rest post-clone.
-	if out, e := run(ctx, gitBin, "-c", "protocol.ext.allow=never", "clone", "--", repo, dest); e != nil {
+	// Full clone into the fresh per-worker gitdir. Hardening (opus review):
+	//   - Protocol ALLOWLIST (not an ext-only denylist): deny everything, allow
+	//     only file (local paths) / https / ssh / git — closes ext::, fd::, and
+	//     any future/third-party remote-helper in one rule.
+	//   - `--` ends options so a repo path can't be parsed as a flag.
+	//   - No --recurse-submodules (submodule hooks live in a gitdir the
+	//     superproject's hooksPath doesn't cover).
+	// GIT_CONFIG_GLOBAL/SYSTEM=/dev/null + GIT_TERMINAL_PROMPT=0 are set in run().
+	proto := []string{
+		"-c", "protocol.allow=never",
+		"-c", "protocol.file.allow=always", "-c", "protocol.https.allow=always",
+		"-c", "protocol.ssh.allow=always", "-c", "protocol.git.allow=always",
+	}
+	if out, e := run(ctx, gitBin, append(append([]string{}, proto...), "clone", "--", repo, dest)...); e != nil {
 		return "", fmt.Errorf("worktree: clone: %v: %s", e, out)
 	}
 	// Detached checkout at base (if given) so the worker starts from a known point
@@ -75,10 +88,16 @@ func Remove(dest string) error {
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	// Scrubbed env (P1) + no interactive credential prompt (a bad URL must fail,
-	// not hang). The dangerous ext:: command-exec transport is blocked per-command
-	// via protocol.ext.allow=never; we do NOT set GIT_PROTOCOL_FROM_USER=0 because
-	// it would also block the `file` transport legit local-path clones need.
-	cmd.Env = append(spawnenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	// not hang) + NEUTRALIZE host global/system git config (opus F1): env-scrub
+	// preserves HOME, so a host-global filter driver (e.g. git-lfs
+	// filter.lfs.process) would otherwise run on an attacker-committed
+	// .gitattributes/.lfsconfig DURING clone/checkout — before quarantine and
+	// before any sandbox = RCE in the daemon context. A fresh clone has no
+	// attacker .git/config, so nulling global+system config means no driver a
+	// committed .gitattributes references is defined → checkout-time filter exec
+	// is closed for ALL drivers at once.
+	cmd.Env = append(spawnenv.Scrub(os.Environ()),
+		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
