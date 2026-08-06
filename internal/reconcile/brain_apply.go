@@ -24,6 +24,11 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	if err != nil || (w.State != core.WorkerRunning && w.State != core.WorkerStarting) {
 		return
 	}
+	// A pool-owned (handoff-released, unclaimed) worker is inert to the brain —
+	// chokepoint belt for the ApplyEvent gate (covers any other brainClassify caller).
+	if w.OwnerSession == core.PoolSessionID {
+		return
+	}
 	// Per-session brain-rate admission + persist brain INTENT, in ONE write tx so
 	// the count→admit→insert is race-free under the single-writer lock (a burst of
 	// ambiguous workers in a session can't slip past the cap). Over the cap: record

@@ -45,6 +45,13 @@ func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task string) (Dis
 			return core.ErrMaxDepthExceeded
 		}
 		sessionID = parent.OwnerSession
+		// A pool-owned (handoff-released) parent must not spawn children INTO the
+		// protected pool (Dispatch/claim/transfer already reject the pool; Delegate
+		// was the odd one out — opus review). Defense-in-depth: the brain gate above
+		// already stops a pooled worker from reaching a `dispatch` StepResult.
+		if sessionID == core.PoolSessionID {
+			return core.ErrProtectedPool
+		}
 		if e.MaxChildren > 0 {
 			n, err := tx.CountActiveWorkers(sessionID)
 			if err != nil {

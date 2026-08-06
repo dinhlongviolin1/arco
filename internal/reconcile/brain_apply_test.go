@@ -225,3 +225,27 @@ func TestBrain_HandoffReleasesToPool(t *testing.T) {
 	}
 	require.True(t, kinds["worker_release_intent"] && kinds["worker_released"], "handoff emits release events")
 }
+
+// After handoff (worker released to the pool, still running), it is INERT to the
+// brain — a further ambiguous signal must NOT re-invoke the brain (else a
+// paid-call loop / escalations on the pool sentinel). opus review of handoff.
+func TestBrain_PoolOwnedNotReclassified(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"handoff"}`), nil
+		}}
+	id := dispatchRunning(t, e)
+
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), calls.Load(), "first ambiguous → brain → handoff → released to pool")
+	require.Equal(t, core.PoolSessionID, mustWorker(t, s, id).OwnerSession)
+
+	// second ambiguous signal on the now-pool-owned worker → brain NOT re-invoked
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), calls.Load(), "pool-owned worker is inert to the brain")
+}
