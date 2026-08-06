@@ -133,3 +133,33 @@ func TestSpawn_AcquiresPoolLease(t *testing.T) {
 	n, _ = s.Reader().CountActiveLeases("p1")
 	require.Equal(t, 1, n, "rejected spawn admitted nothing (tx rolled back)")
 }
+
+// A FAILED spawn releases its pool lease immediately (frees the slot for retry),
+// rather than holding it until the next sweep's terminal-worker reaper.
+func TestSpawn_FailedReleasesLease(t *testing.T) {
+	e, s, _ := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.DefaultPool = "p1"
+	e.LeaseTTL = time.Hour
+	_, err := s.DB().Exec(
+		`INSERT INTO provider_pools(id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at)
+		 VALUES('p1','anthropic','','default','',1,100,'ok',NULL,?)`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	require.NoError(t, err)
+
+	// bad repo → provision fails in phase 2 → worker failed → lease released
+	res, err := e.Spawn(context.Background(), "", "t1", true, filepath.Join(t.TempDir(), "nope"), "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerFailed, res.State)
+	n, err := s.Reader().CountActiveLeases("p1")
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "failed spawn released its lease (slot freed)")
+
+	// the freed slot lets an immediate good spawn acquire (max_active=1)
+	repo, _ := localRepo(t)
+	r2, err := e.Spawn(context.Background(), "", "t2", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, r2.State)
+	n, _ = s.Reader().CountActiveLeases("p1")
+	require.Equal(t, 1, n)
+}

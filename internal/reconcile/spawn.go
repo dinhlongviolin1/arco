@@ -41,6 +41,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	workspace := "arco_" + workerID
 	var sessionID string
 	var granted map[string]bool
+	var leaseID string // function-scoped so phase 3 can release it on a failed spawn
 
 	// Phase 1: durable intent + worker row + granted-set snapshot (atomic).
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
@@ -67,10 +68,10 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		// Provider-pool concurrency lease, acquired BEFORE the intent (admission is
 		// race-free in this single-writer tx). ErrLeaseRejected aborts the whole tx
 		// → no worker created → caller backs off. Inert when DefaultPool is unset.
-		var leaseID string
 		if e.DefaultPool != "" {
 			leaseID = ulid.Make().String()
 			if err := tx.AcquireLease(leaseID, e.DefaultPool, e.LeaseTTL); err != nil {
+				leaseID = "" // not acquired (tx will roll back anyway)
 				return err
 			}
 		}
@@ -128,6 +129,16 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		payload := "{}"
 		if perr != nil {
 			payload = fmt.Sprintf(`{"error":%q}`, perr.Error())
+		}
+		// Free the pool slot NOW on a FAILED spawn (finalState, not perr — a
+		// launch-error-but-alive worker is adopted running and KEEPS its lease)
+		// rather than waiting for the sweep's terminal-worker reaper — avoids a
+		// spurious at-capacity reject on an immediate retry. Idempotent; no-op when
+		// no pool.
+		if finalState == core.WorkerFailed && leaseID != "" {
+			if err := tx.ReleaseLease(leaseID); err != nil {
+				return err
+			}
 		}
 		if finalState == core.WorkerRunning {
 			// ref is unrecoverable when Launch errored → bind "" so the sweep
