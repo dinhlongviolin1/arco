@@ -119,3 +119,39 @@ func TestRevoke_CascadesToSubtree(t *testing.T) {
 	okC, _ = s.Reader().Allowed(child, "git.pr.merge")
 	require.False(t, okC, "revoke on parent must cascade to descendant grants")
 }
+
+// GrantedCapabilities returns the effective set permcompile needs: default-allowed
+// caps always present; an explicit grant adds a default-off cap; revoke removes
+// it — mirroring Allowed() as a set.
+func TestGrantedCapabilities_EffectiveSet(t *testing.T) {
+	s := newTestStore(t)
+	sess := newWork(t, s)
+
+	g0, err := s.Reader().GrantedCapabilities(sess)
+	require.NoError(t, err)
+	require.True(t, g0["git.commit"], "default-allowed cap is granted")
+	require.False(t, g0["net.fetch"], "default-off cap not granted until an explicit grant")
+
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		_, e := tx.Grant(sess, "net.fetch", "cli", core.Event{Kind: "grant", SessionID: sess})
+		return e
+	}))
+	g1, err := s.Reader().GrantedCapabilities(sess)
+	require.NoError(t, err)
+	require.True(t, g1["net.fetch"], "explicit grant appears in the set")
+	require.True(t, g1["git.commit"], "default caps still present")
+
+	// consistency with Allowed(): every capability in the CURRENT set is Allowed().
+	for cap := range g1 {
+		ok, _ := s.Reader().Allowed(sess, cap)
+		require.True(t, ok, "%s in granted set must be Allowed()", cap)
+	}
+
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		_, e := tx.Revoke(sess, "net.fetch", core.Event{Kind: "revoke", SessionID: sess})
+		return e
+	}))
+	g2, err := s.Reader().GrantedCapabilities(sess)
+	require.NoError(t, err)
+	require.False(t, g2["net.fetch"], "revoked grant removed from the set")
+}
