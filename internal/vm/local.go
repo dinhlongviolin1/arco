@@ -254,21 +254,30 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	for _, kv := range spec.Env { // scrubbed env for the launched process (P1)
 		create = append(create, "--env", kv)
 	}
+	// `workspace create` is the ONLY herdr call carrying secret `--env` values on
+	// its argv, so its error is the only one that can echo a token (via argv,
+	// herdr stderr, or an error envelope). Scrub the actual secret VALUES from the
+	// whole error text — a herdr-echo-independent close of the HIGH-1 residual.
+	secrets := secretEnvValues(spec.Env)
 	if _, err := l.herdrRun(ctx, create...); err != nil {
-		return "", "", fmt.Errorf("herdr workspace create: %w", err)
+		return "", "", redactSecrets(fmt.Errorf("herdr workspace create: %w", err), secrets)
 	}
+	// Every post-create error return is wrapped with redactSecrets(…, secrets): the
+	// workspace now holds the injected env, so if herdr ever echoed a pane's stored
+	// env value on a later failure the value-scrubber catches it — the guarantee
+	// stays echo-independent for the whole launch, not just the create call (review).
 	wsID, err := l.workspaceIDByLabel(ctx, spec.Name)
 	if err != nil {
 		// The workspace was created but we can't resolve its id to clean it up
 		// (rare). Return the error; a sweep-GC follow-up reaps the orphan.
-		return "", "", err
+		return "", "", redactSecrets(err, secrets)
 	}
 	// From here the workspace exists → tear it down on ANY failure so a failed
 	// launch never orphans a live herdr workspace (capstone audit; no GC today).
 	paneID, err := l.paneInWorkspace(ctx, wsID)
 	if err != nil {
 		l.closeWorkspace(ctx, wsID)
-		return "", "", err
+		return "", "", redactSecrets(err, secrets)
 	}
 	// herdr `agent start <name>` requires 1–32 chars, starting with a lowercase
 	// letter and containing only [a-z0-9_-]. arco's workspace label embeds an
@@ -282,7 +291,7 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	}
 	if _, err := l.herdrRun(ctx, start...); err != nil {
 		l.closeWorkspace(ctx, wsID) // don't orphan the workspace on a failed agent start
-		return "", "", fmt.Errorf("herdr agent start: %w", err)
+		return "", "", redactSecrets(fmt.Errorf("herdr agent start: %w", err), secrets)
 	}
 	// Resolve the just-started agent's stable identity (terminal_id) so the worker
 	// row carries it from birth — arming the sweep's identity guard before the
@@ -326,7 +335,7 @@ func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, e
 		return nil, err
 	}
 	if e := herdrEnvelopeError(out); e != nil {
-		return nil, fmt.Errorf("%s: %w", strings.Join(args, " "), e)
+		return nil, fmt.Errorf("%s: %w", redactCmdArgs(args), e)
 	}
 	return out, nil
 }
@@ -487,12 +496,73 @@ func newCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
 	return c
 }
 
+// redactCmdArgs renders argv for an ERROR MESSAGE with secret env values masked.
+// The launch path passes a worker's SCOPED provider creds to herdr via `--env
+// KEY=VALUE` (herdr's only pane-env mechanism), so an unmasked argv in an error
+// string would carry a LIVE token into the immutable event log (Spawn writes the
+// launch error into dispatch_done) and thence into the brain's LLM context — a
+// P1/B4 bypass the shape-based write-time redactor can't catch for an arbitrary
+// gateway token (whole-system audit). We mask the value of any `--env` operand
+// whose key is secret-bearing (spawnenv's denylist), keeping benign env visible.
+func redactCmdArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = a
+		if i > 0 && args[i-1] == "--env" {
+			if k, _, ok := strings.Cut(a, "="); ok && spawnenv.IsSecretVar(k) {
+				out[i] = k + "=<redacted>"
+			}
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// secretEnvValues extracts the VALUES of secret-bearing `KEY=VALUE` env entries
+// (spawnenv's denylist) — the exact strings that must never surface in an error.
+func secretEnvValues(env []string) []string {
+	var vals []string
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && v != "" && spawnenv.IsSecretVar(k) {
+			vals = append(vals, v)
+		}
+	}
+	return vals
+}
+
+// redactedError wraps an error, masking known secret substrings in its rendered
+// message while preserving the wrap chain. This closes the error-text leak paths
+// argv-masking can't reach: a herdr STDERR line (runOutput folds `ee.Stderr`) or
+// an error-envelope MESSAGE that echoes a `--env` VALUE (audit HIGH-1 residual —
+// the guarantee must not depend on whether herdr echoes the value).
+type redactedError struct {
+	err     error
+	secrets []string
+}
+
+func (r *redactedError) Error() string {
+	s := r.err.Error()
+	for _, sec := range r.secrets {
+		s = strings.ReplaceAll(s, sec, "<redacted>")
+	}
+	return s
+}
+func (r *redactedError) Unwrap() error { return r.err }
+
+// redactSecrets wraps err so any of the given secret values are masked wherever
+// they appear in its message. No-op when there is nothing to redact.
+func redactSecrets(err error, secrets []string) error {
+	if err == nil || len(secrets) == 0 {
+		return err
+	}
+	return &redactedError{err: err, secrets: secrets}
+}
+
 // runOutput runs a command capturing stdout, folding stderr into the error.
 func runOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
 	out, err := newCmd(ctx, name, args...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
-			return nil, fmt.Errorf("%s %s: %s: %w", name, strings.Join(args, " "), bytes.TrimSpace(ee.Stderr), err)
+			return nil, fmt.Errorf("%s %s: %s: %w", name, redactCmdArgs(args), bytes.TrimSpace(ee.Stderr), err)
 		}
 		return nil, err
 	}
