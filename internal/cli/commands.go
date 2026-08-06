@@ -108,6 +108,25 @@ func newPoolListCmd() *cobra.Command {
 	}
 }
 
+func newKillCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "kill <worker-id>",
+		Short: "terminate a worker and stop its agent (reclaims the herdr pane)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			if err := c.KillWorker(context.Background(), args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "killed")
+			return nil
+		},
+	}
+}
+
 func newWorkersCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "workers",

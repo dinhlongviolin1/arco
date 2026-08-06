@@ -136,9 +136,18 @@ func (l *LocalVMClient) Prompt(ctx context.Context, workspace, text string) erro
 	return err
 }
 
-// Kill interrupts an agent (best-effort Ctrl-C).
-func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
-	_, err := l.herdrRun(ctx, "agent", "send-keys", workspace, "C-c")
+// Kill STOPS an agent and reclaims its pane by closing the herdr workspace it
+// runs in — derived from the pane_id target ("wS:pN" → workspace_id "wS"). This
+// terminates the process + frees the PTY while leaving arco's SEPARATE worktree
+// dir intact (a killed worker's work product survives for inspection). target is
+// the worker's AgentRef (pane_id); a non-pane target (Fake / prompt-path worker
+// with no captured pane) is a best-effort no-op — there is nothing to close.
+func (l *LocalVMClient) Kill(ctx context.Context, target string) error {
+	wsID, _, found := strings.Cut(target, ":")
+	if !found || wsID == "" {
+		return nil
+	}
+	_, err := l.herdrRun(ctx, "workspace", "close", wsID)
 	return err
 }
 

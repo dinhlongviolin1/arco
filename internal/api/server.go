@@ -47,6 +47,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("POST /v1/events", s.intake)
 	s.mux.HandleFunc("GET /v1/workers/{id}/diff", s.workerDiff)
 	s.mux.HandleFunc("POST /v1/workers/{id}/verify", s.verify)
+	s.mux.HandleFunc("POST /v1/workers/{id}/kill", s.killWorker)
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
@@ -416,6 +417,15 @@ func (s *Server) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.eng.Verify(r.Context(), r.PathValue("id"), req.ExpectedRev, req.Actor); err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
+}
+
+// killWorker terminates a worker + stops its agent (operator action; audit MED-3).
+func (s *Server) killWorker(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.KillWorker(r.Context(), r.PathValue("id")); err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}

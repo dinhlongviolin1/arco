@@ -267,3 +267,32 @@ func TestSweep_EscalationTimeout_ExpiresAndPauses(t *testing.T) {
 	pend, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: id})
 	require.Empty(t, pend, "timed-out escalation expired")
 }
+
+// MED-3: an operator kill terminalizes the worker, expires its pending escalation,
+// and stops the agent (VM.Kill on the pane ref).
+func TestKillWorker_TerminatesAndStopsAgent(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/k", "base")
+	// give it a pane ref + a pending escalation
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		if err := tx.BindLaunch(id, "/wt/k", "base", "wZ:p1"); err != nil {
+			return err
+		}
+		w, _ := tx.GetWorker(id)
+		if err := tx.TransitionWorker(id, core.WorkerWaitingForUser, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"}); err != nil {
+			return err
+		}
+		_, err := tx.OpenEscalation(core.Escalation{WorkerID: id, SessionID: w.OwnerSession, Kind: "question", Action: "q?"})
+		return err
+	}))
+
+	require.NoError(t, e.KillWorker(context.Background(), id))
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerKilled, w.State)
+	pend, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: id})
+	require.Empty(t, pend, "kill expires the pending escalation")
+	require.Contains(t, fake.Killed(), "wZ:p1", "kill stops the agent at its pane ref")
+
+	// idempotent: killing an already-terminal worker is a no-op (no error)
+	require.NoError(t, e.KillWorker(context.Background(), id))
+}
