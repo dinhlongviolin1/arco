@@ -249,3 +249,28 @@ func TestBrain_PoolOwnedNotReclassified(t *testing.T) {
 	e.Exec.Wait()
 	require.Equal(t, int32(1), calls.Load(), "pool-owned worker is inert to the brain")
 }
+
+// Execute-time guard: if a worker is released to the pool AFTER the brain's entry
+// gate but BEFORE the un-recallable prompt (a transfer racing the off-write-path
+// classification), preparePrompt must skip the prompt — the pool is inert to the
+// brain (opus capstone review; completes the guard-set).
+func TestBrain_RunAgainSkippedIfReleasedToPoolMidFlight(t *testing.T) {
+	e, s, fake := brainEngine(t, `{"kind":"run_again","instruction":"go"}`, nil)
+	id := dispatchRunning(t, e)
+	// Simulate the race: the worker is released to the pool between classification
+	// and apply. Then apply a run_again StepResult directly (as brainClassify would).
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.ReleaseWorker(id, "brain")
+	}))
+	require.Equal(t, core.PoolSessionID, mustWorker(t, s, id).OwnerSession)
+
+	before := len(fake.Prompts()) // dispatchRunning already delivered the initial task prompt
+	e.applyStep(context.Background(), id, "cid-race", core.StepResult{Kind: "run_again", Instruction: "go"})
+
+	require.Len(t, fake.Prompts(), before, "no NEW prompt delivered to a pool-released worker")
+	// and no prompt_intent was recorded for it
+	evs, _ := s.Reader().RecentWorkerEvents(id, 50)
+	for _, ev := range evs {
+		require.NotEqual(t, "prompt_intent", ev.Kind, "no prompt_intent for a pool-released worker")
+	}
+}

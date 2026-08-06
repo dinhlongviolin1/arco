@@ -256,6 +256,15 @@ func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step c
 		if w.State != core.WorkerRunning && w.State != core.WorkerStarting {
 			return nil // moved (e.g. now waiting/blocked/terminal) → skip the prompt
 		}
+		// Execute-time owner re-validation of the un-recallable prompt: a worker
+		// RELEASED to the pool (via the transfer API, off the per-worker Exec queue)
+		// between the brain's entry gate and here must not be prompted — the pool is
+		// inert to the brain (completes the guard-set in ApplyEvent/brainClassify/
+		// Delegate; opus capstone review). The prompt_intent's `owner_session` also
+		// stays attributed to the CURRENT owner.
+		if w.OwnerSession == core.PoolSessionID {
+			return nil
+		}
 		workspace, ok = w.Workspace, true
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "prompt_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
