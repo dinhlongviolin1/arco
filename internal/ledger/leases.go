@@ -125,12 +125,14 @@ func (t *txn) BindAgentRef(workerID, ref string) error {
 }
 
 // BindLaunch records what provisioning + launch produced for a worker: its
-// worktree path, the checked-out base commit, and the backend agent handle
-// (herdr pane_id). Set in the dispatch_done tx. ErrNotFound if the worker is gone.
-func (t *txn) BindLaunch(workerID, worktree, base, ref string) error {
+// worktree path, the checked-out base commit, the backend agent handle (herdr
+// pane_id), and the agent's stable identity (boot_id = herdr terminal_id) —
+// captured at launch so the sweep's identity guard is armed before the first
+// liveness observation. Set in the dispatch_done tx. ErrNotFound if gone.
+func (t *txn) BindLaunch(workerID, worktree, base, ref, bootID string) error {
 	res, err := t.q.ExecContext(context.Background(),
-		`UPDATE workers SET worktree=?, base_commit=?, agent_ref=? WHERE id=?`,
-		worktree, base, ref, workerID)
+		`UPDATE workers SET worktree=?, base_commit=?, agent_ref=?, boot_id=? WHERE id=?`,
+		worktree, base, ref, bootID, workerID)
 	if err != nil {
 		return err
 	}

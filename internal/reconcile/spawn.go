@@ -112,7 +112,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	}
 
 	// Phase 2: external side effects (provision → quarantine → compile → launch).
-	ref, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted, credProfile)
+	ref, bootID, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted, credProfile)
 
 	// Phase 3: durable result + state. On a Phase-2 error the launch may still have
 	// spawned the agent before erroring (ref-capture timeout, transient post-spawn
@@ -151,13 +151,14 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 			}
 		}
 		if finalState == core.WorkerRunning {
-			// ref is unrecoverable when Launch errored → bind "" so the sweep
-			// correlates this adopted worker by workspace instead.
-			r := ref
+			// ref + identity are unrecoverable when Launch errored → bind "" so the
+			// sweep correlates this adopted worker by workspace, and the reaper (which
+			// requires a positive identity match) safely declines it.
+			r, b := ref, bootID
 			if perr != nil {
-				r = ""
+				r, b = "", ""
 			}
-			if err := tx.BindLaunch(workerID, wt, head, r); err != nil {
+			if err := tx.BindLaunch(workerID, wt, head, r, b); err != nil {
 				return err
 			}
 		}
@@ -209,14 +210,14 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 // LAUNCH failure leaves the dir (the agent may be live and adopted by the caller).
 // NB: a crash mid-provision still orphans the dir — a sweep-side GC of terminal
 // workers' ConfigDir subtrees is a documented follow-up (there is no GC today).
-func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool, credProfile string) (ref, wt, head string, err error) {
+func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool, credProfile string) (ref, bootID, wt, head string, err error) {
 	root := filepath.Join(e.ConfigDir, workerID)
 	wt = filepath.Join(root, "worktree")
 	cfgDir := filepath.Join(root, "cfg") // sibling of the worktree (config OUTSIDE it, B6)
 	// cleanup removes the partial per-worker dir on a pre-launch failure.
-	cleanup := func(e error, stage string) (string, string, string, error) {
+	cleanup := func(e error, stage string) (string, string, string, string, error) {
 		_ = worktree.Remove(root)
-		return "", wt, head, fmt.Errorf("%s: %w", stage, e)
+		return "", "", wt, head, fmt.Errorf("%s: %w", stage, e)
 	}
 
 	head, err = worktree.Provision(ctx, e.GitBin, repo, base, wt)
@@ -252,10 +253,10 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 		Args: permcompile.LaunchArgs(cfgDir, granted, cat),
 		Env:  env,
 	}
-	ref, err = e.VM.Launch(ctx, spec)
+	ref, bootID, err = e.VM.Launch(ctx, spec)
 	if err != nil {
 		// Do NOT remove — the agent may have spawned; the caller resolves by liveness.
-		return "", wt, head, fmt.Errorf("launch: %w", err)
+		return "", "", wt, head, fmt.Errorf("launch: %w", err)
 	}
-	return ref, wt, head, nil
+	return ref, bootID, wt, head, nil
 }

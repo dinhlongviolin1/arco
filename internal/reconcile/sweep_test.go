@@ -275,7 +275,7 @@ func TestKillWorker_TerminatesAndStopsAgent(t *testing.T) {
 	id := mkRunning(t, e, s, "/wt/k", "base")
 	// give it a pane ref + a pending escalation
 	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
-		if err := tx.BindLaunch(id, "/wt/k", "base", "wZ:p1"); err != nil {
+		if err := tx.BindLaunch(id, "/wt/k", "base", "wZ:p1", "term_K"); err != nil {
 			return err
 		}
 		w, _ := tx.GetWorker(id)
@@ -295,4 +295,84 @@ func TestKillWorker_TerminatesAndStopsAgent(t *testing.T) {
 
 	// idempotent: killing an already-terminal worker is a no-op (no error)
 	require.NoError(t, e.KillWorker(context.Background(), id))
+}
+
+// seedTerminalWithAgent makes worker id terminal (killed) with a captured pane
+// ref + a recorded terminal_id (BootID) — the state left by a worker that ran,
+// was observed alive once, then terminalized while its pane lingered.
+func seedTerminalWithAgent(t *testing.T, s *ledger.Store, id, ref, termID string) {
+	t.Helper()
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		// capture ref + stable identity (terminal_id) at launch → arms the guard
+		if err := tx.BindLaunch(id, "/wt/o", "base", ref, termID); err != nil {
+			return err
+		}
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerKilled, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+}
+
+// MED-3 (sweep): the sweep stops an agent still alive on a TERMINAL worker's pane
+// — the kill crash-orphan qwen flagged (KillWorker's commit landed, its best-
+// effort VM.Kill didn't) or any lingering terminal pane. Reaping is idempotent
+// (a closed pane leaves ListAgents so it isn't re-targeted).
+func TestSweep_ReapsOrphanedTerminalAgent(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/o", "base")
+	seedTerminalWithAgent(t, s, id, "wZ:p1", "term_A")
+	// live agent on the pane with the SAME terminal_id → positively ours
+	fake.Agents = []core.AgentObs{{Ref: "wZ:p1", Workspace: "arco_" + id, BootID: "term_A", Alive: true}}
+
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.AgentsReaped, "orphaned terminal agent stopped")
+	require.Contains(t, fake.Killed(), "wZ:p1")
+	require.Equal(t, 0, res.Observed, "a terminal worker is not in the liveness loop")
+
+	// idempotent: pane closed → gone from ListAgents → not re-reaped
+	fake.Agents = nil
+	res, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped)
+}
+
+// The orphan reaper must NOT stop a live (non-terminal) worker's agent — only a
+// terminal worker's pane is an orphan.
+func TestSweep_DoesNotReapLiveWorkerAgent(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/p", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.BindLaunch(id, "/wt/p", "base", "wY:p1", "term_A")
+	}))
+	fake.Agents = []core.AgentObs{{Ref: "wY:p1", Workspace: "arco_" + id, BootID: "term_A", Alive: true}}
+
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped, "a running worker's agent is not an orphan")
+	require.Empty(t, fake.Killed())
+}
+
+// Regression (opus review): the reaper must NEVER close a workspace it can't
+// positively identify. If our agent died and herdr recycled the pane_id to an
+// UNRELATED live agent (different terminal_id), reaping by ref alone would wrongly
+// close that innocent workspace. A terminal_id mismatch (or an unknown identity on
+// either side) must skip.
+func TestSweep_DoesNotReapRecycledPane(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/o", "base")
+	seedTerminalWithAgent(t, s, id, "wZ:p1", "term_A")
+
+	// a DIFFERENT process now holds the same pane_id (herdr recycled it)
+	fake.Agents = []core.AgentObs{{Ref: "wZ:p1", Workspace: "someone-else", BootID: "term_B", Alive: true}}
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped, "terminal_id mismatch → not our agent → do not close")
+	require.Empty(t, fake.Killed(), "must never close a workspace we can't positively identify")
+
+	// identity unknown (herdr reported no terminal_id) → also skip, never guess
+	fake.Agents = []core.AgentObs{{Ref: "wZ:p1", Workspace: "arco_" + id, BootID: "", Alive: true}}
+	res, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped, "unknown identity → skip, don't guess")
+	require.Empty(t, fake.Killed())
 }
