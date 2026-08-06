@@ -42,6 +42,10 @@ crash-safe).
 - [`docs/build-guide-rev6.md`](docs/build-guide-rev6.md) — **START HERE.** The authoritative,
   consolidated build guide: resolved decisions, the frozen `0001_init.sql` (schema + seed data),
   the frozen Go contracts, and the PASS-0→PASS-3 task list.
+- [`docs/deployment-hardening.md`](docs/deployment-hardening.md) — **operator runbook:** the
+  out-of-process half of the PASS-3 security preconditions (OS-user separation, managed-settings
+  placement, server-side branch protection, signed intake, the live-herdr spike) — do these before
+  pointing arco at real repos/creds.
 - [`docs/overview.md`](docs/overview.md) — readable overview + roadmap.
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — the layered rev-1→rev-5 plan and
   per-task detail (**provenance**; superseded by the rev-6 guide where they differ).
