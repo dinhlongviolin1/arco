@@ -69,6 +69,11 @@ type DispatchReq struct {
 	Task    string `json:"task"`
 	Session string `json:"session"` // slug|id; empty with New=true creates one
 	New     bool   `json:"new"`
+	// Repo (optional): when set, dispatch takes the repo-based SPAWN path
+	// (provision worktree → quarantine → compile config → launch), at Base
+	// (commit-ish; "" = repo tip). Empty Repo keeps the prompt-based path.
+	Repo string `json:"repo"`
+	Base string `json:"base"`
 }
 type DispatchResp struct {
 	SessionID string `json:"session_id"`
@@ -211,7 +216,13 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newSession := req.New || req.Session == ""
-	res, err := s.eng.Dispatch(r.Context(), req.Session, req.Task, newSession)
+	var res reconcile.DispatchResult
+	var err error
+	if req.Repo != "" {
+		res, err = s.eng.Spawn(r.Context(), req.Session, req.Task, newSession, req.Repo, req.Base)
+	} else {
+		res, err = s.eng.Dispatch(r.Context(), req.Session, req.Task, newSession)
+	}
 	if err != nil {
 		writeErr(w, errStatus(err), err)
 		return
