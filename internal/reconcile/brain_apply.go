@@ -178,8 +178,14 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 	case "confirm":
 		e.openFromBrain(ctx, workerID, "confirm", core.ClassDanger, core.TierHighBlast, step)
 	case "handoff":
-		// PASS-3 feature; reject in P2 with an audit trail (never silently drop).
-		e.errorEvent(ctx, workerID, "handoff not supported in P2")
+		// The worker hands ownership back to arco → release it to the pool (PASS-3
+		// ownership transfer). It stays running, unowned, until claimed or
+		// pool-TTL-paused; ReleaseWorker emits the intent/released audit events.
+		if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			return tx.ReleaseWorker(workerID, "brain")
+		}); err != nil {
+			e.errorEvent(ctx, workerID, "handoff release failed: "+err.Error())
+		}
 	default:
 		e.errorEvent(ctx, workerID, "unhandled StepResult kind: "+step.Kind)
 	}

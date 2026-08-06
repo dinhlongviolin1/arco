@@ -31,17 +31,18 @@ var terminalHerdrStatus = map[string]bool{"done": true}
 // LocalVMClient drives agents on the local machine: git for HEAD/diff (real,
 // deterministic) and the herdr CLI over its socket API for liveness + prompting.
 // The herdr JSON mapping is CONFIRMED against herdr 0.7.5 (Task-S spike; see
-// docs/herdr-contract.md). Still default=Fake, and two integration items remain
-// before this is the daemon default: (1) worker↔agent correlation — herdr
-// identifies agents by workspace_id/pane_id, not arco's "arco_<ulid>" workspace,
-// so Prompt/Kill's target must be the herdr pane_id captured at launch; (2) the
-// launch itself (`herdr agent start <name> --kind <kind> --pane <id> -- <args>`)
-// is not yet wired (arco currently only prompts an existing pane).
+// docs/herdr-contract.md). ListAgents/Prompt/Kill and Launch (the real
+// workspace/tab/pane → agent-start chain) are all implemented; still default=Fake
+// pending LIVE verification (Launch's create→list→start end-to-end + `--env`
+// semantics needs spawning a real agent).
 //
-// DO NOT set use_local_vm before (1) is wired: the sweep looks up liveness by
-// w.Workspace ("arco_<ulid>") against herdr's workspace_id ("wB"), which NEVER
-// matches, so every live worker would miss and be false-finalized Lost/Failed.
-// It is not merely inert — enabling it early actively nukes the fleet.
+// DO NOT set use_local_vm until that live verification is done: the sweep looks
+// up liveness by a worker's AgentRef (herdr pane_id, captured at launch via
+// BindLaunch) and correctly correlates for Launch-spawned workers — BUT the
+// repo-spawn launch-ERROR fallback + the Prompt-model path correlate by
+// workspace, where arco's "arco_<ulid>" never matches herdr's workspace_id, so a
+// non-Launch-correlated live worker would be false-finalized. See
+// docs/herdr-contract.md open items before enabling.
 type LocalVMClient struct {
 	Herdr string
 	Git   string
