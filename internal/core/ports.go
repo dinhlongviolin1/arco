@@ -266,6 +266,11 @@ type VMClient interface {
 	ListAgents(ctx context.Context) ([]AgentObs, error)
 	GitHeads(ctx context.Context, worktrees []string) (map[string]string, error)
 	Prompt(ctx context.Context, workspace, text string) error // text embeds a prompt_intent ULID
+	// PromptReady delivers a prompt to a JUST-LAUNCHED agent, CONFIRMING it landed
+	// (the agent reacted) and retrying while the agent's TUI is still booting — the
+	// plain Prompt races a fresh agent's startup and can silently no-op. Used for
+	// the initial task delivery on the spawn path.
+	PromptReady(ctx context.Context, workspace, text string) error
 	Kill(ctx context.Context, workspace string) error
 	// Launch starts a NEW agent per spec and returns the backend's agent handle
 	// (herdr pane_id) — the ref stored via BindAgentRef for sweep correlation.

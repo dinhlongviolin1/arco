@@ -169,18 +169,25 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		return DispatchResult{}, err
 	}
 	// Deliver the initial task to the freshly-launched agent, targeted at its
-	// captured pane (ref), AFTER the running-state commit. Best-effort: the agent
-	// is already running + owned, so a delivery failure is a follow-up the brain or
-	// operator can retry (recorded via prompt_intent), not a spawn failure. Only on
-	// a clean launch (perr==nil ⇒ ref is the real pane_id, not the ""-adopted case).
+	// captured pane (ref), AFTER the running-state commit. Done ASYNC (off the
+	// spawn's response path) via the per-worker Exec, because PromptReady retries
+	// while the agent's TUI boots (seconds) and the API dispatch must not block on
+	// it. Only on a clean launch (perr==nil ⇒ ref is the real pane_id). Best-effort:
+	// a delivery failure is recorded, never a spawn failure (the worker is running
+	// + re-promptable). Falls back to synchronous if Exec is unset.
 	if finalState == core.WorkerRunning && perr == nil && ref != "" {
-		e.deliverInitialTask(ctx, workerID, sessionID, ref, task)
+		if e.Exec != nil {
+			e.Exec.Submit(workerID, func() { e.deliverInitialTask(e.bg(), workerID, sessionID, ref, task) })
+		} else {
+			e.deliverInitialTask(ctx, workerID, sessionID, ref, task)
+		}
 	}
 	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
 }
 
 // deliverInitialTask prompts a just-launched repo-spawned worker with its task,
-// targeted at the captured pane (ref). Records prompt_intent BEFORE the prompt
+// targeted at the captured pane (ref), via PromptReady (confirms delivery +
+// retries past the agent's TUI boot). Records prompt_intent BEFORE the prompt
 // (crash-safe intent, mirrors preparePrompt); a delivery error is recorded but
 // does not fail/park the worker (it is running + claimable/re-promptable).
 func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, target, task string) {
@@ -191,7 +198,7 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 		})
 		return e2
 	})
-	if err := e.VM.Prompt(ctx, target, promptIntentText(task)); err != nil {
+	if err := e.VM.PromptReady(ctx, target, promptIntentText(task)); err != nil {
 		e.errorEvent(ctx, workerID, "initial task delivery failed: "+err.Error())
 	}
 }

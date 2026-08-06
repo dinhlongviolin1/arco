@@ -142,6 +142,74 @@ func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 	return err
 }
 
+// PromptReady delivers the initial prompt to a JUST-LAUNCHED agent reliably.
+// `herdr agent prompt --wait` requires an observed state change (the agent
+// reacting) within the timeout, else returns agent_prompt_stalled — so a prompt
+// sent while the TUI is still booting is reported as not-landed. A too-early
+// prompt is DROPPED by the not-yet-ready TUI (observed: the input stays empty),
+// not buffered, so retrying can't double-submit. We retry until the agent starts
+// working (confirmed delivery) or the attempts are exhausted; each stalled --wait
+// (~promptReadyTimeout) doubles as the settle between tries.
+func (l *LocalVMClient) PromptReady(ctx context.Context, workspace, text string) error {
+	var last error
+	for i := 0; i < promptReadyAttempts; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, err := l.herdrRun(ctx, "agent", "prompt", workspace, text,
+			"--wait", "--until", "working", "--timeout", promptReadyTimeout)
+		if err == nil {
+			return nil // the agent reacted → the prompt landed
+		}
+		last = err
+		if !retryablePromptErr(err) {
+			return err // a real error (bad target, etc.) — don't spin
+		}
+		// Before re-submitting on a stall, check the agent DIDN'T actually react:
+		// --wait can report agent_prompt_stalled even when the prompt landed if the
+		// working transition wasn't observed within the window (herdr poll lag). Only
+		// a still-idle agent is safe to re-prompt — else we'd double-submit the task.
+		// (Safety rests on two premises: a too-early prompt is DROPPED by the not-ready
+		// TUI, and a landed prompt leaves the agent observably non-idle here.)
+		if st := l.agentStatusOf(ctx, workspace); st != "" && st != "idle" && st != "unknown" {
+			return nil // reacted (working/blocked/…) — treat as delivered, don't re-type
+		}
+	}
+	return fmt.Errorf("prompt not confirmed after %d attempts: %w", promptReadyAttempts, last)
+}
+
+const (
+	promptReadyAttempts = 5
+	promptReadyTimeout  = "6000" // ms per --wait attempt; a stall (~5s) doubles as the settle
+)
+
+// agentStatusOf returns an agent's herdr agent_status ("" if unknown/absent) —
+// used to tell a landed-but-unobserved prompt from a genuinely-dropped one.
+func (l *LocalVMClient) agentStatusOf(ctx context.Context, target string) string {
+	out, err := l.herdrRun(ctx, "agent", "get", target)
+	if err != nil {
+		return ""
+	}
+	var resp struct {
+		Result struct {
+			Agent struct {
+				AgentStatus string `json:"agent_status"`
+			} `json:"agent"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(out, &resp) != nil {
+		return ""
+	}
+	return resp.Result.Agent.AgentStatus
+}
+
+// retryablePromptErr is a herdr "the agent wasn't ready" prompt outcome (still
+// booting), as opposed to a hard error (unknown target, etc.).
+func retryablePromptErr(err error) bool {
+	s := err.Error()
+	return strings.Contains(s, "stall") || strings.Contains(s, "timeout") || strings.Contains(s, "not ready")
+}
+
 // Launch starts a new agent via the herdr contract (all confirmed against herdr
 // 0.7.5, Task-S spike):
 //
