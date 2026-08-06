@@ -21,6 +21,9 @@ func newDispatchCmd() *cobra.Command {
 			"real herdr. Without --repo, the legacy prompt-path (Fake/prompt-an-existing-pane).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if base != "" && repo == "" {
+				return fmt.Errorf("--base requires --repo (base is only used on the repo-spawn path)")
+			}
 			c, err := newClient()
 			if err != nil {
 				return err
