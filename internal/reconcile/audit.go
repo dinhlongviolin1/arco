@@ -42,7 +42,12 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 		}
 
 		// Auto-pause (only if it's a real, legal, non-self transition — avoids rev
-		// churn when the worker is already paused/terminal).
+		// churn when the worker is already paused/terminal). INTENTIONAL (audit F3):
+		// a worker in an unpausable state (starting mid-launch, completed_candidate,
+		// lost) is NOT paused — pausing starting would race the dispatch CAS, and
+		// killing would be heavy-handed for an attempt the PreToolUse hook ALREADY
+		// denied. The danger escalation below still surfaces it, and a
+		// subsequently-running worker is pausable on its next attempt.
 		if !w.State.Terminal() && w.State != core.WorkerPaused && core.LegalWorkerTransition(w.State, core.WorkerPaused) {
 			if err := tx.TransitionWorker(workerID, core.WorkerPaused, w.Rev, core.Event{
 				Kind: "state_change", WorkerID: workerID, SessionID: w.OwnerSession,
