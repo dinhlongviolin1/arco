@@ -32,6 +32,9 @@ var (
 	// ErrVMAtCapacity is returned when a VM already runs the maximum number of
 	// active workers (per-VM concurrency admission).
 	ErrVMAtCapacity = errors.New("core: VM at worker capacity")
+	// ErrAgentBusy is returned when an action would interrupt an agent that is
+	// observably working/blocked (e.g. redelivering its task).
+	ErrAgentBusy = errors.New("core: agent is busy")
 )
 
 // LeaseRejection carries WHY a lease was denied (disabled|cooldown|at_capacity|
@@ -281,6 +284,11 @@ type VMClient interface {
 	// plain Prompt races a fresh agent's startup and can silently no-op. Used for
 	// the initial task delivery on the spawn path.
 	PromptReady(ctx context.Context, workspace, text string) error
+	// AgentStatus returns the backend's current status for a target (e.g. herdr's
+	// idle|working|blocked|done|unknown), or "" when it can't be determined —
+	// used to guard against re-prompting a busy agent. Never fatal: callers treat
+	// "" as unknown and decide themselves.
+	AgentStatus(ctx context.Context, target string) (string, error)
 	Kill(ctx context.Context, workspace string) error
 	// Launch starts a NEW agent per spec and returns the backend's agent handle
 	// (herdr pane_id, the ref for sweep correlation) AND its stable identity

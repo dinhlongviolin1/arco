@@ -285,6 +285,12 @@ const (
 	promptReadyTimeout  = "6000" // ms per --wait attempt; a stall (~5s) doubles as the settle
 )
 
+// AgentStatus implements core.VMClient: the agent's current herdr status for a
+// target, "" when it can't be determined (never fatal — callers decide).
+func (l *LocalVMClient) AgentStatus(ctx context.Context, target string) (string, error) {
+	return l.agentStatusOf(ctx, target), nil
+}
+
 // agentStatusOf returns an agent's herdr agent_status ("" if unknown/absent) —
 // used to tell a landed-but-unobserved prompt from a genuinely-dropped one.
 func (l *LocalVMClient) agentStatusOf(ctx context.Context, target string) string {

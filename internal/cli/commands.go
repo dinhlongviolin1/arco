@@ -127,6 +127,30 @@ func newKillCmd() *cobra.Command {
 	}
 }
 
+func newRedeliverCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "redeliver <worker-id>",
+		Short: "re-prompt a stranded running worker with its original task (operator recovery)",
+		Long: `Recovery for a worker left running-but-taskless because the daemon crashed between
+committing it to 'running' and delivering its initial task. Inspect the worker's
+herdr pane first: redelivery is refused while the agent is observably working, but
+if the agent finished fast and returned to idle it could re-execute the task — the
+judgment call is the operator's (this is deliberately not automated).`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			if err := c.Redeliver(context.Background(), args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "redelivered")
+			return nil
+		},
+	}
+}
+
 func newWorkersCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "workers",

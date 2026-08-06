@@ -20,6 +20,9 @@ type Fake struct {
 	Agents    []core.AgentObs
 	Heads     map[string]string
 	PromptErr error
+	// Statuses maps a target to the AgentStatus the Fake reports ("" = unknown).
+	// Lets tests drive the busy-agent guard on redeliver.
+	Statuses map[string]string
 	// AliveOnPrompt models "the agent spawned but Prompt still returned an error"
 	// (ambiguous launch): a prompted workspace is thereafter reported alive.
 	AliveOnPrompt bool
@@ -76,6 +79,13 @@ func (f *Fake) Prompt(_ context.Context, workspace, text string) error {
 // PromptReady records like Prompt (the Fake has no readiness race to confirm).
 func (f *Fake) PromptReady(ctx context.Context, workspace, text string) error {
 	return f.Prompt(ctx, workspace, text)
+}
+
+// AgentStatus returns the configured status for a target ("" = unknown).
+func (f *Fake) AgentStatus(_ context.Context, target string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.Statuses[target], nil
 }
 
 func (f *Fake) Prompts() []Prompted {

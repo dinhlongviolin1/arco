@@ -48,6 +48,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /v1/workers/{id}/diff", s.workerDiff)
 	s.mux.HandleFunc("POST /v1/workers/{id}/verify", s.verify)
 	s.mux.HandleFunc("POST /v1/workers/{id}/kill", s.killWorker)
+	s.mux.HandleFunc("POST /v1/workers/{id}/redeliver", s.redeliver)
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
@@ -432,6 +433,16 @@ func (s *Server) killWorker(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
 }
 
+// redeliver re-prompts a stranded running worker with its original task
+// (operator recovery for a crash-lost initial delivery; audit MED-3).
+func (s *Server) redeliver(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.RedeliverInitialTask(r.Context(), r.PathValue("id")); err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
+}
+
 func (s *Server) listEscalations(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	if status == "" {
@@ -541,7 +552,8 @@ func errStatus(err error) int {
 	case errors.Is(err, core.ErrProtectedPool):
 		return http.StatusConflict
 	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch),
-		errors.Is(err, core.ErrHighBlastScope), errors.Is(err, core.ErrEscalationState):
+		errors.Is(err, core.ErrHighBlastScope), errors.Is(err, core.ErrEscalationState),
+		errors.Is(err, core.ErrAgentBusy):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
