@@ -182,3 +182,14 @@ func TestLocal_LaunchErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no pane in workspace")
 }
+
+// herdr `agent start <name>` rejects a name that isn't 1-32 chars of
+// [a-z0-9_-] starting with a lowercase letter (invalid_agent_name, live-verified
+// on 0.7.5). arco's workspace label embeds an UPPERCASE ULID, so the agent name
+// must be lowercased — this guards that mapping against regression.
+func TestHerdrAgentName_SatisfiesHerdrRule(t *testing.T) {
+	got := herdrAgentName("arco_01KZASY2ZQEMBRS19BAQNJ1N5E")
+	require.Equal(t, "arco_01kzasy2zqembrs19baqnj1n5e", got)
+	require.Regexp(t, `^[a-z][a-z0-9_-]{0,31}$`, got, "must match herdr's agent-name rule")
+	require.LessOrEqual(t, len(got), 32)
+}
