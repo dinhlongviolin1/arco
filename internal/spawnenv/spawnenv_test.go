@@ -16,8 +16,11 @@ func TestIsSecretVar(t *testing.T) {
 		"ARCO_SOCKET", "ARCO_DB_PATH", "CLAVIS_PROFILE",
 		"NPM_TOKEN", "DOCKER_PASSWORD",
 		"SOME_SERVICE_TOKEN", "FOO_SECRET", "DB_PASSWORD", "X_PRIVATE_KEY", "Y_API_KEY",
+		// DB passwords + credential-bearing URLs (opus review)
+		"PGPASSWORD", "MYSQL_PWD", "SOME_PWD", "DATABASE_URL", "REDIS_URL",
+		"MONGODB_URI", "SENTRY_DSN", "MY_DSN", "KUBECONFIG",
 		// case-insensitive
-		"github_token", "anthropic_api_key",
+		"github_token", "anthropic_api_key", "pgpassword",
 	}
 	for _, k := range secret {
 		require.True(t, IsSecretVar(k), "%s should be treated as secret", k)

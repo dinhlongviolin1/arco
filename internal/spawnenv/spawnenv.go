@@ -29,14 +29,26 @@ var secretPrefixes = []string{
 // secretSuffixes: any env var whose name ends with one of these (case-
 // insensitive) is treated as a secret regardless of prefix.
 var secretSuffixes = []string{
-	"_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD",
+	"_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD", "_PWD",
 	"_APIKEY", "_API_KEY", "_ACCESS_KEY", "_SECRET_KEY",
-	"_PRIVATE_KEY", "_CREDENTIALS",
+	"_PRIVATE_KEY", "_CREDENTIALS", "_DSN",
+}
+
+// secretNames: exact names (no prefix/suffix shape) that carry credentials —
+// notably DB passwords and connection URLs that embed user:pass@host (opus
+// review). Matched case-insensitively.
+var secretNames = map[string]bool{
+	"PGPASSWORD": true, "MYSQL_PWD": true,
+	"DATABASE_URL": true, "REDIS_URL": true, "MONGODB_URI": true, "MONGO_URL": true,
+	"AMQP_URL": true, "CELERY_BROKER_URL": true, "SENTRY_DSN": true, "KUBECONFIG": true,
 }
 
 // IsSecretVar reports whether an environment variable NAME should be stripped.
 func IsSecretVar(name string) bool {
 	up := strings.ToUpper(name)
+	if secretNames[up] {
+		return true
+	}
 	for _, p := range secretPrefixes {
 		if strings.HasPrefix(up, p) {
 			return true
