@@ -95,6 +95,11 @@ type EventReq struct {
 	ObservedHead  string `json:"observed_head"`
 	WaitingInput  bool   `json:"waiting_input"`
 	OccurredAt    string `json:"occurred_at"`
+	// Audit tail: a non-empty DeniedCapability marks a worker's ATTEMPT at a
+	// deny-listed action (reported by its PreToolUse hook) → auto-pause + danger
+	// escalation, instead of the normal liveness reconcile.
+	DeniedCapability string `json:"denied_capability"`
+	DeniedDetail     string `json:"denied_detail"`
 }
 type EventResp struct {
 	Deduped bool   `json:"deduped"`
@@ -223,6 +228,18 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 			return e
 		})
 		writeJSON(w, http.StatusAccepted, EventResp{Note: "unknown worker_ref"})
+		return
+	}
+
+	// Audit tail: a deny-listed-capability attempt is not a liveness signal — it
+	// auto-pauses the worker + opens a danger escalation (idempotent on the
+	// delivery id). Ack 200 so the hook never blocks.
+	if req.DeniedCapability != "" {
+		if err := s.eng.AuditDeniedAttempt(r.Context(), workerID, req.DeniedCapability, req.DeniedDetail, req.SourceEventID); err != nil {
+			writeErr(w, errStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, EventResp{Note: "audit: deny-listed attempt"})
 		return
 	}
 
