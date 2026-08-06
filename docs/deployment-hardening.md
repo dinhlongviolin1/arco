@@ -247,15 +247,13 @@ workers). A second whole-system audit (post-#62) fixed four more:
 The rest are **explicitly scoped-out known limitations** — none block the core
 spawn→autonomous-completion loop, but an operator should know them:
 
-- **Human-answer delivery is not wired to the agent (MED, audit round 2).**
-  `AnswerQuestion`/`DecideConfirm` resume the worker in the LEDGER (→ running) and
-  now attribute the event, but the answer TEXT is never delivered to the worker's
-  herdr agent — there is no `VM.Prompt` on the resume path (unlike the brain's
-  `run_again`). So a human-answered worker's agent sits idle and the next sweep can
-  mis-finalize it. Wiring this is the answer-delivery analog of `deliverInitialTask`
-  (route the API answer/confirm through an Engine method that async-delivers the
-  answer to the pane post-commit) — a focused follow-up, deferred with the rest of
-  the human-in-the-loop delivery work.
+- ~~Human-answer delivery is not wired to the agent (MED).~~ **DONE (PR #65).**
+  The API answer/confirm routes now go through `Engine.AnswerQuestion`/
+  `DecideConfirm`, which — when the decision RESUMES the worker (→ running, never a
+  pool worker, MED-4) — deliver the answer text (or an approval signal) to the
+  worker's pane via `PromptReady`, async through the per-worker Exec, best-effort
+  (a delivery failure is an error event, not a decision failure). A rejected
+  confirm blocks the worker and delivers nothing.
 - **A crash between `dispatch_done` and initial-task delivery strands a taskless
   `running` worker (MED, audit round 2).** Spawn commits `running` then delivers
   the first prompt async via Exec; a crash in that window leaves a live, idle,
