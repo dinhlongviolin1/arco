@@ -377,6 +377,76 @@ func TestSweep_DoesNotReapLiveWorkerAgent(t *testing.T) {
 	require.Empty(t, fake.Killed())
 }
 
+// MED-3 auto-kill-on-pause: the sweep reclaims a PAUSED worker's idle agent (pure
+// quota leak — its worktree is preserved, resume is via relaunch) using the same
+// identity-strict reaper, and does NOT liveness-finalize the paused worker.
+func TestSweep_ReapsPausedWorkerAgent(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/pz", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		if err := tx.BindLaunch(id, "/wt/pz", "base", "wP:p1", "term_P"); err != nil {
+			return err
+		}
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerPaused, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+	fake.Agents = []core.AgentObs{{Ref: "wP:p1", Workspace: "arco_" + id, BootID: "term_P", Alive: true}}
+
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.AgentsReaped, "a paused worker's idle agent is reclaimed")
+	require.Contains(t, fake.Killed(), "wP:p1")
+	require.Equal(t, core.WorkerPaused, mustWorker(t, s, id).State, "still paused (worktree preserved), not finalized")
+	require.Equal(t, 0, res.Observed, "a paused worker is not in the liveness loop")
+}
+
+// Regression (opus review): a paused worker WITH a pending escalation keeps its
+// agent — an operator approval re-prompts the SAME pane (deliverDecision
+// reconnect), so reaping it would silently discard the approval. It is NOT
+// reclaimed, and stays liveness-tracked.
+func TestSweep_PausedWithPendingEscalationNotReaped(t *testing.T) {
+	e, s, fake := newEngine(t)
+	id := mkRunning(t, e, s, "/wt/pz3", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		if err := tx.BindLaunch(id, "/wt/pz3", "base", "wD:p1", "term_D"); err != nil {
+			return err
+		}
+		w, _ := tx.GetWorker(id)
+		// audit-deny style: running worker paused WITH a pending danger confirm
+		if err := tx.TransitionWorker(id, core.WorkerPaused, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"}); err != nil {
+			return err
+		}
+		_, err := tx.OpenEscalation(core.Escalation{WorkerID: id, SessionID: w.OwnerSession, Kind: "confirm", Action: "danger?"})
+		return err
+	}))
+	fake.Agents = []core.AgentObs{{Ref: "wD:p1", Workspace: "arco_" + id, BootID: "term_D", Alive: true}}
+
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.AgentsReaped, "a paused worker with a pending escalation keeps its agent")
+	require.Empty(t, fake.Killed(), "an approval will re-prompt this pane — must not close it")
+	require.Equal(t, 1, res.Observed, "still liveness-tracked (its agent should be alive)")
+}
+
+// A paused, agent-less worker must NOT be finalized to lost — its absent agent is
+// expected (auto-killed on pause), not a liveness death (the coupling behind why
+// auto-kill-on-pause and excluding-paused-from-liveness are one change).
+func TestSweep_PausedWorkerNotFinalized(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	id := mkRunning(t, e, s, "/wt/pz2", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		return tx.TransitionWorker(id, core.WorkerPaused, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+	fake.Agents = nil // agent already gone (auto-killed on pause)
+	for i := 0; i < 3; i++ {
+		_, err := e.Sweep(context.Background())
+		require.NoError(t, err)
+	}
+	require.Equal(t, core.WorkerPaused, mustWorker(t, s, id).State, "a paused, agent-less worker stays paused, not lost")
+}
+
 // Regression (opus+qwen review): the "empty-at-birth" poisoning window. A worker
 // whose launch-capture missed (no boot_id) must NOT absorb an observed agent's
 // terminal_id via the liveness path — else a stranger on a recycled pane becomes
