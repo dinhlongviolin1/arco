@@ -152,10 +152,42 @@ func (e *Engine) redriveStaleBrainIntents() int {
 	if err != nil {
 		return 0 // best-effort: a read error just skips this sweep's re-drive
 	}
+	n := 0
 	for _, id := range ids {
-		e.Exec.Submit(id, func() { e.brainClassify(e.bg(), id) })
+		// At most one in-flight re-drive per worker: the brain_intent marker that
+		// takes this worker out of the dangling set is committed async (inside the
+		// submitted brainClassify), so without this guard a later sweep under Exec
+		// backlog would re-submit the same worker → a duplicate classification.
+		if !e.claimRedrive(id) {
+			continue
+		}
+		e.Exec.Submit(id, func() {
+			defer e.releaseRedrive(id)
+			e.brainClassify(e.bg(), id)
+		})
+		n++
 	}
-	return len(ids)
+	return n
+}
+
+// claimRedrive marks workerID as having an in-flight crash-recovery re-drive,
+// returning false if one is already in flight (so the caller skips it).
+func (e *Engine) claimRedrive(workerID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.redriving[workerID] {
+		return false
+	}
+	e.redriving[workerID] = true
+	return true
+}
+
+// releaseRedrive clears the in-flight marker once the re-drive completes (always
+// runs via defer, even on a panic recovered by Exec).
+func (e *Engine) releaseRedrive(workerID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.redriving, workerID)
 }
 
 // reapLeases releases leaked/stale provider-pool leases in one tx (B10-lease).

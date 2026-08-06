@@ -90,6 +90,14 @@ type Engine struct {
 
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
+	// redriving guards against a sweep stacking duplicate crash-recovery re-drives
+	// for one worker: brainClassify's brain_intent marker is committed ASYNC (on
+	// Exec), so between a sweep's Submit and that commit the intent still looks
+	// dangling, and a later sweep (under Exec backlog) would re-submit → two
+	// classifications → a duplicate prompt/child (qwen review). At-most-one
+	// in-flight re-drive per worker closes it; cleared on completion (in-memory —
+	// after a crash the sweep correctly re-drives from the ledger).
+	redriving map[string]bool
 }
 
 // New builds an Engine with default thresholds and an Exec (brain disabled).
@@ -98,7 +106,7 @@ type Engine struct {
 // it from config. MaxDepth's 0→2 default is applied in Delegate.
 func New(store core.Store, vm core.VMClient) *Engine {
 	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3,
-		MaxChildren: 8, misses: map[string]int{}}
+		MaxChildren: 8, misses: map[string]int{}, redriving: map[string]bool{}}
 }
 
 // DispatchResult reports what a dispatch created. State is the worker's state
