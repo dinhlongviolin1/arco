@@ -11,27 +11,35 @@ import (
 )
 
 func newDispatchCmd() *cobra.Command {
-	var session string
+	var session, repo, base string
 	var newSession bool
 	cmd := &cobra.Command{
 		Use:   "dispatch <task>",
 		Short: "dispatch a task: create/reuse a session and spawn a worker",
-		Args:  cobra.ExactArgs(1),
+		Long: "Dispatch a task. With --repo, takes the repo-based SPAWN path (clone-per-worker " +
+			"→ compile permissions → launch an authenticated agent) — the path that works against " +
+			"real herdr. Without --repo, the legacy prompt-path (Fake/prompt-an-existing-pane).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := newClient()
 			if err != nil {
 				return err
 			}
-			res, err := c.Dispatch(context.Background(), api.DispatchReq{Task: args[0], Session: session, New: newSession || session == ""})
+			res, err := c.Dispatch(context.Background(), api.DispatchReq{
+				Task: args[0], Session: session, New: newSession || session == "",
+				Repo: repo, Base: base,
+			})
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "session %s\nworker  %s\n", res.SessionID, res.WorkerID)
+			fmt.Fprintf(cmd.OutOrStdout(), "session %s\nworker  %s\nstate   %s\n", res.SessionID, res.WorkerID, res.State)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&session, "session", "", "attach to an existing session (slug|id)")
 	cmd.Flags().BoolVar(&newSession, "new", false, "force a new session")
+	cmd.Flags().StringVar(&repo, "repo", "", "clone this repo per-worker and take the spawn path (else the prompt path)")
+	cmd.Flags().StringVar(&base, "base", "", "commit-ish to check out (with --repo; default repo tip)")
 	return cmd
 }
 
