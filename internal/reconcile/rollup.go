@@ -30,13 +30,27 @@ func (e *Engine) maybeRollup(parentWorkerID string) {
 	e.Exec.Submit(pid, func() { e.rollup(e.bg(), pid) })
 }
 
+// rollupEligible gates the brain from a rollup exactly as ApplyEvent
+// (engine.go) and brainClassify (brain_apply.go) gate it — rollup is the THIRD
+// brain-entry path, and the per-PR reviews of those two guards missed it
+// (capstone audit). A rollup must NOT fire on:
+//   - a terminal worker (nothing to drive);
+//   - a BLOCKED worker (parked, e.g. by a billing wall) — else question/confirm
+//     would un-park it and dispatch would spawn from a parked parent;
+//   - a POOL-OWNED worker (handoff-released sentinel) — else it runs a paid brain
+//     loop on the protected pool, prompts/pulls-out an unowned worker, and opens
+//     escalations attributed to the pool session.
+func rollupEligible(w core.Worker) bool {
+	return !w.State.Terminal() && w.State != core.WorkerBlocked && w.OwnerSession != core.PoolSessionID
+}
+
 // rollup runs one coalesced rollup brain call for a parent worker. The coalesce
 // check + rollup_intent record happen in one write tx under the single-writer
 // lock, so concurrent child completions in a session yield at most one rollup
 // per interval (race-free, mirrors the brain-rate gate).
 func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
-	// Cheap pre-check to avoid a tx for an obviously-dead parent.
-	if w, err := e.Store.Reader().GetWorker(parentWorkerID); err != nil || w.State.Terminal() {
+	// Cheap pre-check to avoid a tx for a parent the brain must not touch.
+	if w, err := e.Store.Reader().GetWorker(parentWorkerID); err != nil || !rollupEligible(w) {
 		return
 	}
 
@@ -48,7 +62,7 @@ func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
 		// stale — attribute the rollup to the CURRENT owner and re-check terminal
 		// (mirrors brainClassify; opus review).
 		cur, err := tx.GetWorker(parentWorkerID)
-		if err != nil || cur.State.Terminal() {
+		if err != nil || !rollupEligible(cur) {
 			proceed = false
 			return nil
 		}

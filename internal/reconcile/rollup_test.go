@@ -165,3 +165,47 @@ func TestRollup_SkippedWhenParentTerminal(t *testing.T) {
 	require.Equal(t, 0, res.RollupsTriggered, "a terminal parent is not rolled up")
 	require.Equal(t, int32(0), calls.Load())
 }
+
+// Capstone-audit regression: rollup is the third brain-entry path, so it must
+// honor the same inertness guards as ApplyEvent/brainClassify — a POOL-OWNED or
+// BLOCKED parent (with a completed child) must NOT be rolled up, or the brain
+// would run a paid loop on / prompt / un-park the protected or parked worker.
+func TestRollup_SkippedWhenParentPoolOwnedOrBlocked(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		park func(t *testing.T, s *ledger.Store, parent string)
+	}{
+		{"pool-owned", func(t *testing.T, s *ledger.Store, parent string) {
+			require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+				return tx.ReleaseWorker(parent, "brain") // handoff → owner=pool, stays running
+			}))
+		}},
+		{"blocked", func(t *testing.T, s *ledger.Store, parent string) {
+			require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+				w, _ := tx.GetWorker(parent)
+				return tx.TransitionWorker(parent, core.WorkerBlocked, w.Rev, core.Event{Kind: "state_change", WorkerID: parent, SessionID: w.OwnerSession, Payload: "{}"})
+			}))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			e, s, _ := newEngine(t)
+			e.RollupInterval = time.Hour
+			e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+				Runner: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+					calls.Add(1)
+					return []byte(`{"kind":"run_again"}`), nil
+				}}
+			parent := dispatchRunning(t, e)
+			child, _ := e.Delegate(context.Background(), parent, "c", "")
+			completeChild(t, s, child.WorkerID)
+			tc.park(t, s, parent)
+
+			res, err := e.Sweep(context.Background())
+			require.NoError(t, err)
+			e.Exec.Wait()
+			require.Equal(t, 0, res.RollupsTriggered, "an ineligible parent is not enqueued")
+			require.Equal(t, int32(0), calls.Load(), "the brain is never invoked on a pool-owned/blocked parent")
+		})
+	}
+}

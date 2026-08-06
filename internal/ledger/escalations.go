@@ -116,6 +116,17 @@ func (t *txn) OpenEscalation(esc core.Escalation) (string, error) {
 	if esc.OnceOrAlways == "" {
 		esc.OnceOrAlways = "once"
 	}
+	// Write-time redaction at rest, same chokepoint discipline as events/workers/
+	// sessions (B4): these fields carry worker-hook detail and raw brain output, so
+	// a secret in a denied command line or a brain rationale would otherwise persist
+	// verbatim in the escalations table (capstone audit).
+	if t.scrub != nil {
+		esc.Action, _ = t.scrub.Scrub(esc.Action)
+		esc.Detail, _ = t.scrub.Scrub(esc.Detail)
+		esc.DraftAnswer, _ = t.scrub.Scrub(esc.DraftAnswer)
+		esc.BrainRationale, _ = t.scrub.Scrub(esc.BrainRationale)
+		esc.Capability, _ = t.scrub.Scrub(esc.Capability)
+	}
 	if _, err := t.q.ExecContext(context.Background(),
 		`INSERT INTO escalations (id,worker_id,session_id,kind,question_class,action_class,tier,capability,
 		 action_fingerprint,action,detail,draft_answer,draft_confidence,brain_rationale,answered_by,status,
