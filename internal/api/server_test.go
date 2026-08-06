@@ -72,6 +72,29 @@ func TestAPI_DispatchThenWorkers(t *testing.T) {
 	require.Equal(t, "running", ws.Workers[0].State)
 }
 
+func TestAPI_IntakeDeniedCapabilityPausesWorker(t *testing.T) {
+	ts := newTestAPI(t)
+	var d DispatchResp
+	require.Equal(t, http.StatusOK, post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d))
+	require.Equal(t, "running", d.State)
+
+	var r EventResp
+	code := post(t, ts, "/v1/events", EventReq{
+		WorkerRef: d.WorkerID, SourceEventID: "a1",
+		DeniedCapability: "git.push.main", DeniedDetail: "tried to push main",
+	}, &r)
+	require.Equal(t, http.StatusOK, code)
+	require.Contains(t, r.Note, "deny-listed")
+
+	resp, err := http.Get(ts.URL + "/v1/workers")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	var ws WorkersResp
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&ws))
+	require.Len(t, ws.Workers, 1)
+	require.Equal(t, "paused", ws.Workers[0].State, "deny-listed attempt auto-pauses via intake")
+}
+
 func TestAPI_IntakeUnknownWorkerIsAccepted(t *testing.T) {
 	ts := newTestAPI(t)
 	var r EventResp
