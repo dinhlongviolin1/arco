@@ -36,7 +36,11 @@ func (c *ClavisCreds) EnvFor(ctx context.Context, profile string) ([]string, err
 	}
 	out, err := runOutput(ctx, c.Bin, "env", profile, "--json", "--reveal-key")
 	if err != nil {
-		return nil, fmt.Errorf("clavis env %s: %w", profile, err)
+		// Deliberately DROP clavis's raw stderr from the returned error: this runs
+		// with --reveal-key, and the error propagates into a durable dispatch_done
+		// event payload — a token echoed on stderr could slip past the write-time
+		// redactor (which only matches known shapes). Keep just the profile name.
+		return nil, fmt.Errorf("clavis env %s failed (exit error; see daemon output)", profile)
 	}
 	var m map[string]string
 	if err := json.Unmarshal(out, &m); err != nil {
