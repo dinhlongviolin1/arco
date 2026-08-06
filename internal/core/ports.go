@@ -29,6 +29,9 @@ var (
 	// ErrFanInExceeded is returned when a session already holds the maximum number
 	// of active workers (max_children_per_session fan-in cap).
 	ErrFanInExceeded = errors.New("core: session fan-in limit exceeded")
+	// ErrVMAtCapacity is returned when a VM already runs the maximum number of
+	// active workers (per-VM concurrency admission).
+	ErrVMAtCapacity = errors.New("core: VM at worker capacity")
 )
 
 // LeaseRejection carries WHY a lease was denied (disabled|cooldown|at_capacity|
@@ -92,6 +95,9 @@ type Reader interface {
 	// CountActiveWorkers returns how many NON-terminal workers a session owns
 	// (the fan-in cap denominator for delegation admission).
 	CountActiveWorkers(sessionID string) (int, error)
+	// CountActiveWorkersOnVM returns how many NON-terminal workers are assigned to
+	// a VM (the per-VM concurrency-admission denominator).
+	CountActiveWorkersOnVM(vm string) (int, error)
 }
 
 // Tx is a serialized single-writer transaction. It is arco-owned; the storage

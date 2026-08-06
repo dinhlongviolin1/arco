@@ -60,6 +60,12 @@ type Engine struct {
 	// MaxDepth is the maximum delegation depth (depth-2 supersession). 0 → 2.
 	MaxDepth int
 
+	// DefaultVM is the VM a newly-dispatched worker is assigned to ("" = unassigned).
+	// MaxWorkersPerVM caps concurrent (non-terminal) workers on a VM (0 = unlimited);
+	// the cap is enforced only when a worker has a non-empty VM. Set from config.
+	DefaultVM       string
+	MaxWorkersPerVM int
+
 	// RollupInterval coalesces supersession rollups: at most one rollup brain call
 	// per session per interval when its children complete (0 = rollup disabled).
 	RollupInterval time.Duration
@@ -115,11 +121,16 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 			}
 			sessionID = s.ID
 		}
+		// Per-VM concurrency admission (race-free in this create tx under the
+		// single-writer lock) before the worker row exists.
+		if err := e.admitVM(tx, e.DefaultVM); err != nil {
+			return err
+		}
 		// Worker row first so the intent event's FK (events.worker_id) is satisfied;
 		// both writes are in this one atomic tx, so crash-safety is unaffected.
 		if err := tx.CreateWorker(core.Worker{
 			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting,
-			Workspace: workspace, Task: task, RunReason: "dispatch",
+			VM: e.DefaultVM, Workspace: workspace, Task: task, RunReason: "dispatch",
 		}); err != nil {
 			return err
 		}
@@ -139,6 +150,23 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 		return DispatchResult{}, err
 	}
 	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
+}
+
+// admitVM enforces the per-VM concurrency cap inside a create tx (race-free
+// under the single-writer lock). No-op when the worker has no VM assigned or the
+// cap is unset — so it's inert until a VM-assigning deployment configures both.
+func (e *Engine) admitVM(tx core.Tx, vm string) error {
+	if vm == "" || e.MaxWorkersPerVM <= 0 {
+		return nil
+	}
+	n, err := tx.CountActiveWorkersOnVM(vm)
+	if err != nil {
+		return err
+	}
+	if n >= e.MaxWorkersPerVM {
+		return core.ErrVMAtCapacity
+	}
+	return nil
 }
 
 // launchAndFinalize performs the external launch (phase 2) then the durable

@@ -55,6 +55,16 @@ func (r *reader) CountActiveWorkers(sessionID string) (int, error) {
 	return n, err
 }
 
+// CountActiveWorkersOnVM returns the number of NON-terminal workers assigned to a
+// VM (per-VM concurrency-admission denominator). Same terminal set as above.
+func (r *reader) CountActiveWorkersOnVM(vm string) (int, error) {
+	var n int
+	err := r.q.QueryRowContext(context.Background(),
+		`SELECT COUNT(1) FROM workers WHERE vm=?
+		   AND state NOT IN ('completed_verified','failed','killed','lost')`, vm).Scan(&n)
+	return n, err
+}
+
 // AcquireLease atomically admits an UNBOUND lease against poolID under the
 // single-writer lock: it reads the active + start-window counts and applies the
 // pure admission decision, so the count→insert is race-free (no MaxActive TOCTOU).

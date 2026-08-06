@@ -75,6 +75,38 @@ func TestCountActiveWorkers_MirrorsTerminal(t *testing.T) {
 	require.Equal(t, activeWant, n, "CountActiveWorkers exclusion list must mirror WorkerState.Terminal()")
 }
 
+func TestCountActiveWorkersOnVM(t *testing.T) {
+	s := newTestStore(t)
+	sid := mkSession(t, s)
+	// two workers on vm0 (one later terminal), one on vm1
+	mk := func(vm string, terminal bool) {
+		id := ulid.Make().String()
+		require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+			if err := tx.CreateWorker(core.Worker{ID: id, OwnerSession: sid, State: core.WorkerStarting, VM: vm, Workspace: "arco_" + id, Task: "t", RunReason: "x"}); err != nil {
+				return err
+			}
+			if terminal {
+				w, _ := tx.GetWorker(id)
+				return tx.TransitionWorker(id, core.WorkerFailed, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: sid, Payload: "{}"})
+			}
+			return nil
+		}))
+	}
+	mk("vm0", false)
+	mk("vm0", true) // terminal → excluded
+	mk("vm1", false)
+
+	n0, err := s.Reader().CountActiveWorkersOnVM("vm0")
+	require.NoError(t, err)
+	require.Equal(t, 1, n0, "only the non-terminal vm0 worker counts")
+	n1, err := s.Reader().CountActiveWorkersOnVM("vm1")
+	require.NoError(t, err)
+	require.Equal(t, 1, n1)
+	nx, err := s.Reader().CountActiveWorkersOnVM("nope")
+	require.NoError(t, err)
+	require.Equal(t, 0, nx)
+}
+
 func TestOwnership_ReleaseToPool(t *testing.T) {
 	s := newTestStore(t)
 	sid := mkSession(t, s)
