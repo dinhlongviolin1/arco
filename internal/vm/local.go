@@ -136,6 +136,22 @@ func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 	return newCmd(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
 }
 
+// Launch would start a new agent via the confirmed herdr contract:
+//
+//	herdr workspace create → herdr tab create → herdr agent start <name>
+//	  --kind <spec.Kind> --pane <pane_id> -- <spec.Args...>   (env = spec.Env)
+//
+// The `agent start` signature is confirmed (herdr 0.7.5, Task-S spike), but the
+// workspace/tab/pane PROVISIONING chain — creating a pane and capturing its
+// pane_id from the create responses — is NOT verified against a live server
+// (verifying it mutates a running herdr + spawns a real agent). Rather than ship
+// unverified JSON-parsing as if it worked, this fails explicitly. The Fake
+// VMClient is the default; do not set use_local_vm until this is wired + live-
+// verified (see docs/herdr-contract.md open item #2).
+func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (string, error) {
+	return "", fmt.Errorf("vm: LocalVMClient.Launch not wired — the herdr workspace/tab/pane provisioning chain is unverified against a live server (Task-S open item; use the Fake VMClient, see docs/herdr-contract.md)")
+}
+
 // Diff returns the base→head numstat summary + a size-capped patch.
 func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (core.Diff, error) {
 	d := core.Diff{Base: base, Head: head}

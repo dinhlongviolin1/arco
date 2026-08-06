@@ -179,9 +179,20 @@ func (r *reader) Capability(name string) (core.CatalogRow, bool, error) {
 }
 
 func (r *reader) DefaultTree() ([]core.CatalogRow, error) {
+	return r.catalogWhere("WHERE default_allowed<>0")
+}
+
+// Catalog returns the FULL capability_catalog (all rows, incl. high-blast) — the
+// input permcompile.Compile requires (NOT DefaultTree, which omits the high-blast
+// rows the deny layer needs to see).
+func (r *reader) Catalog() ([]core.CatalogRow, error) {
+	return r.catalogWhere("")
+}
+
+func (r *reader) catalogWhere(where string) ([]core.CatalogRow, error) {
 	rows, err := r.q.QueryContext(context.Background(),
 		`SELECT capability,action_class,tier,default_allowed,high_blast,compiled_worker,description
-		 FROM capability_catalog WHERE default_allowed<>0 ORDER BY capability`)
+		 FROM capability_catalog `+where+` ORDER BY capability`)
 	if err != nil {
 		return nil, err
 	}

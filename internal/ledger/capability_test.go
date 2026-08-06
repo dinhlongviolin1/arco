@@ -155,3 +155,27 @@ func TestGrantedCapabilities_EffectiveSet(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, g2["net.fetch"], "revoked grant removed from the set")
 }
+
+// Catalog returns ALL rows (incl. high-blast), unlike DefaultTree which is the
+// default-allowed subset — permcompile needs the full set.
+func TestCatalog_FullVsDefaultTree(t *testing.T) {
+	s := newTestStore(t)
+	full, err := s.Reader().Catalog()
+	require.NoError(t, err)
+	def, err := s.Reader().DefaultTree()
+	require.NoError(t, err)
+	require.Greater(t, len(full), len(def), "full catalog is a superset of DefaultTree")
+	hasHighBlast := false
+	inDefault := map[string]bool{}
+	for _, c := range def {
+		require.True(t, c.DefaultAllowed, "DefaultTree only default-allowed rows")
+		inDefault[c.Capability] = true
+	}
+	for _, c := range full {
+		if c.HighBlast {
+			hasHighBlast = true
+			require.False(t, inDefault[c.Capability], "high-blast never in DefaultTree")
+		}
+	}
+	require.True(t, hasHighBlast, "full catalog includes high-blast rows (e.g. git.push.main)")
+}
