@@ -11,7 +11,7 @@ var legalWorker = map[WorkerState]map[WorkerState]bool{
 	WorkerWaitingConfirmation: set(WorkerRunning, WorkerBlocked, WorkerPaused, WorkerFailed, WorkerKilled, WorkerLost),
 	WorkerBlocked:             set(WorkerRunning, WorkerWaitingForUser, WorkerWaitingConfirmation, WorkerPaused, WorkerFailed, WorkerKilled, WorkerLost),
 	WorkerCompletedCandidate:  set(WorkerCompletedVerified, WorkerRunning, WorkerFailed, WorkerKilled),
-	WorkerPaused:              set(WorkerRunning, WorkerKilled, WorkerLost),
+	WorkerPaused:              set(WorkerRunning, WorkerBlocked, WorkerKilled, WorkerLost),
 	WorkerLost:                set(WorkerRunning, WorkerFailed, WorkerKilled),
 	WorkerCompletedVerified:   {},
 	WorkerFailed:              {},

@@ -112,3 +112,20 @@ func TestAudit_ConfirmCannotPromoteStandingGrant(t *testing.T) {
 	ok, _ := s.Reader().Allowed(mustWorker(t, s, wid).OwnerSession, "git.push.main")
 	require.False(t, ok, "no standing grant promoted")
 }
+
+// F5: a REJECTED danger-confirm on an audit-paused worker now transitions it to
+// blocked (was silently stuck paused because paused→blocked was illegal).
+func TestAudit_RejectFromPausedGoesToBlocked(t *testing.T) {
+	e, s, _ := newEngine(t)
+	wid := dispatchRunning(t, e)
+	require.NoError(t, e.AuditDeniedAttempt(context.Background(), wid, "git.push.main", "x", "evt-r"))
+	require.Equal(t, core.WorkerPaused, mustWorker(t, s, wid).State)
+	escs, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: wid})
+	require.Len(t, escs, 1)
+
+	// reject the danger confirm → worker should end blocked (parked), not paused
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.DecideConfirm(escs[0].ID, false, core.ScopeOnce, core.Event{Kind: "confirm_dec", WorkerID: wid, SessionID: mustWorker(t, s, wid).OwnerSession, Payload: "{}"})
+	}))
+	require.Equal(t, core.WorkerBlocked, mustWorker(t, s, wid).State, "rejected danger action → blocked, not stuck paused")
+}
