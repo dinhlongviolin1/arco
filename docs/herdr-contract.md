@@ -74,7 +74,15 @@ exist.)
    a live server (needs spawning a real agent); (b) whether
    `workspace create --env` REPLACES or AUGMENTS the pane's shell env — P1's
    scrubbed-spawn-env fully holds only if it replaces (else herdr's own env may
-   leak to the worker). A provider lease at spawn is still TODO (no pool
-   selection policy yet).
+   leak to the worker); (c) **pane-readiness race** — `agent start` requires the
+   pane at a shell prompt, but Launch fires `pane list`+`agent start` right after
+   `workspace create` returns; if create returns before the pane's shell is
+   ready, `agent start` may land early — a readiness guard (`agent wait` / retry,
+   or confirming create blocks until prompt-ready) is needed. Also: the
+   launch-ERROR liveness fallback in `Engine.Spawn` correlates by arco's
+   workspace, but `LocalVMClient.ListAgents` reports herdr's `workspace_id`, so it
+   won't match for the real client — a half-spawned agent whose ref-capture
+   errored would be false-`Failed` (gated behind `use_local_vm`; fix when lifting
+   the gate). A provider lease at spawn is still TODO (no pool selection policy).
 3. **`send-keys` key token.** Confirm `C-c` (Ctrl-C) is accepted for the
    best-effort `Kill`, or use the documented canonical key names.

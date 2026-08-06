@@ -148,10 +148,10 @@ func TestLocal_Launch(t *testing.T) {
 		"'pane list') printf '%s' '{\"result\":{\"panes\":[{\"pane_id\":\"wZ:p1\",\"workspace_id\":\"wZ\"}]}}' ; exit 0 ;;\n" +
 		"'agent start') echo \"$@\" >> " + startLog + " ; exit 0 ;;\n" +
 		"esac\nexit 0\n"
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "herdr"), []byte(script), 0o755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	herdrPath := filepath.Join(bin, "herdr")
+	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
 
-	l := NewLocal("herdr")
+	l := NewLocal(herdrPath) // absolute path — never the real ~/.local/bin/herdr
 	ref, err := l.Launch(context.Background(), core.LaunchSpec{
 		Name: "arco_test", Kind: "claude", Workdir: "/wt", Args: []string{"--settings", "/cfg"},
 	})
@@ -176,9 +176,9 @@ func TestLocal_LaunchErrors(t *testing.T) {
 		"'workspace list') printf '%s' '{\"result\":{\"workspaces\":[{\"workspace_id\":\"wZ\",\"label\":\"arco_test\"}]}}' ; exit 0 ;;\n" +
 		"'pane list') printf '%s' '{\"result\":{\"panes\":[]}}' ; exit 0 ;;\n" +
 		"esac\nexit 0\n"
-	require.NoError(t, os.WriteFile(filepath.Join(bin, "herdr"), []byte(script), 0o755))
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, err := NewLocal("herdr").Launch(context.Background(), core.LaunchSpec{Name: "arco_test", Kind: "claude"})
+	herdrPath := filepath.Join(bin, "herdr")
+	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
+	_, err := NewLocal(herdrPath).Launch(context.Background(), core.LaunchSpec{Name: "arco_test", Kind: "claude"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no pane in workspace")
 }

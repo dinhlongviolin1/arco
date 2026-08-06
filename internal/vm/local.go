@@ -177,7 +177,10 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	if err != nil {
 		return "", err
 	}
-	start := append([]string{"agent", "start", spec.Name, "--kind", kind, "--pane", paneID, "--"}, spec.Args...)
+	start := []string{"agent", "start", spec.Name, "--kind", kind, "--pane", paneID}
+	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
+		start = append(append(start, "--"), spec.Args...)
+	}
 	if out, err := runOutput(ctx, l.Herdr, start...); err != nil {
 		return "", fmt.Errorf("herdr agent start: %w: %s", err, out)
 	}
