@@ -56,6 +56,8 @@ type Config struct {
 	EscalationTimeout     time.Duration `toml:"escalation_timeout"`
 	AutoAnswerBudgetN     int           `toml:"auto_answer_budget_n"`
 	MaxChildrenPerSession int           `toml:"max_children_per_session"`
+	DefaultVM             string        `toml:"default_vm"`         // VM new workers are assigned to ("" = unassigned)
+	MaxWorkersPerVM       int           `toml:"max_workers_per_vm"` // per-VM concurrency cap (0 = unlimited)
 	RollupInterval        time.Duration `toml:"rollup_interval"`
 	PerSessionBrainRate   int           `toml:"per_session_brain_rate"`
 	PoolTTL               time.Duration `toml:"pool_ttl"`

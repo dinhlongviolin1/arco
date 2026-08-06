@@ -54,10 +54,13 @@ func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task string) (Dis
 				return core.ErrFanInExceeded
 			}
 		}
+		if err := e.admitVM(tx, e.DefaultVM); err != nil { // per-VM concurrency cap
+			return err
+		}
 		// Child row first so the intent event's worker_id FK is satisfied.
 		if err := tx.CreateWorker(core.Worker{
 			ID: childID, OwnerSession: sessionID, State: core.WorkerStarting,
-			Workspace: workspace, Task: task, RunReason: "delegate",
+			VM: e.DefaultVM, Workspace: workspace, Task: task, RunReason: "delegate",
 			ParentWorkerID: parentWorkerID, DelegationDepth: childDepth,
 		}); err != nil {
 			return err

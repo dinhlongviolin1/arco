@@ -87,6 +87,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.BrainRate = cfg.PerSessionBrainRate
 	eng.MaxChildren = cfg.MaxChildrenPerSession
 	eng.RollupInterval = cfg.RollupInterval
+	eng.DefaultVM = cfg.DefaultVM
+	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
 	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
