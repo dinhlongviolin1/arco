@@ -60,6 +60,10 @@ type Engine struct {
 	// MaxDepth is the maximum delegation depth (depth-2 supersession). 0 → 2.
 	MaxDepth int
 
+	// RollupInterval coalesces supersession rollups: at most one rollup brain call
+	// per session per interval when its children complete (0 = rollup disabled).
+	RollupInterval time.Duration
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }

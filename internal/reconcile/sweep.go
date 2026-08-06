@@ -10,10 +10,11 @@ import (
 
 // SweepResult summarizes one sweep pass (handy for logging/tests).
 type SweepResult struct {
-	Observed     int
-	Transitions  int
-	LeasesReaped int // leaked/stale provider-pool leases released (B10-lease)
-	PooledPaused int // workers paused after sitting unclaimed past the pool TTL
+	Observed         int
+	Transitions      int
+	LeasesReaped     int // leaked/stale provider-pool leases released (B10-lease)
+	PooledPaused     int // workers paused after sitting unclaimed past the pool TTL
+	RollupsTriggered int // parents with completed children enqueued for a coalesced rollup
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -39,6 +40,13 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// Pause workers that have sat unclaimed in the pool past the TTL.
 	if e.PoolTTL > 0 {
 		res.PooledPaused, _ = e.reapPooled(ctx)
+	}
+	// Supersession rollup: re-drive any ALIVE parent whose children have
+	// completed. maybeRollup coalesces to ≤1 rollup brain call per session per
+	// RollupInterval, so triggering opportunistically every sweep (regardless of
+	// which path made a child terminal) is safe.
+	if e.RollupInterval > 0 && e.Brain.Enabled {
+		res.RollupsTriggered = e.triggerRollups(all)
 	}
 	var live []core.Worker
 	worktrees := map[string]bool{}
@@ -122,6 +130,30 @@ func (e *Engine) reapLeases(ctx context.Context) (int, error) {
 		return err
 	})
 	return n, err
+}
+
+// triggerRollups enqueues a coalesced rollup for each ALIVE parent worker that
+// has at least one terminal child. Returns how many parents were enqueued (the
+// rollup itself coalesces to ≤1 brain call per session per interval).
+func (e *Engine) triggerRollups(all []core.Worker) int {
+	terminalParents := map[string]bool{}
+	alive := map[string]bool{}
+	for _, w := range all {
+		if !w.State.Terminal() {
+			alive[w.ID] = true
+		}
+		if w.ParentWorkerID != "" && w.State.Terminal() {
+			terminalParents[w.ParentWorkerID] = true
+		}
+	}
+	n := 0
+	for pid := range terminalParents {
+		if alive[pid] {
+			e.maybeRollup(pid)
+			n++
+		}
+	}
+	return n
 }
 
 // reapPooled pauses workers that have sat unclaimed in the pool past PoolTTL.
