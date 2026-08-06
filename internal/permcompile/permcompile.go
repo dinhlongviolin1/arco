@@ -41,6 +41,19 @@ var toolPatterns = map[string][]string{
 	"net.fetch":         {"WebFetch", "WebSearch"},
 	"git.pr.merge":      {"Bash(gh pr merge:*)"},
 	"git.push.shared":   {"Bash(git push:* --force:*)"},
+
+	// High-blast caps are compiled_worker=0 (never GRANTED to a worker), but a
+	// worker with Bash could still invoke the raw dangerous SHAPE directly — so
+	// the deny layer (esp. managed-settings, which survives
+	// --dangerously-skip-permissions) must list those shapes. Best-effort (string
+	// matching is defeatable; the hook + arco's Allowed() are the real gates), and
+	// fleet.*/external.spend are arco-orchestration ops with no worker tool shape,
+	// so they intentionally have no patterns.
+	"git.push.main":   {"Bash(git push:* origin main:*)", "Bash(git push:* origin master:*)", "Bash(git push:* main:*)", "Bash(git push:* master:*)"},
+	"external.deploy": {"Bash(kubectl:*)", "Bash(helm:*)", "Bash(terraform apply:*)", "Bash(terraform destroy:*)", "Bash(aws:*)", "Bash(gcloud:*)", "Bash(flyctl:*)", "Bash(vercel:*)"},
+	"external.send":   {"Bash(mail:*)", "Bash(sendmail:*)", "Bash(msmtp:*)"},
+	"secrets.read":    {"Read(**/*.pem)", "Read(**/id_rsa*)", "Read(**/*.key)", "Read(**/.aws/**)", "Read(**/credentials)"},
+	"fs.destructive":  {"Bash(rm -rf:*)", "Bash(rm -r:*)", "Bash(dd:*)", "Bash(mkfs:*)", "Bash(shred:*)"},
 }
 
 // staticDeny is always denied regardless of the tree — the highest-blast tool
@@ -51,10 +64,66 @@ var staticDeny = []string{
 	"Read(./.env)", "Read(~/.ssh/**)", "Read(~/.config/**)",
 }
 
-// Compile writes settings.json + a PreToolUse hook into configDir (which MUST be
-// outside the worktree). `granted` is the worker's effective capability set;
-// `cat` MUST be the FULL capability_catalog (NOT DefaultTree(), which omits the
-// high-blast rows) so the high-blast deny/exclusion sees them. Placement rules:
+// managedDenyList is the always-deny set: the static dangerous shapes plus every
+// high-blast capability's tool patterns. This is the NON-ADVISORY deny layer —
+// it belongs in managed settings (highest precedence) so a repo
+// settings.local.json or --dangerously-skip-permissions cannot override it.
+func managedDenyList(cat []core.CatalogRow) []string {
+	deny := map[string]bool{}
+	for _, s := range staticDeny {
+		deny[s] = true
+	}
+	for _, row := range cat {
+		if row.HighBlast || row.Tier == core.TierHighBlast {
+			for _, p := range toolPatterns[row.Capability] {
+				deny[p] = true
+			}
+		}
+	}
+	return keys(deny)
+}
+
+// ManagedSettings returns a DENY-ONLY managed-settings.json (security precond
+// P3): the highest-precedence Claude Code policy a worker cannot override. It
+// carries ONLY denies (never allow/ask) so it can only ever REMOVE authority —
+// even if a worker ships a permissive repo settings.local.json or is launched
+// with --dangerously-skip-permissions, these denies still bind. The operator
+// deploys it to Claude's managed-settings path (root-owned); arco produces the
+// content (arco is non-root, so it can't write that path itself).
+func ManagedSettings(cat []core.CatalogRow) ([]byte, error) {
+	return json.MarshalIndent(map[string]any{
+		"permissions": map[string]any{"deny": managedDenyList(cat)},
+	}, "", "  ")
+}
+
+// LaunchArgs returns the pinned worker-launch flags (security precond P6: pinned
+// spawn contract). --settings points at the daemon-owned config OUTSIDE the
+// worktree; the permission mode is pinned to "default" (NOT bypassPermissions)
+// so the deny-rules + PreToolUse hook survive and a headless -p run aborts on an
+// unlisted `ask` tool instead of silently proceeding. SPIKE NOTE: the exact flag
+// tokens are confirmed against a real Claude Code version in the permcompile
+// spike; the STRUCTURAL contract (settings-outside-worktree, high-blast
+// disallowed, mode pinned non-bypass) is version-independent.
+func LaunchArgs(configDir string, granted map[string]bool, cat []core.CatalogRow) []string {
+	allowed, disallowed := Flags(granted, cat)
+	args := []string{
+		"--settings", filepath.Join(configDir, "settings.json"),
+		"--permission-mode", "default",
+	}
+	if len(allowed) > 0 {
+		args = append(args, "--allowedTools", strings.Join(allowed, ","))
+	}
+	if len(disallowed) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(disallowed, ","))
+	}
+	return args
+}
+
+// Compile writes settings.json + managed-settings.json + a PreToolUse hook into
+// configDir (which MUST be outside the worktree). `granted` is the worker's
+// effective capability set; `cat` MUST be the FULL capability_catalog (NOT
+// DefaultTree(), which omits the high-blast rows) so the high-blast deny sees
+// them. Placement rules:
 //   - high_blast → never in allow (belt: also denied); routine/low granted →
 //     allow; medium granted → ask; ungranted non-high-blast → neither (implicit
 //     deny by Claude's default-deny).
@@ -106,6 +175,15 @@ func Compile(configDir, worktree string, granted map[string]bool, cat []core.Cat
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(configDir, "settings.json"), b, 0o600); err != nil {
+		return err
+	}
+	// Deny-only managed-settings artifact (P3): the operator deploys it to Claude's
+	// root-owned managed path so its denies can't be overridden by the worker.
+	managed, err := ManagedSettings(cat)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "managed-settings.json"), managed, 0o600); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(configDir, "hooks", "pretooluse.sh"), []byte(hookScript(worktree)), 0o700)

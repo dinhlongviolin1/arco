@@ -165,6 +165,89 @@ func TestCompile_HookBlocksRefspecPush(t *testing.T) {
 	require.Contains(t, run(`{"tool":"Bash","command":"git push origin +master"}`), `"deny"`)
 }
 
+// ManagedSettings is the deny-only, non-overridable layer (P3): it must contain
+// ONLY denies (never allow/ask) and cover high-blast + static dangerous shapes.
+func TestManagedSettings_DenyOnly(t *testing.T) {
+	// full high-blast danger set (as the daemon passes the whole catalog)
+	cat := []core.CatalogRow{
+		{Capability: "external.deploy", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, HighBlast: true},
+		{Capability: "secrets.read", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, HighBlast: true},
+		{Capability: "fs.destructive", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, HighBlast: true},
+	}
+	b, err := ManagedSettings(cat)
+	require.NoError(t, err)
+	var m struct {
+		Permissions struct {
+			Allow, Ask, Deny []string
+		} `json:"permissions"`
+	}
+	require.NoError(t, json.Unmarshal(b, &m))
+	require.Empty(t, m.Permissions.Allow, "managed layer must never grant")
+	require.Empty(t, m.Permissions.Ask, "managed layer must never ask")
+	require.NotEmpty(t, m.Permissions.Deny)
+	// high-blast dangerous SHAPES present (these toolPatterns are now non-empty —
+	// the earlier assertions were vacuous because the map had no entries: opus F2)
+	require.NotEmpty(t, toolPatterns["external.deploy"])
+	require.Subset(t, m.Permissions.Deny, toolPatterns["external.deploy"])
+	require.Subset(t, m.Permissions.Deny, toolPatterns["secrets.read"])
+	require.Subset(t, m.Permissions.Deny, toolPatterns["fs.destructive"])
+	require.Contains(t, m.Permissions.Deny, "Bash(kubectl:*)")
+	require.Contains(t, m.Permissions.Deny, "Bash(rm -rf:*)")
+}
+
+// Guard (opus F1/F2): the worker-invokable high-blast danger caps must each have
+// a non-empty deny mapping, so a new one can't be added without shapes and
+// silently leave the managed layer vacuous for it. (fleet.*/external.spend are
+// arco-orchestration ops with no worker tool shape — intentionally excluded.)
+func TestToolPatterns_HighBlastDangerCovered(t *testing.T) {
+	for _, cap := range []string{"git.push.main", "external.deploy", "external.send", "secrets.read", "fs.destructive"} {
+		require.NotEmpty(t, toolPatterns[cap], "high-blast danger cap %s must have deny shapes", cap)
+	}
+}
+
+// Guard (opus F3): no tool pattern may contain a comma — LaunchArgs comma-joins
+// the allow/disallow lists, so a comma would split one pattern into two flags.
+func TestToolPatterns_NoCommaInPatterns(t *testing.T) {
+	for cap, pats := range toolPatterns {
+		for _, p := range pats {
+			require.NotContains(t, p, ",", "pattern for %s contains a comma", cap)
+		}
+	}
+	for _, p := range staticDeny {
+		require.NotContains(t, p, ",")
+	}
+}
+
+// Compile emits the managed-settings.json artifact alongside settings.json.
+func TestCompile_WritesManagedSettings(t *testing.T) {
+	cfg, wt := t.TempDir(), t.TempDir()
+	require.NoError(t, Compile(cfg, wt, map[string]bool{"git.commit": true}, catalog()))
+	b, err := os.ReadFile(filepath.Join(cfg, "managed-settings.json"))
+	require.NoError(t, err)
+	require.Contains(t, string(b), "deny")
+	require.NotContains(t, string(b), `"allow"`, "managed artifact is deny-only")
+}
+
+// LaunchArgs pins the spawn contract (P6): settings outside the worktree, a
+// non-bypass permission mode, high-blast disallowed, granted routine allowed.
+func TestLaunchArgs_PinnedContract(t *testing.T) {
+	cfg := t.TempDir()
+	// a high-blast cap that HAS tool patterns, so --disallowedTools is populated
+	cat := []core.CatalogRow{
+		{Capability: "git.commit", ActionClass: core.ClassRoutine, Tier: core.TierLow, DefaultAllowed: true, CompiledWorker: true},
+		{Capability: "git.pr.merge", ActionClass: core.ClassDanger, Tier: core.TierHighBlast, HighBlast: true},
+	}
+	args := LaunchArgs(cfg, map[string]bool{"git.commit": true}, cat)
+	joined := strings.Join(args, " ")
+	require.Contains(t, joined, "--settings "+filepath.Join(cfg, "settings.json"))
+	require.Contains(t, joined, "--permission-mode default")
+	require.NotContains(t, joined, "bypassPermissions", "mode must not bypass the deny-rules/hook")
+	require.Contains(t, joined, "--allowedTools")
+	require.Contains(t, joined, "Bash(git commit:*)", "granted routine cap is allowed")
+	require.Contains(t, joined, "--disallowedTools")
+	require.Contains(t, joined, "Bash(gh pr merge:*)", "high-blast cap is disallowed")
+}
+
 func TestFlags_HighBlastDisallowedGrantedAllowed(t *testing.T) {
 	allowed, disallowed := Flags(map[string]bool{"git.commit": true}, catalog())
 	require.Contains(t, allowed, "Bash(git commit:*)")
