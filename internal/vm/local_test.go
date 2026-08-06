@@ -77,7 +77,7 @@ func TestLocal_GitHeadsCtxCancelReturnsError(t *testing.T) {
 	require.Error(t, err, "a cancelled sweep must not look like 0 heads")
 }
 
-// fakeHerdr installs a `herdr` script on PATH that answers `agent list --json`
+// fakeHerdr installs a `herdr` script on PATH that answers `agent list`
 // and logs `agent prompt`, so we exercise the real exec path without herdr.
 func fakeHerdr(t *testing.T, listJSON string) (promptLog string) {
 	t.Helper()
@@ -94,20 +94,28 @@ func fakeHerdr(t *testing.T, listJSON string) (promptLog string) {
 }
 
 func TestLocal_ListAgentsAndPrompt(t *testing.T) {
-	log := fakeHerdr(t, `[{"workspace":"arco_a","status":"working"},{"workspace":"arco_b","status":"gone"}]`)
+	// REAL herdr 0.7.5 `agent list` envelope (Task-S spike): wrapped in
+	// result.agents, fields agent_status/workspace_id/terminal_id, states
+	// idle|working|blocked|done|unknown.
+	realList := `{"id":"cli:agent:list","result":{"type":"agent_list","agents":[` +
+		`{"agent":"claude","agent_status":"working","pane_id":"wB:p1","workspace_id":"wB","terminal_id":"term_aaa"},` +
+		`{"agent":"claude","agent_status":"done","pane_id":"wC:p1","workspace_id":"wC","terminal_id":"term_bbb"}` +
+		`]}}`
+	log := fakeHerdr(t, realList)
 	l := NewLocal("herdr")
 
 	agents, err := l.ListAgents(context.Background())
 	require.NoError(t, err)
 	require.Len(t, agents, 2)
-	require.Equal(t, "arco_a", agents[0].Workspace)
-	require.True(t, agents[0].Alive)
-	require.False(t, agents[1].Alive, "status=gone → not alive")
+	require.Equal(t, "wB", agents[0].Workspace, "workspace_id maps to Workspace")
+	require.Equal(t, "term_aaa", agents[0].BootID, "terminal_id carries the identity/PID-reuse guard")
+	require.True(t, agents[0].Alive, "working → alive")
+	require.False(t, agents[1].Alive, "agent_status=done → not alive")
 
-	require.NoError(t, l.Prompt(context.Background(), "arco_a", "do X"))
+	require.NoError(t, l.Prompt(context.Background(), "wB:p1", "do X"))
 	b, err := os.ReadFile(log)
 	require.NoError(t, err)
-	require.Contains(t, string(b), "arco_a :: do X")
+	require.Contains(t, string(b), "wB:p1 :: do X")
 
-	require.NoError(t, l.Kill(context.Background(), "arco_a"))
+	require.NoError(t, l.Kill(context.Background(), "wB:p1"))
 }
