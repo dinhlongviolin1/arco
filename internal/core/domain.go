@@ -129,6 +129,10 @@ type Worker struct {
 	LastEventAt     string
 	PooledAt        string
 	CreatedAt       string
+	// AgentRef is the VM-backend's own agent handle captured at launch (herdr's
+	// pane_id), the key the sweep correlates liveness by. "" = not launched via
+	// the arco-owned spawn path → sweep falls back to a Workspace match.
+	AgentRef string
 }
 
 // Session is the first-class unit of work + conversation; sessions form a

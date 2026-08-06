@@ -324,3 +324,19 @@ func TestOwnership_ReapPooledPausesAfterTTL(t *testing.T) {
 // constraints (escalations.worker_id / events.worker_id → workers.id) keep the
 // worker row alive for as long as the escalation exists, so the branch is
 // unreachable in normal operation. The code guards it regardless.
+
+func TestBindAgentRef(t *testing.T) {
+	s := newTestStore(t)
+	sid := mkSession(t, s)
+	wid := mkWorker(t, s, sid)
+	// default is empty
+	require.Empty(t, getWorker(t, s, wid).AgentRef)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.BindAgentRef(wid, "wZ:p1")
+	}))
+	require.Equal(t, "wZ:p1", getWorker(t, s, wid).AgentRef)
+	// missing worker → ErrNotFound
+	require.ErrorIs(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.BindAgentRef("ghost", "x")
+	}), core.ErrNotFound)
+}

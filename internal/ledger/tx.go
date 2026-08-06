@@ -56,11 +56,11 @@ func (t *txn) CreateWorker(w core.Worker) error {
 		pid = *w.PID
 	}
 	_, err := t.q.ExecContext(context.Background(),
-		`INSERT INTO workers (`+workerCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO workers (`+workerCols+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		w.ID, w.Title, w.VM, w.Workspace, w.Worktree, w.BaseCommit, w.HeadCommit, w.Program, w.AgentKind,
 		w.BootID, pid, w.PIDStartTime, string(w.State), w.Rev, w.StallCount, w.OwnerSession, w.SessionPermRev,
 		w.PermissionsHash, w.CompiledConfig, w.Task, w.RunReason, nullStr(w.ParentWorkerID), w.DelegationDepth,
-		w.Role, w.Summary, w.LastSeenAt, w.LastEventAt, nullStr(w.PooledAt), w.CreatedAt,
+		w.Role, w.Summary, w.LastSeenAt, w.LastEventAt, nullStr(w.PooledAt), w.CreatedAt, w.AgentRef,
 	)
 	return err
 }

@@ -9,7 +9,7 @@ import (
 const workerCols = `id,title,vm,workspace,worktree,base_commit,head_commit,program,agent_kind,boot_id,` +
 	`pid,pid_start_time,state,rev,stall_count,owner_session,session_perm_rev,permissions_hash,` +
 	`compiled_config_path,task,run_reason,parent_worker_id,delegation_depth,role,summary,` +
-	`last_seen_at,last_event_at,pooled_at,created_at`
+	`last_seen_at,last_event_at,pooled_at,created_at,agent_ref`
 
 const sessionCols = `id,slug,title,goal,status,kind,parent_session,rev,perm_rev,mem_rev,permissions,` +
 	`context_summary,context_rev,facts,progress,repo,default_vm,pinned,notify_level,tg_topic_id,` +
@@ -29,6 +29,7 @@ func scanWorker(sc scanner) (core.Worker, error) {
 		&w.AgentKind, &w.BootID, &pid, &w.PIDStartTime, &w.State, &w.Rev, &w.StallCount, &w.OwnerSession,
 		&w.SessionPermRev, &w.PermissionsHash, &w.CompiledConfig, &w.Task, &w.RunReason, &parent,
 		&w.DelegationDepth, &w.Role, &w.Summary, &w.LastSeenAt, &w.LastEventAt, &pooled, &w.CreatedAt,
+		&w.AgentRef,
 	)
 	if err != nil {
 		return core.Worker{}, err

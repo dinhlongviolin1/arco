@@ -151,3 +151,29 @@ func TestRecover_StartingWorkerAliveAdopted(t *testing.T) {
 	w, _ := s.Reader().GetWorker(stuck)
 	require.Equal(t, core.WorkerRunning, w.State) // adopted
 }
+
+// The sweep correlates liveness by a worker's AgentRef (herdr pane_id captured
+// at launch) when set, matching even if the agent reports a different workspace;
+// it falls back to a Workspace match when AgentRef is empty (Prompt/Fake model).
+func TestSweep_CorrelatesByAgentRef(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.MissThreshold = 1
+	id := dispatchRunning(t, e)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.BindAgentRef(id, "wZ:p1")
+	}))
+
+	// agent reports a DIFFERENT workspace but the matching ref → alive by ref
+	fake.Agents = []core.AgentObs{{Ref: "wZ:p1", Workspace: "herdr-ws", Alive: true}}
+	_, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerRunning, w.State, "alive by AgentRef despite workspace mismatch")
+
+	// ref gone → missed → finalized (MissThreshold=1, no head change → lost)
+	fake.Agents = nil
+	_, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+	w, _ = s.Reader().GetWorker(id)
+	require.Equal(t, core.WorkerLost, w.State, "ref absent → not alive → finalized")
+}

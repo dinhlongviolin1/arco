@@ -98,7 +98,7 @@ func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error)
 		// herdr has no boot_id/pid_start_time; terminal_id is the stable per-pane
 		// identity, so it carries the PID-reuse guard (AgentObs.BootID slot).
 		obs = append(obs, core.AgentObs{
-			Workspace: a.WorkspaceID, BootID: a.TerminalID,
+			Ref: a.PaneID, Workspace: a.WorkspaceID, BootID: a.TerminalID,
 			Alive: !terminalHerdrStatus[a.AgentStatus],
 		})
 	}
