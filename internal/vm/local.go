@@ -47,16 +47,109 @@ var terminalHerdrStatus = map[string]bool{"done": true}
 type LocalVMClient struct {
 	Herdr string
 	Git   string
+	// run executes a herdr/git command — LOCALLY (localRunner) or on a remote host
+	// over ssh (sshRunner). All the herdr-chain + git logic below is transport-
+	// agnostic; only this differs. nil → local (zero-value / older constructions).
+	run runner
 }
 
 var _ core.VMClient = (*LocalVMClient)(nil)
 
-// NewLocal builds a LocalVMClient with default binaries.
+// NewLocal builds a LocalVMClient that runs herdr/git on THIS host.
 func NewLocal(herdr string) *LocalVMClient {
 	if herdr == "" {
 		herdr = "herdr"
 	}
-	return &LocalVMClient{Herdr: herdr, Git: "git"}
+	return &LocalVMClient{Herdr: herdr, Git: "git", run: localRunner{}}
+}
+
+// NewRemote builds a VMClient that runs the SAME herdr/git chain on a remote host
+// over ssh (cross-VM FOUNDATION — audit "distributed" phase). It reuses every bit
+// of LocalVMClient's logic; only command execution is tunnelled. Each argument is
+// rigorously shell-quoted (shellQuote) so the remote login shell ssh runs the
+// command through cannot be injected (a worker task/label/path is untrusted input).
+//
+// NOTE: this is a reviewed, injection-tested building block, NOT yet wired into the
+// daemon: a live cross-VM deployment also needs remote worktree provisioning and
+// the signed cross-host intake (§10), and true multi-host validation needs a second
+// host. The command layer here is what those build on, and is testable on one host.
+func NewRemote(host, herdr string) (*LocalVMClient, error) {
+	if host == "" {
+		return nil, fmt.Errorf("vm: empty ssh host")
+	}
+	if strings.HasPrefix(host, "-") {
+		// A leading-dash host would be parsed by ssh as an OPTION — e.g.
+		// `-oProxyCommand=...` executes a command LOCALLY (CVE-2023-51385 class;
+		// only ssh ≥ 9.6 rejects the resulting hostname). Don't make arco's safety
+		// depend on the fleet's patch level: fail fast. (command() also emits a `--`
+		// end-of-options separator as belt-and-suspenders.)
+		return nil, fmt.Errorf("vm: refusing ssh host %q: leading '-' is ssh option injection", host)
+	}
+	if herdr == "" {
+		herdr = "herdr"
+	}
+	return &LocalVMClient{Herdr: herdr, Git: "git", run: sshRunner{host: host, opts: sshOpts}}, nil
+}
+
+// cmd builds the *exec.Cmd for a herdr/git invocation via the configured runner
+// (nil-safe → local), so every call site is transport-agnostic.
+func (l *LocalVMClient) cmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	r := l.run
+	if r == nil {
+		r = localRunner{}
+	}
+	return r.command(ctx, name, args...)
+}
+
+// runner executes a command either locally or over ssh. It returns a prepared
+// *exec.Cmd (not just bytes) so streaming callers (cappedPatch) work over both.
+type runner interface {
+	command(ctx context.Context, name string, args ...string) *exec.Cmd
+}
+
+// localRunner runs on THIS host — identical to the pre-runner behaviour (newCmd
+// scrubs arco's own creds from the child env, P1).
+type localRunner struct{}
+
+func (localRunner) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return newCmd(ctx, name, args...)
+}
+
+// sshOpts: non-interactive (never hang on a password/host-key prompt), fail fast.
+var sshOpts = []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+
+// sshRunner runs the command on host over ssh. The remote program + args are
+// shell-quoted into ONE token and handed to ssh, whose local process env is still
+// scrubbed (newCmd, P1 — the ssh client must not carry arco's creds either). A `--`
+// end-of-options separator precedes the host so no host value can ever be parsed
+// as an ssh option (belt-and-suspenders with NewRemote's leading-dash reject).
+type sshRunner struct {
+	host string
+	opts []string
+}
+
+func (r sshRunner) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	remote := shellJoin(append([]string{name}, args...))
+	sshArgs := append(append(append(append([]string{}, r.opts...), "--"), r.host), remote)
+	return newCmd(ctx, "ssh", sshArgs...)
+}
+
+// shellQuote renders s as a single POSIX-shell token: wrap in single quotes and
+// escape any embedded single quote as '\''. Inside single quotes every other
+// metacharacter (space, ; | & $ ` " \ newline, glob) is literal, so the remote
+// login shell ssh runs the command through cannot be broken out of. This is the
+// only generally-safe way to pass an untrusted argument to `ssh host cmd`.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// shellJoin shell-quotes each token and space-joins them into one remote command.
+func shellJoin(tokens []string) string {
+	q := make([]string, len(tokens))
+	for i, t := range tokens {
+		q[i] = shellQuote(t)
+	}
+	return strings.Join(q, " ")
 }
 
 // herdrListResp / herdrAgent mirror the CONFIRMED herdr 0.7.5 `agent list`
@@ -117,7 +210,7 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 		if wt == "" {
 			continue // never `git -C "" ` (would run in the daemon's cwd)
 		}
-		out, err := newCmd(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
+		out, err := l.cmd(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
 		if err != nil {
 			continue
 		}
@@ -330,12 +423,26 @@ func (l *LocalVMClient) closeWorkspace(ctx context.Context, wsID string) {
 // for some errors (e.g. invalid_agent_name), so a clean exit code alone is not
 // success. Centralizes the check for every herdr call (git calls stay on runOutput).
 func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := runOutput(ctx, l.Herdr, args...)
+	out, err := l.runOutput(ctx, l.Herdr, args...)
 	if err != nil {
 		return nil, err
 	}
 	if e := herdrEnvelopeError(out); e != nil {
 		return nil, fmt.Errorf("%s: %w", redactCmdArgs(args), e)
+	}
+	return out, nil
+}
+
+// runOutput is the transport-aware twin of the package runOutput (used by
+// clavis.go, which is always local): same stdout/stderr semantics and the same
+// argv redaction in errors, but executed via the configured runner (local/ssh).
+func (l *LocalVMClient) runOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := l.cmd(ctx, name, args...).Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("%s %s: %s: %w", name, redactCmdArgs(args), bytes.TrimSpace(ee.Stderr), err)
+		}
+		return nil, err
 	}
 	return out, nil
 }
@@ -424,7 +531,7 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 		return d, fmt.Errorf("vm: refusing non-commit-shaped rev (base=%q head=%q)", base, head)
 	}
 	rng := base + ".." + head
-	num, err := newCmd(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
+	num, err := l.cmd(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
 	if err != nil {
 		return d, err
 	}
@@ -453,7 +560,7 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 // cappedPatch streams `git diff` and buffers at most maxPatchBytes, draining the
 // rest so git never blocks on a full pipe.
 func (l *LocalVMClient) cappedPatch(ctx context.Context, worktree, rng string) (string, bool) {
-	cmd := newCmd(ctx, l.Git, "-C", worktree, "diff", rng)
+	cmd := l.cmd(ctx, l.Git, "-C", worktree, "diff", rng)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false

@@ -161,10 +161,34 @@ Spike checklist:
    `reconcile.Dispatch`/`Delegate` at the real launch.
 4. Set `use_local_vm = true` / `ARCO_LOCAL_VM=1` only after the above passes.
 
-## 10. Cross-VM & scale (later)
+## 10. Cross-VM & scale (later — foundation landed)
 
-- Cross-VM needs an SSH `VMClient` + the signed network intake (§5) between
-  hosts.
+- **Landed (PR #69): the injection-safe SSH command layer.** `vm.NewRemote(host,
+  herdr)` runs the SAME herdr/git chain on a remote host over ssh: `LocalVMClient`
+  is now transport-agnostic (a pluggable `runner` — local by default, ssh when
+  remote). Every remote argument is POSIX-shell-quoted (`shellQuote`: single-quote
+  wrap + `'\''` escape), because `ssh host cmd` runs the command through the remote
+  LOGIN SHELL — an unquoted arg is a remote-code-injection hole, and worker
+  tasks/labels are untrusted input. The host itself is validated (leading `-`
+  rejected — ssh option injection, CVE-2023-51385 class) and a `--` end-of-options
+  separator is emitted. Verified end-to-end: a 25-token hostile corpus (command
+  substitution, backticks, quotes, newlines, globs, redirection, control chars)
+  round-trips byte-exact through a REAL shell back into the intended argv; the ssh
+  client's own env is scrubbed (P1). BatchMode pins it non-interactive. **Scope of
+  the guarantee:** the SHELL layer is injection-safe. A separate, pre-existing layer
+  (identical on local) is the herdr CLI's own flag parsing of positional values
+  (e.g. a task text beginning with `--`); that needs a herdr-contract `--`
+  end-of-options guard (noted on `Prompt`), not quoting. That misparse is a LIVE
+  silent-task-loss bug even locally (task `--help` → herdr prints help, exits 0,
+  prompt marked delivered), so the herdr `agent prompt --` spike is a NAMED GATE
+  for enabling cross-VM — don't let this scoping quietly downgrade it. Also noted: NUL bytes are
+  rejected by exec before any shell, and Linux's 128 KB argv-element cap bounds
+  very large quote-dense payloads (per-task failure, not injection).
+- **Still needed before live cross-VM:** remote worktree provisioning (the spawn
+  path provisions worktrees on THIS host), a VM-routing/admission policy for
+  multiple hosts, the signed cross-host intake (§5) from remote workers' hooks, and
+  a second host for true validation. Until then `NewRemote` is a reviewed building
+  block, deliberately not wired into the daemon.
 - Beyond ~150 live workers or ~100 events/s sustained, move the ledger to
   Postgres + a queue (the `Store`/`Reader` ports were kept engine-agnostic for
   this).
