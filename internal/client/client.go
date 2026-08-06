@@ -105,6 +105,12 @@ func (c *Client) KillWorker(ctx context.Context, workerID string) error {
 	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/kill", nil, nil)
 }
 
+// Redeliver re-prompts a stranded running worker with its original task
+// (operator recovery for a crash-lost initial delivery).
+func (c *Client) Redeliver(ctx context.Context, workerID string) error {
+	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/redeliver", nil, nil)
+}
+
 func (c *Client) CreatePool(ctx context.Context, req api.PoolReq) (api.PoolDTO, error) {
 	var r api.PoolDTO
 	err := c.do(ctx, http.MethodPost, "/v1/pools", req, &r)

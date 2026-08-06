@@ -300,10 +300,19 @@ spawn→autonomous-completion loop, but an operator should know them:
   double-dispatch class that got the naive brain re-drive rejected. A safe
   auto-recovery needs a positive "this agent never received input" signal (agent
   working-history), which the current herdr signals (`alive` + git HEAD) don't
-  provide — HEAD can be unchanged for a finished no-commit task. **Operator remedy
-  today:** the stranded worker is visible as `running`+idle with HEAD==base; `arco
-  kill <id>` it and re-dispatch. Revisiting this needs richer agent-status history
-  (track first-observed-working), a larger design task.
+  provide — HEAD can be unchanged for a finished no-commit task. **Recovery is
+  operator-initiated, not autonomous (PR #71):** `arco redeliver <id>` re-prompts a
+  stranded `running` worker with its original task, resolving the dangling
+  prompt_intent and leaving a task_redelivered audit marker. Machine-checkable
+  guards: refuses a non-running or pool-owned worker (re-validated under the write
+  lock at the point of no return); refuses an agent herdr reports `working`/
+  `blocked` (409); and refuses when the worker's HEAD already advanced past base
+  (the task almost certainly ran). The remaining fast-finish, no-commit judgment is
+  the operator's, who inspects the pane first. Live-verified: refusals surface as
+  409. Full automation still needs richer agent-status history. (Latent constraint:
+  `prompt_delivered` is written only by redeliver today; any future
+  intent-without-delivery detector must first make the happy-path delivery write it,
+  or every normally-spawned worker would read as undelivered.)
 
 - **Agent actuation is PARTIAL (MED-3).** Two pieces have landed: `arco kill
   <worker>` terminates a worker and stops its agent (`VM.Kill` = `herdr workspace
