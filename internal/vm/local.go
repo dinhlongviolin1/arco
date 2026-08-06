@@ -130,12 +130,16 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 // by ctx). The Task-S spike should add a `--` end-of-options guard so a prompt
 // beginning with `-` can't be parsed as a flag.
 func (l *LocalVMClient) Prompt(ctx context.Context, workspace, text string) error {
-	return newCmd(ctx, l.Herdr, "agent", "prompt", workspace, text).Run()
+	// Via herdrRun so an exit-0 error envelope (e.g. a bad target) is a real error,
+	// not a silent no-op — Prompt is on the live task-delivery + run_again path.
+	_, err := l.herdrRun(ctx, "agent", "prompt", workspace, text)
+	return err
 }
 
 // Kill interrupts an agent (best-effort Ctrl-C).
 func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
-	return newCmd(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
+	_, err := l.herdrRun(ctx, "agent", "send-keys", workspace, "C-c")
+	return err
 }
 
 // Launch starts a new agent via the herdr contract (all confirmed against herdr
