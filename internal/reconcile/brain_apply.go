@@ -278,8 +278,8 @@ func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step c
 func (e *Engine) transitionFromBrain(ctx context.Context, workerID string, to core.WorkerState, step core.StepResult) {
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
-		if err != nil || w.State.Terminal() || !core.LegalWorkerTransition(w.State, to) {
-			return nil
+		if err != nil || w.State.Terminal() || w.OwnerSession == core.PoolSessionID || !core.LegalWorkerTransition(w.State, to) {
+			return nil // released to the pool mid-flight → inert to the brain (don't terminalize a pooled worker a claim may be racing)
 		}
 		return tx.TransitionWorker(workerID, to, w.Rev, core.Event{
 			Kind: "brain_decision", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
@@ -318,6 +318,13 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 		if err != nil {
 			return nil
 		}
+		// Released to the pool mid-flight → inert to the brain: opening an escalation
+		// would attribute it to the pool session AND strand the pooled worker in a
+		// waiting state (the same pool-attributed-escalation harm as the #44 rollup
+		// finding). Skip.
+		if w.OwnerSession == core.PoolSessionID {
+			return nil
+		}
 		// If the worker moved and can't enter the waiting state, do NOT open a
 		// stale escalation — a human answering it could resurrect a finished
 		// worker (qwen #4). Only open when the transition actually applies.
@@ -343,8 +350,8 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 func (e *Engine) park(ctx context.Context, workerID, reason string) {
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
-		if err != nil || w.State.Terminal() || !core.LegalWorkerTransition(w.State, core.WorkerBlocked) {
-			return nil
+		if err != nil || w.State.Terminal() || w.OwnerSession == core.PoolSessionID || !core.LegalWorkerTransition(w.State, core.WorkerBlocked) {
+			return nil // released to the pool mid-flight → don't park a pooled worker a claim may be racing
 		}
 		return tx.TransitionWorker(workerID, core.WorkerBlocked, w.Rev, core.Event{
 			Kind: "error", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
