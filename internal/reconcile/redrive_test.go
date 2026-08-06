@@ -148,6 +148,41 @@ func TestSweep_DoesNotRedriveProcessedNonSideEffect(t *testing.T) {
 	require.Equal(t, int32(1), calls.Load(), "brain not re-invoked on a permanently-denied dispatch")
 }
 
+// Dedup: a worker with an in-flight re-drive is not re-submitted by a later
+// sweep (the brain_intent marker that clears it from the dangling set is
+// committed async, so without this a backed-up Exec would let a second sweep
+// stack a duplicate classification → duplicate prompt/child). qwen review.
+func TestSweep_RedriveDedupSkipsInFlight(t *testing.T) {
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	clk := &settableClock{}
+	clk.set(base)
+
+	e, s, _ := newEngine(t)
+	s.SetClock(clk.now)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			return []byte(`{"kind":"final_output"}`), nil
+		}}
+
+	id := dispatchRunning(t, e)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		_, _, _, err := tx.AppendEvent(core.Event{Kind: "brain_intent", WorkerID: id, SessionID: w.OwnerSession, Actor: "brain", CorrelationID: "cid"})
+		return err
+	}))
+	clk.set(base.Add(defaultBrainIntentGrace + time.Minute)) // now the intent is stale
+	// Simulate a re-drive already in flight for this worker.
+	require.True(t, e.claimRedrive(id))
+
+	n := e.redriveStaleBrainIntents()
+	require.Equal(t, 0, n, "a worker with an in-flight re-drive is not re-submitted")
+
+	// Once the in-flight one completes (marker cleared), a later sweep may re-drive.
+	e.releaseRedrive(id)
+	require.Equal(t, 1, e.redriveStaleBrainIntents())
+	e.Exec.Wait()
+}
+
 // A BrainIntentGrace configured below 2× the call timeout is clamped up to the
 // default floor, so an in-flight call can never be re-driven.
 func TestSweep_GraceFlooredBelowCallTimeout(t *testing.T) {
