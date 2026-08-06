@@ -237,17 +237,19 @@ the local hook signs intake under P4; EscalationTimeout auto-pauses stuck
 waiting workers). The rest are **explicitly scoped-out known limitations** — none
 block the core spawn→autonomous-completion loop, but an operator should know them:
 
-- **Agent actuation is incomplete (MED-3).** arco marks a worker
-  failed/lost/killed/paused in the ledger but does not yet **stop the underlying
-  herdr agent**: `VM.Kill` has no caller, and there is no kill/claim/release CLI
-  route. So a worker paused by `escalation_timeout`/`pool_ttl`, or a brain
-  `handoff`-released worker, leaves its herdr agent **running and consuming
-  provider quota** until the pane dies on its own. Brain `handoff` in particular
-  is "release to pool" with no reclaim path → effectively abandon+leak today.
-  Follow-up (its own focused pass): define `Kill` = `herdr workspace close`
-  (derive workspace_id from the captured pane_id), call it on the pause/terminal
-  paths, and add `arco kill`/`claim` routes. **Operationally: watch for orphaned
-  herdr agents; `herdr workspace close <id>` reclaims one manually.**
+- **Agent actuation is PARTIAL (MED-3).** `arco kill <worker>` now terminates a
+  worker and stops its agent (`VM.Kill` = `herdr workspace close`, derived from
+  the pane_id; PR #60) — a runaway/wedged worker is terminable. STILL missing:
+  arco does not AUTO-stop an agent when the *sweep* pauses a worker
+  (`escalation_timeout`/`pool_ttl`) or when a brain `handoff` releases it to the
+  pool, nor does the sweep reap a terminal worker's orphaned-but-still-alive agent
+  (e.g. a crash between `arco kill`'s commit and the agent-stop). So a
+  pool-paused/handoff-released worker's agent can still linger, consuming quota.
+  Follow-up (its own focused pass — it interacts with paused-worker liveness/resume
+  semantics): auto-`Kill` on the sweep pause paths + a sweep reconciliation that
+  stops a live agent whose worker is paused/terminal; and `arco claim`/`release`
+  routes. **Operationally: `arco kill <id>` reclaims a worker's agent now; for a
+  lingering orphan, `herdr workspace close <id>` still works manually.**
 - **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
   mechanism is `workspace create --env KEY=VALUE`, so a pool's clavis token is
   briefly visible in `/proc/<herdr-pid>/cmdline` during the create call. On a
