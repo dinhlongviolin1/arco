@@ -82,7 +82,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if cfg.BrainProfile != "" {
 		eng.Brain = reconcile.BrainCfg{Enabled: true, Profile: cfg.BrainProfile, Model: cfg.BrainModel}
 	}
+	// Network-exposed intake MUST be signed (security precondition P4): refuse to
+	// start with a TCP listener but no shared secret rather than expose an
+	// unauthenticated event-injection surface.
+	if cfg.TCPAddr != "" && cfg.IntakeSecret == "" {
+		return fmt.Errorf("daemon: tcp_addr is set but intake_secret is empty — network intake must be signed (set ARCO_INTAKE_SECRET)")
+	}
 	srv := api.New(store, eng)
+	srv.SetIntakeSecret(cfg.IntakeSecret)
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {

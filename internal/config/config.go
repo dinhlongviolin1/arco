@@ -37,6 +37,11 @@ type Config struct {
 	BrainModel    string `toml:"brain_model"`
 	HerdrBin      string `toml:"herdr_bin"`
 	UseLocalVM    bool   `toml:"use_local_vm"` // opt in to the real herdr LocalVMClient (else Fake)
+	// IntakeSecret is the shared secret for HMAC-signed event intake (security
+	// precondition P4: cross-VM intake must be source-bound + signed). Required
+	// whenever TCPAddr is set (network-exposed intake); empty is allowed only for
+	// the local unix socket. Set via ARCO_INTAKE_SECRET (never commit it).
+	IntakeSecret string `toml:"intake_secret"`
 
 	// Pinned operability defaults (build-guide-rev6 §C).
 	MaxSpawns             int           `toml:"max_spawns"`
@@ -130,6 +135,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_HERDR_BIN"); v != "" {
 		cfg.HerdrBin = v
+	}
+	if v := os.Getenv("ARCO_INTAKE_SECRET"); v != "" {
+		cfg.IntakeSecret = v
 	}
 	if v := os.Getenv("ARCO_LOCAL_VM"); v == "1" || v == "true" {
 		cfg.UseLocalVM = true

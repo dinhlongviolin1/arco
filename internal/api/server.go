@@ -5,8 +5,12 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 
@@ -14,12 +18,22 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 )
 
+// maxIntakeBody caps the event-intake request body — a semi-trusted hook/herdr
+// must not be able to OOM the daemon or bloat the ledger with one giant POST.
+const maxIntakeBody = 1 << 20 // 1 MiB
+
 // Server wires the ledger reader + reconcile engine into HTTP handlers.
 type Server struct {
-	store core.Store
-	eng   *reconcile.Engine
-	mux   *http.ServeMux
+	store        core.Store
+	eng          *reconcile.Engine
+	mux          *http.ServeMux
+	intakeSecret string // HMAC key for signed intake (P4); "" = unauthenticated (socket-only)
 }
+
+// SetIntakeSecret installs the shared secret for HMAC-signed event intake
+// (security precondition P4). Set once at startup; when set, every POST
+// /v1/events must carry a valid X-Arco-Signature.
+func (s *Server) SetIntakeSecret(secret string) { s.intakeSecret = secret }
 
 // New builds a Server and registers routes.
 func New(store core.Store, eng *reconcile.Engine) *Server {
@@ -207,9 +221,39 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 
 // intake is the herdr-hook target: append the raw delivery (idempotent dedup on
 // source_event_id), and if newly seen, reconcile the worker.
+// verifyIntakeSig checks an "sha256=<hex>" HMAC of body under secret, in
+// constant time. A missing/malformed header or wrong length fails closed.
+func verifyIntakeSig(secret string, body []byte, header string) bool {
+	const prefix = "sha256="
+	if len(header) <= len(prefix) || header[:len(prefix)] != prefix {
+		return false
+	}
+	want, err := hex.DecodeString(header[len(prefix):])
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return hmac.Equal(want, mac.Sum(nil))
+}
+
 func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body under a size cap first — needed both to bound memory and
+	// to HMAC-verify over the exact bytes.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxIntakeBody))
+	if err != nil {
+		writeErr(w, http.StatusRequestEntityTooLarge, err)
+		return
+	}
+	// Signed intake (P4): when a shared secret is configured, every event must
+	// carry a valid HMAC-SHA256 over the raw body — this source-binds cross-VM /
+	// network intake so an unauthenticated poster can't inject worker events.
+	if s.intakeSecret != "" && !verifyIntakeSig(s.intakeSecret, body, r.Header.Get("X-Arco-Signature")) {
+		writeErr(w, http.StatusUnauthorized, errors.New("api: missing or invalid X-Arco-Signature"))
+		return
+	}
 	var req EventReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
