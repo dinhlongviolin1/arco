@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/spawnenv"
 )
 
 // maxPatchBytes caps how much of a diff patch we buffer/serve, so one fat
@@ -105,7 +107,7 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 		if wt == "" {
 			continue // never `git -C "" ` (would run in the daemon's cwd)
 		}
-		out, err := exec.CommandContext(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
+		out, err := newCmd(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
 		if err != nil {
 			continue
 		}
@@ -118,12 +120,12 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 // by ctx). The Task-S spike should add a `--` end-of-options guard so a prompt
 // beginning with `-` can't be parsed as a flag.
 func (l *LocalVMClient) Prompt(ctx context.Context, workspace, text string) error {
-	return exec.CommandContext(ctx, l.Herdr, "agent", "prompt", workspace, text).Run()
+	return newCmd(ctx, l.Herdr, "agent", "prompt", workspace, text).Run()
 }
 
 // Kill interrupts an agent (best-effort Ctrl-C).
 func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
-	return exec.CommandContext(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
+	return newCmd(ctx, l.Herdr, "agent", "send-keys", workspace, "C-c").Run()
 }
 
 // Diff returns the base→head numstat summary + a size-capped patch.
@@ -138,7 +140,7 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 		return d, fmt.Errorf("vm: refusing non-commit-shaped rev (base=%q head=%q)", base, head)
 	}
 	rng := base + ".." + head
-	num, err := exec.CommandContext(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
+	num, err := newCmd(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
 	if err != nil {
 		return d, err
 	}
@@ -167,7 +169,7 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 // cappedPatch streams `git diff` and buffers at most maxPatchBytes, draining the
 // rest so git never blocks on a full pipe.
 func (l *LocalVMClient) cappedPatch(ctx context.Context, worktree, rng string) (string, bool) {
-	cmd := exec.CommandContext(ctx, l.Git, "-C", worktree, "diff", rng)
+	cmd := newCmd(ctx, l.Git, "-C", worktree, "diff", rng)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false
@@ -198,9 +200,21 @@ func looksLikeRev(s string) bool {
 	return true
 }
 
+// newCmd builds an exec.Cmd whose environment has arco's high-blast credentials
+// stripped (security precondition P1) — no subprocess arco launches (git, herdr,
+// and the worker agent when launched here) inherits arco's provider keys/tokens/
+// own config. NB: the worker AGENT is currently spawned by herdr/clavis, not
+// arco; that launch path MUST apply the same scrub — this covers every process
+// arco spawns directly (defense-in-depth).
+func newCmd(ctx context.Context, name string, args ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, name, args...)
+	c.Env = spawnenv.Scrub(os.Environ())
+	return c
+}
+
 // runOutput runs a command capturing stdout, folding stderr into the error.
 func runOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	out, err := newCmd(ctx, name, args...).Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
 			return nil, fmt.Errorf("%s %s: %s: %w", name, strings.Join(args, " "), bytes.TrimSpace(ee.Stderr), err)
