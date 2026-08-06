@@ -298,11 +298,20 @@ spawn→autonomous-completion loop, but an operator should know them:
   confirm), so reaping it would silently discard the approval; those stay
   liveness-tracked. This closed the
   earlier worry that killing a paused agent would "strand" the worker — there is no
-  resume-by-RECONNECT to lose; resume is via relaunch. STILL missing: **resume via
-  relaunch** (`arco claim`/`resume` that re-launches a fresh agent in the paused
-  worker's preserved worktree) — a genuine enhancement (a paused worker is inspectable
-  + re-dispatchable today, not stranded); it needs the initial-delivery-recovery
-  building block above, so it's the same design-gated pass. A second (pre-existing,
+  resume-by-RECONNECT to lose; resume is via relaunch. **Resume via relaunch is intentionally NOT built** —
+  analysis showed it has no clean use case given the three (and only three) ways a
+  worker becomes `paused`: (1) `AuditDeniedAttempt` danger-confirm → resume is the
+  operator **approval**, which re-prompts the live pane and **works** (its agent is
+  kept, above); (2) `reapEscalations` timeout → the escalation is expired before
+  pausing, so a relaunch would re-deliver the original task and the agent would
+  re-ask the same question and re-time-out — relaunch doesn't help; (3) `reapPooled`
+  pool-TTL → spare pool capacity, whose operation is claim+dispatch, not
+  resume-of-original. So the real "resume" (approve a danger-paused worker) is done;
+  a bespoke relaunch path would add untested launch/delivery surface for a scenario
+  that doesn't benefit. Operator remedy for a timed-out/pooled paused worker:
+  inspect its preserved worktree, `arco kill` + re-dispatch. (`ClaimWorker` exists
+  in the ledger but is intentionally unrouted for the same reason — a claimed pool
+  worker would need a relaunch to be useful.) A second (pre-existing,
   minor) follow-up: the *operator* `arco kill` path `VM.Kill`s `w.AgentRef` with no
   identity gate, so killing a worker that had mis-adopted a recycled pane could close
   the wrong workspace — only the *unattended* reaper is identity-strict; the operator
