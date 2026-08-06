@@ -181,7 +181,7 @@ func (r *reader) Capability(name string) (core.CatalogRow, bool, error) {
 func (r *reader) DefaultTree() ([]core.CatalogRow, error) {
 	rows, err := r.q.QueryContext(context.Background(),
 		`SELECT capability,action_class,tier,default_allowed,high_blast,compiled_worker,description
-		 FROM capability_catalog WHERE default_allowed=1 ORDER BY capability`)
+		 FROM capability_catalog WHERE default_allowed<>0 ORDER BY capability`)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func (r *reader) GrantedCapabilities(sessionID string) (map[string]bool, error) 
 	}
 	// default-allowed caps (granted to every session, matching Allowed()).
 	if err := scan(r.q.QueryContext(context.Background(),
-		`SELECT capability FROM capability_catalog WHERE default_allowed=1`)); err != nil {
+		`SELECT capability FROM capability_catalog WHERE default_allowed<>0`)); err != nil {
 		return nil, err
 	}
 	// explicit active, non-expired grants for this session.
