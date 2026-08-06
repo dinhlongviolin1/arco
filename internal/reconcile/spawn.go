@@ -159,7 +159,32 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	if err != nil {
 		return DispatchResult{}, err
 	}
+	// Deliver the initial task to the freshly-launched agent, targeted at its
+	// captured pane (ref), AFTER the running-state commit. Best-effort: the agent
+	// is already running + owned, so a delivery failure is a follow-up the brain or
+	// operator can retry (recorded via prompt_intent), not a spawn failure. Only on
+	// a clean launch (perr==nil ⇒ ref is the real pane_id, not the ""-adopted case).
+	if finalState == core.WorkerRunning && perr == nil && ref != "" {
+		e.deliverInitialTask(ctx, workerID, sessionID, ref, task)
+	}
 	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
+}
+
+// deliverInitialTask prompts a just-launched repo-spawned worker with its task,
+// targeted at the captured pane (ref). Records prompt_intent BEFORE the prompt
+// (crash-safe intent, mirrors preparePrompt); a delivery error is recorded but
+// does not fail/park the worker (it is running + claimable/re-promptable).
+func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, target, task string) {
+	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+		_, _, _, e2 := tx.AppendEvent(core.Event{
+			Kind: "prompt_intent", WorkerID: workerID, SessionID: sessionID, Actor: "spawn",
+			Payload: `{"initial_task":true}`,
+		})
+		return e2
+	})
+	if err := e.VM.Prompt(ctx, target, promptIntentText(task)); err != nil {
+		e.errorEvent(ctx, workerID, "initial task delivery failed: "+err.Error())
+	}
 }
 
 // provisionAndLaunch does the external spawn side effects and returns the backend
