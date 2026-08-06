@@ -259,7 +259,11 @@ block the core spawn→autonomous-completion loop, but an operator should know t
   strand the worker. That remaining piece (auto-kill-on-pause + `arco
   claim`/`release` + a resume-via-relaunch path) is one coupled follow-up: it must
   also make the sweep stop treating a paused worker's absent agent as a liveness
-  death. **Operationally: `arco kill <id>` reclaims a worker's agent now, terminal
+  death. A second (pre-existing, minor) follow-up: the *operator* `arco kill` path
+  `VM.Kill`s `w.AgentRef` with no identity gate, so killing a worker that had
+  mis-adopted a recycled pane could close the wrong workspace — only the
+  *unattended* reaper is identity-strict today; the operator path trusts the
+  operator's explicit intent. **Operationally: `arco kill <id>` reclaims a worker's agent now, terminal
   orphans self-clean on the next sweep; a lingering *paused* worker's agent still
   needs a manual `herdr workspace close <id>`.**
 - **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
