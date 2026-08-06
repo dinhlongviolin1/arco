@@ -228,6 +228,43 @@ delivery holding an Exec slot on the rare never-boots path; the legacy prompt-pa
 `dispatch` (no `--repo`) doesn't fit real herdr (use `--repo`); no `pool
 delete/update` CLI.
 
+## 12. Known limitations & prioritized follow-ups (whole-system capstone audit)
+
+A final integrated-system audit (opus) confirmed the crash-safety, concurrency,
+and secret-at-rest core sound. Five findings were fixed (PRs #55–#58: worker
+terminalization can't wedge or resurrect a corpse; worker Read is worktree-gated;
+the local hook signs intake under P4; EscalationTimeout auto-pauses stuck
+waiting workers). The rest are **explicitly scoped-out known limitations** — none
+block the core spawn→autonomous-completion loop, but an operator should know them:
+
+- **Agent actuation is incomplete (MED-3).** arco marks a worker
+  failed/lost/killed/paused in the ledger but does not yet **stop the underlying
+  herdr agent**: `VM.Kill` has no caller, and there is no kill/claim/release CLI
+  route. So a worker paused by `escalation_timeout`/`pool_ttl`, or a brain
+  `handoff`-released worker, leaves its herdr agent **running and consuming
+  provider quota** until the pane dies on its own. Brain `handoff` in particular
+  is "release to pool" with no reclaim path → effectively abandon+leak today.
+  Follow-up (its own focused pass): define `Kill` = `herdr workspace close`
+  (derive workspace_id from the captured pane_id), call it on the pause/terminal
+  paths, and add `arco kill`/`claim` routes. **Operationally: watch for orphaned
+  herdr agents; `herdr workspace close <id>` reclaims one manually.**
+- **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
+  mechanism is `workspace create --env KEY=VALUE`, so a pool's clavis token is
+  briefly visible in `/proc/<herdr-pid>/cmdline` during the create call. On a
+  single-user host this adds no attacker (same user already owns the token); on a
+  shared host, use `hidepid` and a tightly-scoped per-pool profile. A leak-free
+  path needs a herdr env-file/stdin mechanism (herdr change).
+- **Inert config knobs.** `crash_loop_restarts`/`crash_loop_window` (a
+  crash-loop breaker), a global `max_spawns` cap, and `stall_n` stall-detection
+  are defined in config but **not yet enforced** (only per-VM/per-session caps +
+  the brain-billing park limit loops today). `escalation_timeout` IS now enforced
+  (§11 / PR #58).
+- **Minor:** the initial task-delivery prompt has a narrow double-submit edge if
+  the agent finishes a turn within the readiness poll gap; a worktree Read that
+  resolves outside via a symlink (e.g. `node_modules`→shared store) is denied
+  (allowlist it if it bites); a crash in the ~ms between `agent start` and the
+  ref-commit leaks that one agent (documented in `herdr-contract.md`).
+
 ---
 
 ## Pre-flight checklist (before real repos/creds)
