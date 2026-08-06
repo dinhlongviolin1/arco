@@ -20,7 +20,7 @@ These are implemented and tested — listed so you don't re-do them:
 | Control | Where | Guarantee |
 |---|---|---|
 | Boot preflight | `internal/preflight`, wired in `daemon.Run` | Refuses to start as root, without `git`, or with a network intake and no signing secret. |
-| Scrubbed subprocess env | `internal/spawnenv`, `vm.LocalVMClient.newCmd` | Strips provider/git/cloud/DB/`ARCO_*` secrets from every subprocess arco launches. |
+| Scrubbed subprocess env | `internal/spawnenv`, `vm.LocalVMClient.newCmd` | Strips provider/git/cloud/DB/`ARCO_*` secrets from subprocesses arco launches on the worker/agent path (via `vm.newCmd`). (`quarantine`'s `git config`/`rev-parse` calls run arco-owned on a fresh gitdir and are not scrubbed — no worker exposure.) |
 | Write-time secret redaction | `internal/redact`, ledger write chokepoint | Secrets in event payloads / worker task / session goal are redacted at rest. |
 | Repo-config quarantine | `internal/quarantine` | Renames aside repo-shipped `.claude`/`.mcp.json`/`.gitattributes`/`.gitmodules`/`.lfsconfig`, disables repo hooks + fsmonitor. |
 | Compiled worker permissions | `internal/permcompile` | `settings.json` + PreToolUse hook staged **outside** the worktree; high-blast caps never granted. |
@@ -48,7 +48,7 @@ sudo useradd --system --home /var/lib/arco --shell /usr/sbin/nologin arco
   out of children, but only OS-user separation stops a worker from reading files
   arco can read.
 
-## 2. State-dir & socket permissions — recommended
+## 2. State-dir & socket permissions — treat as REQUIRED
 
 Keep the arco state dir (holds the ledger + compiled worker configs) and the
 unix-socket dir at `0700`, owned by the `arco` user:
@@ -57,9 +57,14 @@ unix-socket dir at `0700`, owned by the `arco` user:
 sudo install -d -o arco -g arco -m 700 /var/lib/arco
 ```
 
+- The **socket dir's `0700` is the ONLY thing authenticating the local mutating
+  routes** (`dispatch`/`verify`/`escalations{answer,confirm}` are unauthenticated
+  over the socket — see §5). Any local user who can reach the socket can drive
+  arco, so treat this as required, not optional.
 - arco creates these `0700` when it owns them, but will not chmod a dir you
   point it at that it may not own. Preflight surfaces `state_dir_private` /
-  `socket_dir_private` as **warnings** in the log if they're group/world-readable.
+  `socket_dir_private` as **warnings** in the log (not a hard stop) if they're
+  group/world-readable — do not ignore them.
 
 ## 3. Managed-settings deny layer (precondition P3) — CRITICAL for untrusted repos
 
