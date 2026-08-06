@@ -102,8 +102,17 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		return DispatchResult{}, err
 	}
 
+	// Resolve the worker's SCOPED credential profile from its pool (config-driven;
+	// "" when no pool / the pool sets no clavis_profile → launch credential-less).
+	credProfile := ""
+	if e.DefaultPool != "" {
+		if pool, perr := e.Store.Reader().GetPool(e.DefaultPool); perr == nil {
+			credProfile = pool.ClavisProfile
+		}
+	}
+
 	// Phase 2: external side effects (provision → quarantine → compile → launch).
-	ref, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted)
+	ref, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted, credProfile)
 
 	// Phase 3: durable result + state. On a Phase-2 error the launch may still have
 	// spawned the agent before erroring (ref-capture timeout, transient post-spawn
@@ -193,7 +202,7 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 // LAUNCH failure leaves the dir (the agent may be live and adopted by the caller).
 // NB: a crash mid-provision still orphans the dir — a sweep-side GC of terminal
 // workers' ConfigDir subtrees is a documented follow-up (there is no GC today).
-func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool) (ref, wt, head string, err error) {
+func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool, credProfile string) (ref, wt, head string, err error) {
 	root := filepath.Join(e.ConfigDir, workerID)
 	wt = filepath.Join(root, "worktree")
 	cfgDir := filepath.Join(root, "cfg") // sibling of the worktree (config OUTSIDE it, B6)
@@ -218,10 +227,23 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 	if err = permcompile.Compile(cfgDir, wt, granted, cat); err != nil {
 		return cleanup(err, "permcompile")
 	}
+	env := spawnenv.Scrub(os.Environ())
+	// Append the worker's SCOPED provider creds from its pool's clavis profile
+	// AFTER the scrub (the scrub stripped arco's OWN provider vars, P1; this adds
+	// back a pool-scoped set so the launched agent authenticates as that profile,
+	// not as arco). Fail the spawn on a resolve error rather than launch an
+	// unauthenticated worker. Inert when no profile / no Creds resolver.
+	if credProfile != "" && e.Creds != nil {
+		cenv, cerr := e.Creds.EnvFor(ctx, credProfile)
+		if cerr != nil {
+			return cleanup(cerr, "credentials")
+		}
+		env = append(env, cenv...)
+	}
 	spec := core.LaunchSpec{
 		Name: workspace, Kind: "claude", Workdir: wt,
 		Args: permcompile.LaunchArgs(cfgDir, granted, cat),
-		Env:  spawnenv.Scrub(os.Environ()),
+		Env:  env,
 	}
 	ref, err = e.VM.Launch(ctx, spec)
 	if err != nil {
