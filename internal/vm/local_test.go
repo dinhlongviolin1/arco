@@ -124,15 +124,17 @@ func TestLocal_ListAgentsAndPrompt(t *testing.T) {
 
 func TestFake_Launch(t *testing.T) {
 	f := NewFake()
-	ref, err := f.Launch(context.Background(), core.LaunchSpec{Name: "arco_x", Kind: "claude", Args: []string{"--settings", "/cfg"}})
+	ref, bootID, err := f.Launch(context.Background(), core.LaunchSpec{Name: "arco_x", Kind: "claude", Args: []string{"--settings", "/cfg"}})
 	require.NoError(t, err)
 	require.Equal(t, "pane:arco_x", ref)
-	// the launched spec is recorded, and the new agent shows alive by ref
+	require.Equal(t, "term:arco_x", bootID, "stable identity returned + stamped on the agent")
+	// the launched spec is recorded, and the new agent shows alive by ref + identity
 	require.Len(t, f.Launched(), 1)
 	require.Equal(t, "claude", f.Launched()[0].Kind)
 	agents, _ := f.ListAgents(context.Background())
 	require.Len(t, agents, 1)
 	require.Equal(t, ref, agents[0].Ref)
+	require.Equal(t, bootID, agents[0].BootID)
 	require.True(t, agents[0].Alive)
 }
 
@@ -147,16 +149,18 @@ func TestLocal_Launch(t *testing.T) {
 		"'workspace list') printf '%s' '{\"result\":{\"workspaces\":[{\"workspace_id\":\"wZ\",\"label\":\"arco_test\"}]}}' ; exit 0 ;;\n" +
 		"'pane list') printf '%s' '{\"result\":{\"panes\":[{\"pane_id\":\"wZ:p1\",\"workspace_id\":\"wZ\"}]}}' ; exit 0 ;;\n" +
 		"'agent start') echo \"$@\" >> " + startLog + " ; exit 0 ;;\n" +
+		"'agent list') printf '%s' '{\"result\":{\"agents\":[{\"pane_id\":\"wZ:p1\",\"workspace_id\":\"wZ\",\"terminal_id\":\"term_XYZ\",\"agent_status\":\"working\"}]}}' ; exit 0 ;;\n" +
 		"esac\nexit 0\n"
 	herdrPath := filepath.Join(bin, "herdr")
 	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
 
 	l := NewLocal(herdrPath) // absolute path — never the real ~/.local/bin/herdr
-	ref, err := l.Launch(context.Background(), core.LaunchSpec{
+	ref, bootID, err := l.Launch(context.Background(), core.LaunchSpec{
 		Name: "arco_test", Kind: "claude", Workdir: "/wt", Args: []string{"--settings", "/cfg"},
 	})
 	require.NoError(t, err)
 	require.Equal(t, "wZ:p1", ref, "ref is the resolved pane_id (matches ListAgents Ref)")
+	require.Equal(t, "term_XYZ", bootID, "terminal_id captured at launch (arms the identity guard from birth)")
 
 	b, err := os.ReadFile(startLog)
 	require.NoError(t, err)
@@ -178,7 +182,7 @@ func TestLocal_LaunchErrors(t *testing.T) {
 		"esac\nexit 0\n"
 	herdrPath := filepath.Join(bin, "herdr")
 	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
-	_, err := NewLocal(herdrPath).Launch(context.Background(), core.LaunchSpec{Name: "arco_test", Kind: "claude"})
+	_, _, err := NewLocal(herdrPath).Launch(context.Background(), core.LaunchSpec{Name: "arco_test", Kind: "claude"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no pane in workspace")
 }

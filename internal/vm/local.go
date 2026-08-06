@@ -242,7 +242,7 @@ func retryablePromptErr(err error) bool {
 // takes the original; correlation is by pane_id, not this name.)
 func herdrAgentName(label string) string { return strings.ToLower(label) }
 
-func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (string, error) {
+func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (string, string, error) {
 	kind := spec.Kind
 	if kind == "" {
 		kind = "claude"
@@ -255,20 +255,20 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 		create = append(create, "--env", kv)
 	}
 	if _, err := l.herdrRun(ctx, create...); err != nil {
-		return "", fmt.Errorf("herdr workspace create: %w", err)
+		return "", "", fmt.Errorf("herdr workspace create: %w", err)
 	}
 	wsID, err := l.workspaceIDByLabel(ctx, spec.Name)
 	if err != nil {
 		// The workspace was created but we can't resolve its id to clean it up
 		// (rare). Return the error; a sweep-GC follow-up reaps the orphan.
-		return "", err
+		return "", "", err
 	}
 	// From here the workspace exists → tear it down on ANY failure so a failed
 	// launch never orphans a live herdr workspace (capstone audit; no GC today).
 	paneID, err := l.paneInWorkspace(ctx, wsID)
 	if err != nil {
 		l.closeWorkspace(ctx, wsID)
-		return "", err
+		return "", "", err
 	}
 	// herdr `agent start <name>` requires 1–32 chars, starting with a lowercase
 	// letter and containing only [a-z0-9_-]. arco's workspace label embeds an
@@ -282,9 +282,31 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	}
 	if _, err := l.herdrRun(ctx, start...); err != nil {
 		l.closeWorkspace(ctx, wsID) // don't orphan the workspace on a failed agent start
-		return "", fmt.Errorf("herdr agent start: %w", err)
+		return "", "", fmt.Errorf("herdr agent start: %w", err)
 	}
-	return paneID, nil
+	// Resolve the just-started agent's stable identity (terminal_id) so the worker
+	// row carries it from birth — arming the sweep's identity guard before the
+	// first liveness observation (a recycled pane_id then can't be adopted as this
+	// worker's). Best-effort: "" if the agent isn't listed yet (rare startup race);
+	// the guard just falls back to identity-on-first-observe, and the reaper safely
+	// declines an unidentifiable agent.
+	return paneID, l.terminalIDForPane(ctx, paneID), nil
+}
+
+// terminalIDForPane returns the herdr terminal_id of the agent on paneID ("" if
+// none / unresolvable). terminal_id is herdr's stable per-pane identity (the
+// PID-reuse guard); see ListAgents.
+func (l *LocalVMClient) terminalIDForPane(ctx context.Context, paneID string) string {
+	obs, err := l.ListAgents(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, o := range obs {
+		if o.Ref == paneID {
+			return o.BootID
+		}
+	}
+	return ""
 }
 
 // closeWorkspace best-effort tears down a workspace (used to avoid orphaning one

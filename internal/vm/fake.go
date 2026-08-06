@@ -39,9 +39,10 @@ func (f *Fake) Launched() []core.LaunchSpec {
 	return append([]core.LaunchSpec(nil), f.launched...)
 }
 
-// Launch records the spec and returns a deterministic synthetic ref, registering
-// the new agent as alive (so a subsequent ListAgents/sweep correlates by it).
-func (f *Fake) Launch(_ context.Context, spec core.LaunchSpec) (string, error) {
+// Launch records the spec and returns a deterministic synthetic ref + stable
+// identity (bootID), registering the new agent as alive (so a subsequent
+// ListAgents/sweep correlates by ref AND matches identity).
+func (f *Fake) Launch(_ context.Context, spec core.LaunchSpec) (string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.launched = append(f.launched, spec)
@@ -49,11 +50,12 @@ func (f *Fake) Launch(_ context.Context, spec core.LaunchSpec) (string, error) {
 		if f.LaunchAliveOnErr { // spawned-but-errored: agent is alive despite the error
 			f.Agents = append(f.Agents, core.AgentObs{Workspace: spec.Name, Alive: true})
 		}
-		return "", f.LaunchErr
+		return "", "", f.LaunchErr
 	}
 	ref := "pane:" + spec.Name
-	f.Agents = append(f.Agents, core.AgentObs{Ref: ref, Workspace: spec.Name, Alive: true})
-	return ref, nil
+	bootID := "term:" + spec.Name
+	f.Agents = append(f.Agents, core.AgentObs{Ref: ref, Workspace: spec.Name, BootID: bootID, Alive: true})
+	return ref, bootID, nil
 }
 
 var _ core.VMClient = (*Fake)(nil)

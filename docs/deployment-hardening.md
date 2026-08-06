@@ -237,19 +237,35 @@ the local hook signs intake under P4; EscalationTimeout auto-pauses stuck
 waiting workers). The rest are **explicitly scoped-out known limitations** — none
 block the core spawn→autonomous-completion loop, but an operator should know them:
 
-- **Agent actuation is PARTIAL (MED-3).** `arco kill <worker>` now terminates a
-  worker and stops its agent (`VM.Kill` = `herdr workspace close`, derived from
-  the pane_id; PR #60) — a runaway/wedged worker is terminable. STILL missing:
-  arco does not AUTO-stop an agent when the *sweep* pauses a worker
+- **Agent actuation is PARTIAL (MED-3).** Two pieces have landed: `arco kill
+  <worker>` terminates a worker and stops its agent (`VM.Kill` = `herdr workspace
+  close`, derived from the pane_id; PR #60), and the **sweep now reaps orphaned
+  agents of TERMINAL workers** (PR #62) — a crash between `arco kill`'s commit and
+  its best-effort agent-stop, or any lingering `lost`/`failed` pane, is cleaned up
+  on the next sweep. The reaper is *identity-strict*: it closes a pane only on a
+  positive `terminal_id` match (never on a recycled/ambiguous ref). Identity is
+  established **at launch** (captured from herdr right after `agent start`,
+  persisted by `BindLaunch`) and thereafter only *confirmed* by liveness — never
+  *established* by it — so a stranger occupying a recycled pane can never be
+  recorded as a worker's identity and then wrongly closed (dual-review closed both
+  the inert-guard and first-observe-poisoning paths). A worker whose launch-capture
+  didn't resolve an id stays unidentifiable and is simply left for manual cleanup —
+  a rare, non-destructive miss chosen over any risk of closing an innocent
+  workspace. STILL
+  missing: arco does not AUTO-stop an agent when the sweep *pauses* a worker
   (`escalation_timeout`/`pool_ttl`) or when a brain `handoff` releases it to the
-  pool, nor does the sweep reap a terminal worker's orphaned-but-still-alive agent
-  (e.g. a crash between `arco kill`'s commit and the agent-stop). So a
-  pool-paused/handoff-released worker's agent can still linger, consuming quota.
-  Follow-up (its own focused pass — it interacts with paused-worker liveness/resume
-  semantics): auto-`Kill` on the sweep pause paths + a sweep reconciliation that
-  stops a live agent whose worker is paused/terminal; and `arco claim`/`release`
-  routes. **Operationally: `arco kill <id>` reclaims a worker's agent now; for a
-  lingering orphan, `herdr workspace close <id>` still works manually.**
+  pool — a **paused** worker's agent is intentionally NOT reaped, because pausing
+  is resume-intent and there is no relaunch/`claim` path yet, so stopping it would
+  strand the worker. That remaining piece (auto-kill-on-pause + `arco
+  claim`/`release` + a resume-via-relaunch path) is one coupled follow-up: it must
+  also make the sweep stop treating a paused worker's absent agent as a liveness
+  death. A second (pre-existing, minor) follow-up: the *operator* `arco kill` path
+  `VM.Kill`s `w.AgentRef` with no identity gate, so killing a worker that had
+  mis-adopted a recycled pane could close the wrong workspace — only the
+  *unattended* reaper is identity-strict today; the operator path trusts the
+  operator's explicit intent. **Operationally: `arco kill <id>` reclaims a worker's agent now, terminal
+  orphans self-clean on the next sweep; a lingering *paused* worker's agent still
+  needs a manual `herdr workspace close <id>`.**
 - **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
   mechanism is `workspace create --env KEY=VALUE`, so a pool's clavis token is
   briefly visible in `/proc/<herdr-pid>/cmdline` during the create call. On a

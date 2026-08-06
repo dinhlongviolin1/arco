@@ -28,6 +28,7 @@ type SweepResult struct {
 	RollupsTriggered    int // parents with completed children enqueued for a coalesced rollup
 	BrainRedrives       int // dangling brain_intents (crash-lost calls) re-submitted
 	EscalationsTimedOut int // pending escalations expired past EscalationTimeout (+ worker paused)
+	AgentsReaped        int // orphaned agents of TERMINAL workers stopped (quota reclaim)
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -85,13 +86,25 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		live = append(live, w)
 		worktrees[headKey(w)] = true
 	}
-	if len(live) == 0 {
-		return res, nil
+	if len(all) == 0 {
+		return res, nil // no workers at all → skip the herdr agent-list call entirely
 	}
 
+	// One agent list serves both the orphan reaper (terminal workers) and the
+	// liveness loop (live workers), so fetch it whenever ANY worker exists —
+	// reaping an orphan must run even when every worker is terminal.
 	agents, err := e.VM.ListAgents(ctx)
 	if err != nil {
 		return res, err
+	}
+	// Stop agents still alive on a TERMINAL worker's pane (quota leak): the kill
+	// crash-orphan qwen flagged (KillWorker's commit landed, its best-effort
+	// VM.Kill didn't), or a worker the sweep finalized lost/failed while its pane
+	// lingered. Runs before the liveness loop and even when len(live)==0.
+	res.AgentsReaped = e.reapOrphanedAgents(ctx, all, agents)
+
+	if len(live) == 0 {
+		return res, nil
 	}
 	lookupAlive := aliveLookup(agents)
 	var wts []string
@@ -117,9 +130,21 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 
 		if alive {
 			e.resetMiss(w.ID)
+			// Identity is established ONCE, at launch (BindLaunch). Observation only
+			// CONFIRMS it, never ESTABLISHES a new one: if launch-capture missed
+			// (w.BootID==""), we must NOT stamp the observed agent's terminal_id onto
+			// the row, because a stranger on a recycled pane would then be recorded as
+			// this worker's identity and later give the DESTRUCTIVE orphan reaper a
+			// false positive match (opus+qwen review — the empty-at-birth poisoning
+			// window). Such a worker stays unidentifiable and the reaper declines it —
+			// a non-destructive miss, the same trade made throughout MED-3.
+			obsBootID := ""
+			if w.BootID != "" {
+				obsBootID = obs.BootID
+			}
 			_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 				return tx.ObserveWorker(w.ID, core.WorkerObservation{
-					HeadCommit: headNow, BootID: obs.BootID, PIDStartTime: obs.PIDStartTime,
+					HeadCommit: headNow, BootID: obsBootID, PIDStartTime: obs.PIDStartTime,
 				})
 			})
 			continue
@@ -272,6 +297,63 @@ func aliveLookup(agents []core.AgentObs) func(core.Worker) (core.AgentObs, bool)
 		obs, ok := byWS[w.Workspace]
 		return obs, ok
 	}
+}
+
+// reapOrphanedAgents stops herdr agents still alive on a TERMINAL worker's pane.
+// A terminal worker (killed/failed/lost/completed_verified) is done forever, so a
+// lingering agent is pure quota leak — e.g. a crash between KillWorker's commit
+// and its best-effort VM.Kill, or a worker the sweep finalized lost/failed while
+// its pane hadn't exited. Best-effort + idempotent: a Kill error leaves the agent
+// listed to be re-reaped next sweep; a successful close removes it from
+// ListAgents so it isn't targeted again. Returns how many were stopped.
+//
+// Only TERMINAL workers are reaped. A `paused` worker is deliberately left alone:
+// pausing is resume-intent, and there is no relaunch/claim path yet, so stopping
+// a paused worker's agent would strand it. Auto-kill-on-pause is gated on that
+// path (docs §12, MED-3 follow-up).
+//
+// Reaping requires a POSITIVE identity match: the worker's recorded terminal_id
+// (herdr's stable per-pane id, carried in the BootID slot) must equal the live
+// agent's. This is the INVERSE posture of the liveness loop, which believes the
+// ref unless identity is known-mismatched — because closing a workspace is
+// DESTRUCTIVE, so on any identity doubt we must NOT act. Concretely: if our agent
+// died and herdr recycled its pane_id/workspace_id to an unrelated live agent, a
+// loose "believe the ref" reaper would wrongly close that innocent workspace
+// (opus review). A worker killed/failed before ANY sweep observed it alive has no
+// recorded terminal_id (it's persisted only on the liveness alive-path, not at
+// launch) → it is deliberately left for manual cleanup: a rare, NON-destructive
+// miss is the right trade against a destructive false-close (docs §12).
+func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agents []core.AgentObs) int {
+	lookup := aliveLookup(agents)
+	n := 0
+	for _, w := range all {
+		if !w.State.Terminal() {
+			continue
+		}
+		obs, alive := lookup(w)
+		if !alive {
+			continue
+		}
+		// Positive-identity gate (see doc): reap only when we can confirm the live
+		// agent on this ref is the SAME process we launched, never on a doubt.
+		if w.BootID == "" || obs.BootID == "" || obs.BootID != w.BootID {
+			continue
+		}
+		// Kill addresses a pane (herdr `workspace close` derives the ws from the
+		// pane_id); a bare workspace label is not a valid target, so skip if we have
+		// no captured ref (Fake/legacy prompt-model workers never capture one).
+		ref := w.AgentRef
+		if ref == "" {
+			ref = obs.Ref
+		}
+		if ref == "" {
+			continue
+		}
+		if err := e.VM.Kill(ctx, ref); err == nil {
+			n++
+		}
+	}
+	return n
 }
 
 // triggerRollups enqueues a coalesced rollup for each ALIVE parent worker that

@@ -133,8 +133,14 @@ type Tx interface {
 	// captured at launch, so the sweep can correlate this worker's liveness by it.
 	BindAgentRef(workerID, ref string) error
 	// BindLaunch records a worker's provisioned worktree, checked-out base commit,
-	// and backend agent handle (ref) at dispatch_done (the repo-based spawn path).
-	BindLaunch(workerID, worktree, base, ref string) error
+	// backend agent handle (ref), and the agent's stable identity (bootID =
+	// herdr terminal_id) at dispatch_done (the repo-based spawn path). Capturing
+	// bootID here — not just later on the liveness alive-path — arms the identity
+	// guard from birth, so a recycled pane_id can never be mistaken for this
+	// worker's agent (relied on by the sweep's destructive orphan reaper). A "" ref
+	// or "" bootID (launch error / unresolvable) is stored as-is (correlate by
+	// workspace; the reaper declines an unidentifiable agent).
+	BindLaunch(workerID, worktree, base, ref, bootID string) error
 
 	CreateSession(s Session) error
 	// CreatePool inserts a provider pool (operator config; `arco pool create`).
@@ -277,9 +283,12 @@ type VMClient interface {
 	PromptReady(ctx context.Context, workspace, text string) error
 	Kill(ctx context.Context, workspace string) error
 	// Launch starts a NEW agent per spec and returns the backend's agent handle
-	// (herdr pane_id) — the ref stored via BindAgentRef for sweep correlation.
-	// The pinned launch flags + scrubbed env are in the spec.
-	Launch(ctx context.Context, spec LaunchSpec) (ref string, err error)
+	// (herdr pane_id, the ref for sweep correlation) AND its stable identity
+	// (bootID = herdr terminal_id) captured at launch, so the identity guard is
+	// armed from birth. The pinned launch flags + scrubbed env are in the spec.
+	// bootID is "" if the backend exposes no stable id or it can't be resolved
+	// right after start (the worker then falls back to identity-on-first-observe).
+	Launch(ctx context.Context, spec LaunchSpec) (ref, bootID string, err error)
 	Diff(ctx context.Context, worktree, base, head string) (Diff, error)
 }
 
