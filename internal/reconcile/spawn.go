@@ -64,6 +64,16 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		if err := e.admitVM(tx, e.DefaultVM); err != nil {
 			return err
 		}
+		// Provider-pool concurrency lease, acquired BEFORE the intent (admission is
+		// race-free in this single-writer tx). ErrLeaseRejected aborts the whole tx
+		// → no worker created → caller backs off. Inert when DefaultPool is unset.
+		var leaseID string
+		if e.DefaultPool != "" {
+			leaseID = ulid.Make().String()
+			if err := tx.AcquireLease(leaseID, e.DefaultPool, e.LeaseTTL); err != nil {
+				return err
+			}
+		}
 		if err := tx.CreateWorker(core.Worker{
 			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting, VM: e.DefaultVM,
 			Workspace: workspace, Task: task, RunReason: "spawn", AgentKind: "claude",
@@ -74,11 +84,17 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		if granted, gerr = tx.GrantedCapabilities(sessionID); gerr != nil {
 			return gerr
 		}
-		_, _, _, err := tx.AppendEvent(core.Event{
+		cursor, _, _, err := tx.AppendEvent(core.Event{
 			Kind: "dispatch_intent", SessionID: sessionID, WorkerID: workerID, Actor: "cli",
 			Payload: fmt.Sprintf(`{"task":%q,"workspace":%q,"repo":%q}`, task, workspace, repo),
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if leaseID != "" { // bind the lease to the worker + its intent event
+			return tx.BindLease(leaseID, workerID, cursor)
+		}
+		return nil
 	})
 	if err != nil {
 		return DispatchResult{}, err

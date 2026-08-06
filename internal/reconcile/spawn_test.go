@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -103,4 +104,32 @@ func TestSpawn_RequiresRepoAndConfigDir(t *testing.T) {
 	e2, _, _ := newEngine(t) // ConfigDir unset
 	_, err = e2.Spawn(context.Background(), "", "t", true, "/some/repo", "")
 	require.Error(t, err, "missing ConfigDir")
+}
+
+// With a DefaultPool configured, Spawn acquires + binds a provider-pool lease in
+// the create tx; at capacity a further spawn is rejected (admission before intent).
+func TestSpawn_AcquiresPoolLease(t *testing.T) {
+	e, s, _ := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.DefaultPool = "p1"
+	e.LeaseTTL = time.Hour
+	_, err := s.DB().Exec(
+		`INSERT INTO provider_pools(id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at)
+		 VALUES('p1','anthropic','','default','',1,100,'ok',NULL,?)`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	require.NoError(t, err)
+	repo, _ := localRepo(t)
+
+	r1, err := e.Spawn(context.Background(), "", "t1", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, r1.State)
+	n, err := s.Reader().CountActiveLeases("p1")
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "lease acquired + bound to the worker")
+
+	// pool at capacity (max_active=1) → the next spawn is rejected before creating a worker
+	_, err = e.Spawn(context.Background(), "", "t2", true, repo, "")
+	require.ErrorIs(t, err, core.ErrLeaseRejected)
+	n, _ = s.Reader().CountActiveLeases("p1")
+	require.Equal(t, 1, n, "rejected spawn admitted nothing (tx rolled back)")
 }

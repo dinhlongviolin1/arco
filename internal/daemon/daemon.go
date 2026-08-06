@@ -91,6 +91,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
 	eng.GitBin = "git"
+	eng.DefaultPool = cfg.DefaultPool
+	eng.LeaseTTL = cfg.LeaseTTL
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
 	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
