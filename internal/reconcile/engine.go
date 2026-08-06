@@ -326,3 +326,16 @@ func (e *Engine) bg() context.Context {
 func isWaiting(s core.WorkerState) bool {
 	return s == core.WorkerWaitingForUser || s == core.WorkerWaitingConfirmation
 }
+
+// promptTarget is the VM target for prompting/killing a worker: its captured
+// backend handle (herdr pane_id, in AgentRef) when arco launched it, else the
+// workspace label. herdr's `agent prompt`/`send-keys` address a PANE, so a
+// repo-spawned worker MUST be targeted by its pane_id — the workspace label only
+// works for the Fake / legacy prompt-path (which never captures a pane_id).
+// Live-verified on herdr 0.7.5 (the label is not a valid prompt target there).
+func promptTarget(w core.Worker) string {
+	if w.AgentRef != "" {
+		return w.AgentRef
+	}
+	return w.Workspace
+}

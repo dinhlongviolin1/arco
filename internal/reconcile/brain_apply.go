@@ -265,7 +265,10 @@ func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step c
 		if w.OwnerSession == core.PoolSessionID {
 			return nil
 		}
-		workspace, ok = w.Workspace, true
+		// Target the worker's pane_id (AgentRef) so herdr `agent prompt` addresses
+		// the right pane; falls back to the workspace label for the Fake/legacy
+		// prompt-path (no captured pane). Returned to the caller as the Prompt target.
+		workspace, ok = promptTarget(w), true
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "prompt_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
 			CorrelationID: cid, Payload: fmt.Sprintf(`{"instruction":%q}`, step.Instruction),

@@ -163,3 +163,31 @@ func TestSpawn_FailedReleasesLease(t *testing.T) {
 	n, _ = s.Reader().CountActiveLeases("p1")
 	require.Equal(t, 1, n)
 }
+
+// A repo-spawned worker's initial task is delivered to its captured PANE
+// (AgentRef), not the workspace label — herdr `agent prompt` targets a pane, so
+// this is what makes a spawned agent actually start working (live-verified).
+func TestSpawn_DeliversInitialTaskToPane(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "do the thing", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State)
+
+	w, _ := s.Reader().GetWorker(res.WorkerID)
+	prompts := fake.Prompts()
+	require.Len(t, prompts, 1, "the initial task is delivered exactly once")
+	require.Equal(t, w.AgentRef, prompts[0].Workspace, "delivered to the captured pane (AgentRef)")
+	require.NotEqual(t, w.Workspace, prompts[0].Workspace, "NOT targeted at the workspace label")
+	require.Contains(t, prompts[0].Text, "do the thing")
+	require.Contains(t, prompts[0].Text, "[arco-intent]", "wrapped for delivery confirmation")
+}
+
+// promptTarget prefers the captured pane_id (AgentRef), falling back to the
+// workspace label only for a worker arco never launched (Fake/legacy path).
+func TestPromptTarget_PrefersAgentRefElseWorkspace(t *testing.T) {
+	require.Equal(t, "wE:p1", promptTarget(core.Worker{Workspace: "arco_1", AgentRef: "wE:p1"}))
+	require.Equal(t, "arco_1", promptTarget(core.Worker{Workspace: "arco_1"}))
+}
