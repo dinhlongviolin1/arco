@@ -246,7 +246,12 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		// A `blocked` worker is parked (e.g. by a brain billing wall) — do NOT
 		// re-invoke the brain on the next ambiguous signal, or a parked worker
 		// becomes a clavis/quota storm. It stays parked until an explicit reopen.
-		ambiguous = amb && !w.State.Terminal() && w.State != core.WorkerBlocked
+		// A POOL-OWNED worker (released via handoff, unowned pending claim) is
+		// likewise inert to the brain — else it re-classifies in a paid loop,
+		// escalates/delegates on the protected pool sentinel, and shares one
+		// rate bucket with every pooled worker (opus review of the handoff wiring).
+		ambiguous = amb && !w.State.Terminal() && w.State != core.WorkerBlocked &&
+			w.OwnerSession != core.PoolSessionID
 		if amb || target == w.State {
 			return nil // ambiguity is handled off the write path, post-commit
 		}

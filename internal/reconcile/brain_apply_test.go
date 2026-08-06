@@ -202,3 +202,50 @@ func TestBrain_UnderRateLimitProceeds(t *testing.T) {
 	w, _ := s.Reader().GetWorker(id)
 	require.Equal(t, core.WorkerCompletedCandidate, w.State)
 }
+
+// The brain's `handoff` StepResult releases the worker to the pool (PASS-3
+// ownership transfer) — it stays running, unowned, until claimed/TTL-paused.
+func TestBrain_HandoffReleasesToPool(t *testing.T) {
+	e, s, _ := brainEngine(t, `{"kind":"handoff","reason":"done with my part"}`, nil)
+	id := dispatchRunning(t, e)
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+
+	w, _ := s.Reader().GetWorker(id)
+	require.Equal(t, core.PoolSessionID, w.OwnerSession, "handoff released the worker to the pool")
+	require.NotEmpty(t, w.PooledAt)
+	require.Equal(t, core.WorkerRunning, w.State, "stays running (unowned), not terminal")
+	// the release audit events were emitted
+	evs, _ := s.Reader().EventsSince(0, 100000)
+	kinds := map[string]bool{}
+	for _, ev := range evs {
+		if ev.WorkerID == id {
+			kinds[ev.Kind] = true
+		}
+	}
+	require.True(t, kinds["worker_release_intent"] && kinds["worker_released"], "handoff emits release events")
+}
+
+// After handoff (worker released to the pool, still running), it is INERT to the
+// brain — a further ambiguous signal must NOT re-invoke the brain (else a
+// paid-call loop / escalations on the pool sentinel). opus review of handoff.
+func TestBrain_PoolOwnedNotReclassified(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(context.Context, string, ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"handoff"}`), nil
+		}}
+	id := dispatchRunning(t, e)
+
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), calls.Load(), "first ambiguous → brain → handoff → released to pool")
+	require.Equal(t, core.PoolSessionID, mustWorker(t, s, id).OwnerSession)
+
+	// second ambiguous signal on the now-pool-owned worker → brain NOT re-invoked
+	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
+	e.Exec.Wait()
+	require.Equal(t, int32(1), calls.Load(), "pool-owned worker is inert to the brain")
+}

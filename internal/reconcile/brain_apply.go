@@ -24,6 +24,11 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	if err != nil || (w.State != core.WorkerRunning && w.State != core.WorkerStarting) {
 		return
 	}
+	// A pool-owned (handoff-released, unclaimed) worker is inert to the brain —
+	// chokepoint belt for the ApplyEvent gate (covers any other brainClassify caller).
+	if w.OwnerSession == core.PoolSessionID {
+		return
+	}
 	// Per-session brain-rate admission + persist brain INTENT, in ONE write tx so
 	// the count→admit→insert is race-free under the single-writer lock (a burst of
 	// ambiguous workers in a session can't slip past the cap). Over the cap: record
@@ -178,8 +183,14 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 	case "confirm":
 		e.openFromBrain(ctx, workerID, "confirm", core.ClassDanger, core.TierHighBlast, step)
 	case "handoff":
-		// PASS-3 feature; reject in P2 with an audit trail (never silently drop).
-		e.errorEvent(ctx, workerID, "handoff not supported in P2")
+		// The worker hands ownership back to arco → release it to the pool (PASS-3
+		// ownership transfer). It stays running, unowned, until claimed or
+		// pool-TTL-paused; ReleaseWorker emits the intent/released audit events.
+		if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			return tx.ReleaseWorker(workerID, "brain")
+		}); err != nil {
+			e.errorEvent(ctx, workerID, "handoff release failed: "+err.Error())
+		}
 	default:
 		e.errorEvent(ctx, workerID, "unhandled StepResult kind: "+step.Kind)
 	}
