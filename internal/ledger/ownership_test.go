@@ -49,20 +49,22 @@ func getWorker(t *testing.T, s *Store, id string) core.Worker {
 	return w
 }
 
-// CountActiveWorkers hardcodes the terminal states in SQL while core defines
-// them in WorkerState.Terminal(); this behavioral test guarantees the two never
-// silently desync (qwen review: a future 12th state would otherwise slip
-// through). Same hardcoded set lives in ReapLeases — kept consistent here.
+// CountActiveWorkers AND CountActiveWorkersOnVM hardcode the terminal states in
+// SQL while core defines them in WorkerState.Terminal(); this behavioral test
+// guarantees BOTH never silently desync (qwen: a future 12th state would slip
+// through; opus: the VM copy was the untested third hardcoded site). The same
+// set also lives in ReapLeases.
 func TestCountActiveWorkers_MirrorsTerminal(t *testing.T) {
 	s := newTestStore(t)
 	sid := mkSession(t, s)
+	const vm = "vm-mirror"
 	activeWant := 0
 	for _, st := range core.AllWorkerStates {
 		id := ulid.Make().String()
 		state := st
 		require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
 			return tx.CreateWorker(core.Worker{
-				ID: id, OwnerSession: sid, State: state,
+				ID: id, OwnerSession: sid, State: state, VM: vm,
 				Workspace: "arco_" + id, Task: "t", RunReason: "x",
 			})
 		}))
@@ -73,6 +75,9 @@ func TestCountActiveWorkers_MirrorsTerminal(t *testing.T) {
 	n, err := s.Reader().CountActiveWorkers(sid)
 	require.NoError(t, err)
 	require.Equal(t, activeWant, n, "CountActiveWorkers exclusion list must mirror WorkerState.Terminal()")
+	nv, err := s.Reader().CountActiveWorkersOnVM(vm)
+	require.NoError(t, err)
+	require.Equal(t, activeWant, nv, "CountActiveWorkersOnVM exclusion list must mirror WorkerState.Terminal() too")
 }
 
 func TestCountActiveWorkersOnVM(t *testing.T) {

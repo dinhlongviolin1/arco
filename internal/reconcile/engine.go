@@ -155,6 +155,9 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 // admitVM enforces the per-VM concurrency cap inside a create tx (race-free
 // under the single-writer lock). No-op when the worker has no VM assigned or the
 // cap is unset — so it's inert until a VM-assigning deployment configures both.
+// NB: the cap bounds workers THIS ledger tracks on the VM label, not the
+// physical host — out-of-band launches on the same machine aren't counted
+// (correct under the intended single-daemon/single-ledger deployment).
 func (e *Engine) admitVM(tx core.Tx, vm string) error {
 	if vm == "" || e.MaxWorkersPerVM <= 0 {
 		return nil
