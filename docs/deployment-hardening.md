@@ -287,21 +287,23 @@ spawn→autonomous-completion loop, but an operator should know them:
   the inert-guard and first-observe-poisoning paths). A worker whose launch-capture
   didn't resolve an id stays unidentifiable and is simply left for manual cleanup —
   a rare, non-destructive miss chosen over any risk of closing an innocent
-  workspace. STILL
-  missing: arco does not AUTO-stop an agent when the sweep *pauses* a worker
-  (`escalation_timeout`/`pool_ttl`) or when a brain `handoff` releases it to the
-  pool — a **paused** worker's agent is intentionally NOT reaped, because pausing
-  is resume-intent and there is no relaunch/`claim` path yet, so stopping it would
-  strand the worker. That remaining piece (auto-kill-on-pause + `arco
-  claim`/`release` + a resume-via-relaunch path) is one coupled follow-up: it must
-  also make the sweep stop treating a paused worker's absent agent as a liveness
-  death. A second (pre-existing, minor) follow-up: the *operator* `arco kill` path
-  `VM.Kill`s `w.AgentRef` with no identity gate, so killing a worker that had
-  mis-adopted a recycled pane could close the wrong workspace — only the
-  *unattended* reaper is identity-strict today; the operator path trusts the
-  operator's explicit intent. **Operationally: `arco kill <id>` reclaims a worker's agent now, terminal
-  orphans self-clean on the next sweep; a lingering *paused* worker's agent still
-  needs a manual `herdr workspace close <id>`.**
+  workspace. **Auto-kill-on-pause LANDED (PR #67):** the identity-strict reaper now
+  reclaims a **paused** worker's idle agent too (a worker paused by
+  `escalation_timeout`/`pool_ttl` has only an idle agent burning quota; its
+  worktree/work-product is preserved), and the liveness loop excludes paused
+  workers so their auto-killed agent is not mistaken for a death and finalized to
+  `lost` (the coupling those two changes had to land together). This closed the
+  earlier worry that killing a paused agent would "strand" the worker — there is no
+  resume-by-RECONNECT to lose; resume is via relaunch. STILL missing: **resume via
+  relaunch** (`arco claim`/`resume` that re-launches a fresh agent in the paused
+  worker's preserved worktree) — a genuine enhancement (a paused worker is inspectable
+  + re-dispatchable today, not stranded); it needs the initial-delivery-recovery
+  building block above, so it's the same design-gated pass. A second (pre-existing,
+  minor) follow-up: the *operator* `arco kill` path `VM.Kill`s `w.AgentRef` with no
+  identity gate, so killing a worker that had mis-adopted a recycled pane could close
+  the wrong workspace — only the *unattended* reaper is identity-strict; the operator
+  path trusts explicit intent. **Operationally: `arco kill <id>` reclaims a worker's
+  agent, and terminal + paused orphans self-clean on the next sweep.**
 - **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
   mechanism is `workspace create --env KEY=VALUE`, so a pool's clavis token is
   briefly visible in `/proc/<herdr-pid>/cmdline` during the create call. On a
