@@ -82,7 +82,22 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if cfg.BrainProfile != "" {
 		eng.Brain = reconcile.BrainCfg{Enabled: true, Profile: cfg.BrainProfile, Model: cfg.BrainModel}
 	}
+	// Network-exposed intake MUST be signed (security precondition P4): refuse to
+	// start with a TCP listener but no shared secret rather than expose an
+	// unauthenticated event-injection surface.
+	//
+	// SCOPE WARNING for whoever wires TCP: the HMAC gate covers ONLY POST
+	// /v1/events. dispatch / verify / escalations{answer,confirm} are mutating and
+	// UNAUTHENTICATED (they rely on the local unix socket's 0700 dir trust + the
+	// local CLI posting unsigned). Do NOT bind cfg.TCPAddr onto srv.Handler()
+	// as-is — serve only /v1/events (+ read-only GETs) over TCP, or gate every
+	// mutating route behind the same HMAC (and teach the CLI to sign), before any
+	// TCP listener is added (opus review, MED latent gap).
+	if cfg.TCPAddr != "" && cfg.IntakeSecret == "" {
+		return fmt.Errorf("daemon: tcp_addr is set but intake_secret is empty — network intake must be signed (set ARCO_INTAKE_SECRET)")
+	}
 	srv := api.New(store, eng)
+	srv.SetIntakeSecret(cfg.IntakeSecret)
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
