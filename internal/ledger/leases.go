@@ -70,6 +70,22 @@ func (t *txn) BindAgentRef(workerID, ref string) error {
 	return nil
 }
 
+// BindLaunch records what provisioning + launch produced for a worker: its
+// worktree path, the checked-out base commit, and the backend agent handle
+// (herdr pane_id). Set in the dispatch_done tx. ErrNotFound if the worker is gone.
+func (t *txn) BindLaunch(workerID, worktree, base, ref string) error {
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE workers SET worktree=?, base_commit=?, agent_ref=? WHERE id=?`,
+		worktree, base, ref, workerID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return core.ErrNotFound
+	}
+	return nil
+}
+
 // CountActiveWorkersOnVM returns the number of NON-terminal workers assigned to a
 // VM (per-VM concurrency-admission denominator). Same terminal set as above.
 func (r *reader) CountActiveWorkersOnVM(vm string) (int, error) {

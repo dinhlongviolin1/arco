@@ -124,6 +124,9 @@ type Tx interface {
 	// BindAgentRef records the VM-backend agent handle (e.g. herdr pane_id)
 	// captured at launch, so the sweep can correlate this worker's liveness by it.
 	BindAgentRef(workerID, ref string) error
+	// BindLaunch records a worker's provisioned worktree, checked-out base commit,
+	// and backend agent handle (ref) at dispatch_done (the repo-based spawn path).
+	BindLaunch(workerID, worktree, base, ref string) error
 
 	CreateSession(s Session) error
 	SetSessionStatus(id string, to SessionStatus, expectedRev int64, e Event) error

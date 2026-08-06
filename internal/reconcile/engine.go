@@ -70,6 +70,12 @@ type Engine struct {
 	// per session per interval when its children complete (0 = rollup disabled).
 	RollupInterval time.Duration
 
+	// ConfigDir is the daemon-owned base for per-worker worktrees + compiled
+	// configs (OUTSIDE the worktree, B6). Required by Spawn; set by the daemon.
+	ConfigDir string
+	// GitBin is the git binary for worktree provisioning ("" → "git").
+	GitBin string
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 }
