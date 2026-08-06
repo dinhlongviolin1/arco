@@ -77,7 +77,10 @@ Freeze `schema.sql`, then no more `CREATE TABLE IF NOT EXISTS` drift:
 ### Deferred to sub-plans (P2 stays headless-complete without them)
 Telegram · Web · hindsight (24b) · curator+playbook-learning (24c) · cross-VM SSH + provider-pool routing + Postgres/queue · scheduler.
 
-#### Deferred: crash re-drive of a dangling `brain_intent` (do NOT ship the naive version)
+#### DONE (#42): crash re-drive of a lost `brain_intent` — correlation-based. History below (the naive version was rejected first).
+**Shipped in #42** as the correlation-based design spec'd below: `brainClassify` stamps a unique cid on the `brain_intent`; the two running-leaving side effects (`prompt_intent`, `brain_dispatch` — the latter atomic with child creation) stamp the same cid; `markBrainResolved` resolves every other outcome; the sweep re-drives a running/starting, non-pool worker whose most-recent `brain_intent` has no cid-sibling, older than a grace floored to ≥ 2× the 120s call timeout. A fired side effect always leaves a cid-sibling ⇒ a re-drive can never duplicate a prompt/child; rate-limited retries back off one grace interval; migration 0004 indexes the query. opus verdict GO (EXPLAIN-verified). The rejected-naive-version history + spec is retained below for the record.
+
+##### (history) Deferred: crash re-drive of a dangling `brain_intent` (do NOT ship the naive version)
 A brain classification records a `brain_intent` in a tx, then shells the LLM OFF the write path (~120s), then `applyStep` applies the result. A crash in that window loses the call. Today it is re-driven only when a *new* push event arrives via `ApplyEvent` — the sweep's alive path records observations but never re-runs fusion, so a worker sitting in a stable ambiguous state with a lost call is never re-classified. (`brain_apply.go` "full crash re-drive of a dangling brain_intent is a later pass".)
 
 A naive fix — "the sweep re-drives any worker whose *latest event* is a `brain_intent` older than a grace" — was built and **rejected by dual review (opus + qwen), because it is a net regression:**
