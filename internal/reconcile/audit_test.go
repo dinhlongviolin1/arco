@@ -129,3 +129,24 @@ func TestAudit_RejectFromPausedGoesToBlocked(t *testing.T) {
 	}))
 	require.Equal(t, core.WorkerBlocked, mustWorker(t, s, wid).State, "rejected danger action → blocked, not stuck paused")
 }
+
+// F3 (intended behavior, made explicit): a deny-listed attempt on a worker in an
+// UNPAUSABLE non-terminal state (completed_candidate) still SURFACES the danger
+// escalation, but does not pause it (the attempt was already hook-denied; pausing
+// such states would race dispatch / be heavy-handed). Regression pin.
+func TestAudit_UnpausableStateStillEscalates(t *testing.T) {
+	e, s, _ := newEngine(t)
+	wid := dispatchRunning(t, e)
+	// drive running → completed_candidate (non-terminal, has no legal →paused edge)
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(wid)
+		return tx.TransitionWorker(wid, core.WorkerCompletedCandidate, w.Rev, core.Event{Kind: "state_change", WorkerID: wid, SessionID: w.OwnerSession, Payload: "{}"})
+	}))
+
+	require.NoError(t, e.AuditDeniedAttempt(context.Background(), wid, "git.push.main", "x", "evt-u"))
+
+	require.Equal(t, core.WorkerCompletedCandidate, mustWorker(t, s, wid).State, "unpausable state left as-is (not paused)")
+	escs, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: wid})
+	require.Len(t, escs, 1, "the danger attempt still surfaces an escalation")
+	require.Equal(t, core.ClassDanger, escs[0].ActionClass)
+}
