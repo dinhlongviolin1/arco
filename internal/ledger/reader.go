@@ -224,6 +224,42 @@ func (r *reader) Allowed(sessionID, capability string) (bool, error) {
 	return n > 0, nil
 }
 
+// GrantedCapabilities returns a session's EFFECTIVE granted capability set — the
+// input permcompile.Compile needs. It mirrors Allowed() as a set: every
+// default-allowed catalog capability, plus every capability with an active,
+// non-expired session_grant for this session. Decision-free (no cascade/policy;
+// just the same rule Allowed() applies, enumerated).
+func (r *reader) GrantedCapabilities(sessionID string) (map[string]bool, error) {
+	granted := map[string]bool{}
+	scan := func(rows *sql.Rows, err error) error {
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cap string
+			if err := rows.Scan(&cap); err != nil {
+				return err
+			}
+			granted[cap] = true
+		}
+		return rows.Err()
+	}
+	// default-allowed caps (granted to every session, matching Allowed()).
+	if err := scan(r.q.QueryContext(context.Background(),
+		`SELECT capability FROM capability_catalog WHERE default_allowed=1`)); err != nil {
+		return nil, err
+	}
+	// explicit active, non-expired grants for this session.
+	if err := scan(r.q.QueryContext(context.Background(),
+		`SELECT capability FROM session_grants
+		 WHERE session_id=? AND status='active' AND (expires_at IS NULL OR expires_at > ?)`,
+		sessionID, nowRFC())); err != nil {
+		return nil, err
+	}
+	return granted, nil
+}
+
 func scanCatalog(sc scanner) (core.CatalogRow, error) {
 	var c core.CatalogRow
 	var def, hb, cw int

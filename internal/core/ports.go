@@ -87,6 +87,10 @@ type Reader interface {
 	// Allowed is the authoritative capability check for arco-executed actions
 	// (O(1) own-tree read; cascade keeps it O(1)).
 	Allowed(sessionID, capability string) (bool, error)
+	// GrantedCapabilities returns a session's effective granted capability set
+	// (default-allowed ∪ active non-expired grants) — the `granted` input for
+	// permcompile.Compile / LaunchArgs.
+	GrantedCapabilities(sessionID string) (map[string]bool, error)
 
 	// GetPool returns a provider pool by id.
 	GetPool(id string) (ProviderPool, error)
