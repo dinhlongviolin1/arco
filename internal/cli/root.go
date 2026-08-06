@@ -75,7 +75,9 @@ func newClient() (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(cfg.Socket), nil
+	c := client.New(cfg.Socket)
+	c.SetIntakeSecret(cfg.IntakeSecret) // sign /v1/events so the local hook works under P4
+	return c, nil
 }
 
 func newVersionCmd() *cobra.Command {
