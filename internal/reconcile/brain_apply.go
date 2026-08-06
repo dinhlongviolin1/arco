@@ -8,6 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/oklog/ulid/v2"
+
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
@@ -29,12 +31,22 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	if w.OwnerSession == core.PoolSessionID {
 		return
 	}
+	// cid correlates this classification: the brain_intent carries it, and so does
+	// whichever un-recallable side effect the decision fires (prompt_intent for
+	// run_again, brain_dispatch for dispatch — the only two decisions that leave
+	// the worker RUNNING). The sweep re-drives a worker whose most-recent
+	// brain_intent has NO event sharing its cid (a call lost to a crash BEFORE it
+	// acted); a fired side effect leaves a cid-sibling, so a re-drive can never
+	// duplicate it (see Store.StaleBrainIntents + Sweep).
+	cid := ulid.Make().String()
+
 	// Per-session brain-rate admission + persist brain INTENT, in ONE write tx so
 	// the count→admit→insert is race-free under the single-writer lock (a burst of
 	// ambiguous workers in a session can't slip past the cap). Over the cap: record
 	// brain_rate_limited and skip the call — the worker stays as-is and is
-	// re-evaluated on its next ambiguous signal (no park, no retry storm). NOTE:
-	// full crash re-drive of a dangling brain_intent is a later pass.
+	// re-evaluated on its next ambiguous signal (no park, no retry storm). A
+	// rate-limited attempt carries NO cid, so it never resolves the dangling
+	// brain_intent — a later, un-throttled sweep still re-drives it.
 	proceed := true
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		// Re-read the worker INSIDE the tx so the rate count + intent are attributed
@@ -61,7 +73,7 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 		}
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "brain_intent", WorkerID: workerID, SessionID: cur.OwnerSession, Actor: "brain",
-			Payload: fmt.Sprintf(`{"state":%q}`, cur.State),
+			CorrelationID: cid, Payload: fmt.Sprintf(`{"state":%q}`, cur.State),
 		})
 		return e2
 	})
@@ -81,15 +93,43 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	res := brain.Invoke(ctx, brain.Config{Profile: e.Brain.Profile, Model: e.Brain.Model},
 		prompt, e.Brain.Runner)
 
-	if res.Billing {
+	switch {
+	case res.Billing:
 		e.park(ctx, workerID, "brain billing wall — parked, not retried")
-		return
-	}
-	if res.Malformed || res.Err != nil {
+	case res.Malformed || res.Err != nil:
 		e.park(ctx, workerID, "brain output unusable — parked")
-		return
+	default:
+		e.applyStep(ctx, workerID, cid, res.Step)
 	}
-	e.applyStep(ctx, workerID, res.Step)
+	// Resolve the cid unconditionally once the classification has been PROCESSED
+	// (parked or applied), so a re-drive fires ONLY for a call lost mid-flight.
+	// The two un-recallable side effects already stamp cid on their own intent
+	// (prompt_intent / brain_dispatch) BEFORE acting — this covers every OTHER
+	// outcome that leaves the worker running without a side effect: a denied/failed
+	// delegation, an unhandled kind, or a decision whose transition is a legal
+	// no-op (e.g. final_output on a still-`starting` worker). Without it those loop
+	// on the brain every grace interval forever (opus review).
+	e.markBrainResolved(ctx, workerID, cid)
+}
+
+// markBrainResolved appends a cid-stamped brain_resolved event so the sweep's
+// stale-brain-intent detection treats the classification as durably processed.
+// Best-effort: if it fails, the worst case is one extra (safe, idempotent)
+// re-drive of a no-side-effect outcome — a fired side effect is already guarded
+// by its own cid-stamped intent, and the rate-limited path (which returns before
+// this) intentionally leaves the cid unresolved so a later sweep retries.
+func (e *Engine) markBrainResolved(ctx context.Context, workerID, cid string) {
+	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+		w, err := tx.GetWorker(workerID)
+		if err != nil {
+			return nil
+		}
+		_, _, _, e2 := tx.AppendEvent(core.Event{
+			Kind: "brain_resolved", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
+			CorrelationID: cid, Payload: "{}",
+		})
+		return e2
+	})
 }
 
 const (
@@ -142,16 +182,21 @@ func truncate(s string, n int) string {
 // applyStep reconciles a StepResult in a fresh tx (re-validating rev). Every
 // StepResult.Kind has a branch; an unhandled kind is an error event, not a
 // silent drop.
-func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepResult) {
+// applyStep applies a brain StepResult. cid is the classification's correlation
+// id (empty for the rollup path, which records no brain_intent): the two
+// decisions that leave the worker RUNNING with an un-recallable side effect —
+// run_again (prompt) and dispatch (child) — stamp cid on their side-effect
+// intent so a crash-recovery re-drive can tell "already acted" from "lost".
+func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.StepResult) {
 	// run_again/dispatch prompt the worker — a side effect done BEFORE the tx so
 	// a tx never holds while shelling out.
 	switch step.Kind {
 	case "run_again":
-		// Re-read + record prompt_intent under the write lock RIGHT before the
-		// prompt, and skip if the worker has since moved (a concurrent intake
-		// transition) — the CAS protects state, this protects the un-recallable
-		// external side effect.
-		ws, ok := e.preparePrompt(ctx, workerID, step)
+		// Re-read + record prompt_intent (stamped with cid) under the write lock
+		// RIGHT before the prompt, and skip if the worker has since moved (a
+		// concurrent intake transition) — the CAS protects state, prompt_intent(cid)
+		// protects the un-recallable external side effect from a re-drive.
+		ws, ok := e.preparePrompt(ctx, workerID, cid, step)
 		if !ok {
 			return
 		}
@@ -166,7 +211,10 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 		// The brain delegates a subtask → spawn a CHILD worker (depth + per-session
 		// fan-in gated). The parent stays running while the child works. A denied
 		// delegation (depth/fan-in) is an audit event, never a crash or silent drop.
-		if _, err := e.Delegate(ctx, workerID, step.Instruction); err != nil {
+		// cid flows to Delegate, which records a parent-scoped brain_dispatch(cid)
+		// ATOMICALLY in the child-create tx: child-exists ⟹ cid resolved ⟹ a
+		// re-drive can't spawn a duplicate child.
+		if _, err := e.Delegate(ctx, workerID, step.Instruction, cid); err != nil {
 			switch {
 			case errors.Is(err, core.ErrMaxDepthExceeded), errors.Is(err, core.ErrFanInExceeded):
 				e.errorEvent(ctx, workerID, "delegation denied: "+err.Error())
@@ -199,7 +247,7 @@ func (e *Engine) applyStep(ctx context.Context, workerID string, step core.StepR
 // preparePrompt verifies (under the write lock) that the worker is still in a
 // promptable state and records prompt_intent; returns the workspace + ok. If the
 // worker moved, ok=false and the caller skips the prompt.
-func (e *Engine) preparePrompt(ctx context.Context, workerID string, step core.StepResult) (workspace string, ok bool) {
+func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step core.StepResult) (workspace string, ok bool) {
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -211,7 +259,7 @@ func (e *Engine) preparePrompt(ctx context.Context, workerID string, step core.S
 		workspace, ok = w.Workspace, true
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "prompt_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
-			Payload: fmt.Sprintf(`{"instruction":%q}`, step.Instruction),
+			CorrelationID: cid, Payload: fmt.Sprintf(`{"instruction":%q}`, step.Instruction),
 		})
 		return e2
 	})

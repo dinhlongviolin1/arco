@@ -14,7 +14,7 @@ func TestDelegate_SpawnsChildWithLineage(t *testing.T) {
 	parent := dispatchRunning(t, e)
 	p, _ := s.Reader().GetWorker(parent)
 
-	res, err := e.Delegate(context.Background(), parent, "do the subtask")
+	res, err := e.Delegate(context.Background(), parent, "do the subtask", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Equal(t, p.OwnerSession, res.SessionID, "child inherits the parent's session")
@@ -38,16 +38,16 @@ func TestDelegate_SpawnsChildWithLineage(t *testing.T) {
 func TestDelegate_DepthCapAtTwo(t *testing.T) {
 	e, s, _ := newEngine(t)
 	parent := dispatchRunning(t, e) // depth 0
-	c1, err := e.Delegate(context.Background(), parent, "level 1")
+	c1, err := e.Delegate(context.Background(), parent, "level 1", "")
 	require.NoError(t, err)
 	require.Equal(t, 1, mustWorker(t, s, c1.WorkerID).DelegationDepth)
 
-	c2, err := e.Delegate(context.Background(), c1.WorkerID, "level 2")
+	c2, err := e.Delegate(context.Background(), c1.WorkerID, "level 2", "")
 	require.NoError(t, err)
 	require.Equal(t, 2, mustWorker(t, s, c2.WorkerID).DelegationDepth)
 
 	// a depth-2 worker cannot delegate further (would be depth 3)
-	_, err = e.Delegate(context.Background(), c2.WorkerID, "level 3")
+	_, err = e.Delegate(context.Background(), c2.WorkerID, "level 3", "")
 	require.ErrorIs(t, err, core.ErrMaxDepthExceeded)
 }
 
@@ -56,12 +56,12 @@ func TestDelegate_FanInCap(t *testing.T) {
 	e.MaxChildren = 3 // the session may hold at most 3 active workers
 	parent := dispatchRunning(t, e)
 	// parent is worker #1 in the session; two children fill the cap.
-	_, err := e.Delegate(context.Background(), parent, "c1")
+	_, err := e.Delegate(context.Background(), parent, "c1", "")
 	require.NoError(t, err)
-	_, err = e.Delegate(context.Background(), parent, "c2")
+	_, err = e.Delegate(context.Background(), parent, "c2", "")
 	require.NoError(t, err)
 	// 4th active worker would exceed the cap
-	_, err = e.Delegate(context.Background(), parent, "c3")
+	_, err = e.Delegate(context.Background(), parent, "c3", "")
 	require.ErrorIs(t, err, core.ErrFanInExceeded)
 
 	n, err := s.Reader().CountActiveWorkers(mustWorker(t, s, parent).OwnerSession)
@@ -74,7 +74,7 @@ func TestDelegate_TerminalChildFreesSlot(t *testing.T) {
 	e, s, _ := newEngine(t)
 	e.MaxChildren = 2
 	parent := dispatchRunning(t, e)
-	c1, err := e.Delegate(context.Background(), parent, "c1")
+	c1, err := e.Delegate(context.Background(), parent, "c1", "")
 	require.NoError(t, err)
 	require.ErrorIs(t, e.delegateExpectFanIn(t, parent), core.ErrFanInExceeded)
 
@@ -83,7 +83,7 @@ func TestDelegate_TerminalChildFreesSlot(t *testing.T) {
 		w, _ := tx.GetWorker(c1.WorkerID)
 		return tx.TransitionWorker(c1.WorkerID, core.WorkerFailed, w.Rev, core.Event{Kind: "state_change", WorkerID: c1.WorkerID, SessionID: w.OwnerSession, Payload: "{}"})
 	}))
-	_, err = e.Delegate(context.Background(), parent, "c2")
+	_, err = e.Delegate(context.Background(), parent, "c2", "")
 	require.NoError(t, err, "a terminal worker no longer counts against the cap")
 }
 
@@ -94,7 +94,7 @@ func TestDelegate_TerminalParentRejected(t *testing.T) {
 		w, _ := tx.GetWorker(parent)
 		return tx.TransitionWorker(parent, core.WorkerFailed, w.Rev, core.Event{Kind: "state_change", WorkerID: parent, SessionID: w.OwnerSession, Payload: "{}"})
 	}))
-	_, err := e.Delegate(context.Background(), parent, "sub")
+	_, err := e.Delegate(context.Background(), parent, "sub", "")
 	require.ErrorIs(t, err, core.ErrIllegalTransition)
 }
 
@@ -154,6 +154,6 @@ func mustWorker(t *testing.T, s interface {
 // should hit the fan-in cap (keeps the table test terse).
 func (e *Engine) delegateExpectFanIn(t *testing.T, parent string) error {
 	t.Helper()
-	_, err := e.Delegate(context.Background(), parent, "overflow")
+	_, err := e.Delegate(context.Background(), parent, "overflow", "")
 	return err
 }

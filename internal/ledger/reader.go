@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
@@ -141,6 +142,69 @@ func (r *reader) RecentWorkerEvents(workerID string, limit int) ([]core.Event, e
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, nil
+}
+
+// StaleBrainIntents returns the IDs of RUNNING/STARTING, non-pool workers whose
+// most-recent `brain_intent` was recorded before `before` and has NO other event
+// sharing its correlation_id — a brain classification that was durably recorded
+// but lost to a crash BEFORE it acted (the daemon died in the off-write-path call
+// window). The sweep re-drives these so a lost classification is retried.
+//
+// Correctness rests on the correlation, not recency: brainClassify stamps the
+// brain_intent with a unique cid, and the ONLY two decisions that leave the
+// worker running with an un-recallable side effect — run_again (prompt_intent)
+// and dispatch (brain_dispatch, written atomically with child creation) — stamp
+// that SAME cid on their side-effect intent. So a fired side effect always
+// leaves a cid-sibling and the worker drops out here, meaning a re-drive can
+// never duplicate a prompt or a child. A rate-limited retry carries no cid, so
+// it never falsely resolves the intent; unrelated interleaved events don't share
+// the cid either. Every other decision moves the worker out of running/starting,
+// so the state filter excludes it (and re-driving it would be idempotent anyway).
+//
+// The time compare is in Go: the candidate set is tiny (workers with an
+// unresolved brain_intent), and RFC3339Nano isn't lexically chronological.
+func (r *reader) StaleBrainIntents(before time.Time) ([]string, error) {
+	rows, err := r.q.QueryContext(context.Background(),
+		`SELECT bi.worker_id, bi.recorded_at,
+		        (SELECT rl.recorded_at FROM events rl
+		         WHERE rl.worker_id=bi.worker_id AND rl.kind='brain_rate_limited'
+		         ORDER BY rl.id DESC LIMIT 1)
+		 FROM events bi
+		 JOIN workers w ON w.id = bi.worker_id
+		 WHERE bi.kind='brain_intent' AND bi.correlation_id IS NOT NULL
+		   AND w.state IN (?, ?) AND w.owner_session <> ?
+		   AND bi.id=(SELECT MAX(id) FROM events e2 WHERE e2.worker_id=bi.worker_id AND e2.kind='brain_intent')
+		   AND NOT EXISTS (SELECT 1 FROM events e3 WHERE e3.correlation_id=bi.correlation_id AND e3.id<>bi.id)`,
+		string(core.WorkerRunning), string(core.WorkerStarting), core.PoolSessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id, at string
+		var rlAt sql.NullString
+		if err := rows.Scan(&id, &at, &rlAt); err != nil {
+			return nil, err
+		}
+		ts, err := time.Parse(time.RFC3339Nano, at)
+		if err != nil {
+			continue // unparseable timestamp: skip rather than mis-drive
+		}
+		if !ts.Before(before) {
+			continue // intent not yet older than the grace (may be in flight)
+		}
+		// Rate-limit back-off: if a re-drive was already throttled within the last
+		// grace window, wait — else an over-cap session's stale worker would be
+		// re-submitted (and re-throttled) every single sweep, not once per grace.
+		if rlAt.Valid {
+			if rlt, perr := time.Parse(time.RFC3339Nano, rlAt.String); perr == nil && !rlt.Before(before) {
+				continue
+			}
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (r *reader) EventsSince(cursor int64, limit int) ([]core.Event, error) {

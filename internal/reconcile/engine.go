@@ -55,6 +55,12 @@ type Engine struct {
 	// clavis/provider rate quotas against a single session storming the brain.
 	BrainRate int
 
+	// BrainIntentGrace is how old a dangling brain_intent must be before the sweep
+	// re-drives it (a classification lost to a crash in the off-write-path call
+	// window). It is floored to ≥ 2× the brain-call timeout so a still-in-flight
+	// call is never re-driven; 0 or a sub-floor value → defaultBrainIntentGrace.
+	BrainIntentGrace time.Duration
+
 	// MaxChildren caps the number of active workers a session may own — the
 	// delegation fan-in cap (0 = unlimited). Set from config by the daemon.
 	MaxChildren int

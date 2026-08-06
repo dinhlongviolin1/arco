@@ -70,8 +70,8 @@ func TestDelegate_PerVMCap(t *testing.T) {
 	e.MaxWorkersPerVM = 2 // parent fills 1, one child fits, second child rejected
 
 	parent := dispatchRunning(t, e)
-	_, err := e.Delegate(context.Background(), parent, "c1")
+	_, err := e.Delegate(context.Background(), parent, "c1", "")
 	require.NoError(t, err)
-	_, err = e.Delegate(context.Background(), parent, "c2")
+	_, err = e.Delegate(context.Background(), parent, "c2", "")
 	require.ErrorIs(t, err, core.ErrVMAtCapacity)
 }

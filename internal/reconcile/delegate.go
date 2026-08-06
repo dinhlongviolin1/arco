@@ -21,7 +21,12 @@ const defaultMaxDepth = 2
 //
 // Returns ErrMaxDepthExceeded / ErrFanInExceeded (admission denied),
 // ErrIllegalTransition (parent already terminal), or a store/launch error.
-func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task string) (DispatchResult, error) {
+// brainCID, when non-empty, is the correlation id of the parent's brain
+// classification that decided to dispatch: a parent-scoped brain_dispatch(cid)
+// is recorded in the SAME tx that creates the child, so a crash-recovery
+// re-drive sees the cid resolved and never spawns a duplicate child (empty for
+// non-brain callers).
+func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task, brainCID string) (DispatchResult, error) {
 	childID := ulid.Make().String()
 	workspace := "arco_" + childID
 	var sessionID string
@@ -72,10 +77,22 @@ func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task string) (Dis
 		}); err != nil {
 			return err
 		}
-		_, _, _, err = tx.AppendEvent(core.Event{
+		if _, _, _, err = tx.AppendEvent(core.Event{
 			Kind: "dispatch_intent", SessionID: sessionID, WorkerID: childID, Actor: "brain",
 			Payload: fmt.Sprintf(`{"task":%q,"workspace":%q,"parent":%q,"depth":%d}`, task, workspace, parentWorkerID, childDepth),
-		})
+		}); err != nil {
+			return err
+		}
+		// Parent-scoped resolution of the brain classification that decided this
+		// dispatch, ATOMIC with child creation: it carries the parent's brain
+		// correlation id, so the sweep's stale-brain-intent re-drive sees the cid
+		// resolved the instant the child is durably created and never re-dispatches.
+		if brainCID != "" {
+			_, _, _, err = tx.AppendEvent(core.Event{
+				Kind: "brain_dispatch", SessionID: sessionID, WorkerID: parentWorkerID, Actor: "brain",
+				CorrelationID: brainCID, Payload: fmt.Sprintf(`{"child":%q}`, childID),
+			})
+		}
 		return err
 	})
 	if err != nil {
