@@ -171,6 +171,32 @@ func TestLocal_Launch(t *testing.T) {
 	require.Contains(t, got, "-- --settings /cfg", "pinned launch args passed after --")
 }
 
+// HIGH-1 (whole-system audit): a launch error must NEVER carry the worker's
+// scoped provider token — it is passed to herdr via `--env` argv and would
+// otherwise land verbatim in the immutable event log (Spawn writes the launch
+// error into dispatch_done) and the brain's LLM context. Secret env VALUES are
+// masked in the error; benign env stays visible for debugging.
+func TestLocal_LaunchErrorRedactsCreds(t *testing.T) {
+	bin := t.TempDir()
+	// herdr that ALSO echoes the token value in its stderr — the residual echo-back
+	// path (argv-masking alone wouldn't catch this; the value-scrubber must).
+	script := "#!/bin/sh\n" +
+		"case \"$1 $2\" in\n" +
+		"'workspace create') echo 'rejected --env ANTHROPIC_AUTH_TOKEN=sk-secret-shouldnotappear' >&2 ; exit 1 ;;\n" +
+		"esac\nexit 0\n"
+	herdrPath := filepath.Join(bin, "herdr")
+	require.NoError(t, os.WriteFile(herdrPath, []byte(script), 0o755))
+	_, _, err := NewLocal(herdrPath).Launch(context.Background(), core.LaunchSpec{
+		Name: "arco_test", Kind: "claude",
+		Env: []string{"ANTHROPIC_AUTH_TOKEN=sk-secret-shouldnotappear", "PATH=/usr/bin"},
+	})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "sk-secret-shouldnotappear",
+		"provider token must never appear in a launch error — argv OR echoed stderr")
+	require.Contains(t, err.Error(), "ANTHROPIC_AUTH_TOKEN=<redacted>", "secret env value masked in the error argv")
+	require.Contains(t, err.Error(), "PATH=/usr/bin", "benign env stays visible for debugging")
+}
+
 func TestLocal_LaunchErrors(t *testing.T) {
 	// workspace with no matching pane → error (not a silent bad launch)
 	bin := t.TempDir()
