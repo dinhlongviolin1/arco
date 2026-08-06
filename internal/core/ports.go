@@ -114,6 +114,10 @@ type Tx interface {
 	// pid, boot_id) without a state change or rev bump — the sweep/intake truth.
 	ObserveWorker(id string, obs WorkerObservation) error
 
+	// BindAgentRef records the VM-backend agent handle (e.g. herdr pane_id)
+	// captured at launch, so the sweep can correlate this worker's liveness by it.
+	BindAgentRef(workerID, ref string) error
+
 	CreateSession(s Session) error
 	SetSessionStatus(id string, to SessionStatus, expectedRev int64, e Event) error
 	AttachWorker(sessionID, workerID string) error
@@ -201,9 +205,13 @@ type Store interface {
 
 // ---- worker-execution port (LocalVMClient now; SSHVMClient in P3) ----------
 
-// AgentObs is one observed agent from a VM. Identity is
-// vm+workspace+boot_id+pid_start_time — never a central PID.
+// AgentObs is one observed agent from a VM. Ref is the backend's own agent
+// handle (herdr's pane_id) — the correlation key when a worker was launched via
+// the arco-owned spawn path; Workspace is the fallback for Prompt-model/Fake
+// workers. BootID is a stable per-agent identity for the PID-reuse guard (herdr
+// exposes no PID, so its terminal_id fills this slot).
 type AgentObs struct {
+	Ref          string
 	Workspace    string
 	BootID       string
 	PIDStartTime string

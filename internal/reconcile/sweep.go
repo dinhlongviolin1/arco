@@ -65,12 +65,7 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	if err != nil {
 		return res, err
 	}
-	aliveByWorkspace := map[string]core.AgentObs{}
-	for _, a := range agents {
-		if a.Alive {
-			aliveByWorkspace[a.Workspace] = a
-		}
-	}
+	lookupAlive := aliveLookup(agents)
 	var wts []string
 	for wt := range worktrees {
 		wts = append(wts, wt)
@@ -84,7 +79,7 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 
 	for _, w := range live {
 		res.Observed++
-		obs, alive := aliveByWorkspace[w.Workspace]
+		obs, alive := lookupAlive(w)
 		// identity check: if we recorded a boot/pid-start, it must match (guards PID reuse).
 		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
 			alive = false
@@ -130,6 +125,34 @@ func (e *Engine) reapLeases(ctx context.Context) (int, error) {
 		return err
 	})
 	return n, err
+}
+
+// aliveLookup indexes the alive agents by both their backend ref (herdr pane_id)
+// and their workspace, and returns a per-worker liveness lookup that prefers the
+// worker's AgentRef (set once launched via the arco-owned spawn path) and falls
+// back to a Workspace match (Prompt-model / Fake workers with no ref yet).
+func aliveLookup(agents []core.AgentObs) func(core.Worker) (core.AgentObs, bool) {
+	byWS := map[string]core.AgentObs{}
+	byRef := map[string]core.AgentObs{}
+	for _, a := range agents {
+		if !a.Alive {
+			continue
+		}
+		if a.Workspace != "" {
+			byWS[a.Workspace] = a
+		}
+		if a.Ref != "" {
+			byRef[a.Ref] = a
+		}
+	}
+	return func(w core.Worker) (core.AgentObs, bool) {
+		if w.AgentRef != "" {
+			obs, ok := byRef[w.AgentRef]
+			return obs, ok
+		}
+		obs, ok := byWS[w.Workspace]
+		return obs, ok
+	}
 }
 
 // triggerRollups enqueues a coalesced rollup for each ALIVE parent worker that
@@ -230,15 +253,10 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	aliveByWorkspace := map[string]core.AgentObs{}
-	for _, a := range agents {
-		if a.Alive {
-			aliveByWorkspace[a.Workspace] = a
-		}
-	}
+	lookupAlive := aliveLookup(agents)
 	var firstErr error
 	for _, w := range starting {
-		obs, alive := aliveByWorkspace[w.Workspace]
+		obs, alive := lookupAlive(w)
 		// same PID-reuse identity guard as Sweep: don't adopt a recycled workspace.
 		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
 			alive = false
