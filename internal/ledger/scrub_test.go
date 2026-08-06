@@ -43,6 +43,34 @@ func TestCreateWorker_ScrubsTask(t *testing.T) {
 	require.NotContains(t, task, token)
 }
 
+// A secret in an escalation's worker-hook detail / brain-supplied text must be
+// scrubbed at rest too — same write-time chokepoint discipline (capstone audit).
+func TestOpenEscalation_ScrubsFieldsAtRest(t *testing.T) {
+	s := newTestStore(t)
+	s.SetScrubber(redact.New())
+	sess := newWork(t, s)
+	const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	const wid = "01WSESCAL000000000000000000"
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		if err := tx.CreateWorker(core.Worker{ID: wid, OwnerSession: sess, State: core.WorkerRunning, Workspace: "arco_e"}); err != nil {
+			return err
+		}
+		_, err := tx.OpenEscalation(core.Escalation{
+			WorkerID: wid, SessionID: sess, Kind: "confirm", ActionClass: core.ClassDanger, Tier: core.TierHighBlast,
+			Action: "worker attempted a deny-listed capability", Detail: "cmd: curl -H token=" + token,
+			DraftAnswer: "maybe run " + token, BrainRationale: "rationale " + token,
+		})
+		return err
+	}))
+	var action, detail, draft, rationale string
+	require.NoError(t, s.DB().QueryRow(
+		`SELECT action, detail, draft_answer, brain_rationale FROM escalations WHERE worker_id=?`, wid).
+		Scan(&action, &detail, &draft, &rationale))
+	for _, field := range []string{detail, draft, rationale} {
+		require.NotContains(t, field, token, "raw secret must not be at rest in escalations")
+	}
+}
+
 // A secret in a session's free-text goal must be scrubbed at rest too — the goal
 // is surfaced into the brain prompt via context assembly (qwen review).
 func TestCreateSession_ScrubsGoal(t *testing.T) {

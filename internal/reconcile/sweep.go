@@ -202,10 +202,13 @@ func aliveLookup(agents []core.AgentObs) func(core.Worker) (core.AgentObs, bool)
 // rollup itself coalesces to ≤1 brain call per session per interval).
 func (e *Engine) triggerRollups(all []core.Worker) int {
 	terminalParents := map[string]bool{}
-	alive := map[string]bool{}
+	eligible := map[string]bool{}
 	for _, w := range all {
-		if !w.State.Terminal() {
-			alive[w.ID] = true
+		// Only enqueue a rollup for a parent the brain may actually drive — mirror
+		// rollup()'s own guard so an ineligible parent (blocked/pool-owned) isn't
+		// counted or submitted (capstone audit; rollup() re-checks in-tx too).
+		if rollupEligible(w) {
+			eligible[w.ID] = true
 		}
 		if w.ParentWorkerID != "" && w.State.Terminal() {
 			terminalParents[w.ParentWorkerID] = true
@@ -213,7 +216,7 @@ func (e *Engine) triggerRollups(all []core.Worker) int {
 	}
 	n := 0
 	for pid := range terminalParents {
-		if alive[pid] {
+		if eligible[pid] {
 			e.maybeRollup(pid)
 			n++
 		}
