@@ -290,9 +290,13 @@ spawn→autonomous-completion loop, but an operator should know them:
   workspace. **Auto-kill-on-pause LANDED (PR #67):** the identity-strict reaper now
   reclaims a **paused** worker's idle agent too (a worker paused by
   `escalation_timeout`/`pool_ttl` has only an idle agent burning quota; its
-  worktree/work-product is preserved), and the liveness loop excludes paused
-  workers so their auto-killed agent is not mistaken for a death and finalized to
-  `lost` (the coupling those two changes had to land together). This closed the
+  worktree/work-product is preserved), and the liveness loop excludes those
+  workers so an auto-killed agent is not mistaken for a death and finalized to
+  `lost` (the coupling those two changes had to land together). **Exception:** a
+  paused worker with a PENDING escalation keeps its agent — an operator approval
+  re-prompts the same pane (a reconnect, e.g. an `AuditDeniedAttempt` danger
+  confirm), so reaping it would silently discard the approval; those stay
+  liveness-tracked. This closed the
   earlier worry that killing a paused agent would "strand" the worker — there is no
   resume-by-RECONNECT to lose; resume is via relaunch. STILL missing: **resume via
   relaunch** (`arco claim`/`resume` that re-launches a fresh agent in the paused

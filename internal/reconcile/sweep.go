@@ -77,14 +77,30 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	if e.Brain.Enabled && e.Exec != nil {
 		res.BrainRedrives = e.redriveStaleBrainIntents()
 	}
+	// A worker with a PENDING escalation must keep its (live) agent even when
+	// paused: an operator approval drives paused→running and re-prompts the SAME
+	// pane (deliverDecision reconnect — e.g. AuditDeniedAttempt pauses a running
+	// worker + opens a danger confirm). Reaping that agent would silently discard
+	// the approval and lose the worker (opus review). So paused-with-pending is NOT
+	// reclaimable; it stays liveness-tracked (a dead agent → finalize, since a
+	// reconnect can't help). Computed AFTER reapEscalations (which expires its
+	// escalation before pausing, so a timeout-paused worker IS reclaimable).
+	pendingEsc := map[string]bool{}
+	if escs, eerr := e.Store.Reader().ListEscalations(core.EscalationFilter{Status: "pending"}); eerr == nil {
+		for _, es := range escs {
+			if es.WorkerID != "" {
+				pendingEsc[es.WorkerID] = true
+			}
+		}
+	}
 	var live []core.Worker
 	worktrees := map[string]bool{}
 	for _, w := range all {
-		// Skip workers whose agent should no longer be running (terminal OR paused):
-		// a paused worker's agent is intentionally reclaimed (below), so its absent
-		// agent is EXPECTED, not a liveness death — including it here would finalize
-		// it to `lost` and defeat the pause.
-		if agentReclaimable(w.State) {
+		// Skip workers whose agent should no longer be running (agentReclaimable):
+		// their agent is intentionally reclaimed (below), so its absence is EXPECTED,
+		// not a liveness death — including them would finalize a paused worker to
+		// `lost` and defeat the pause.
+		if agentReclaimable(w, pendingEsc) {
 			continue
 		}
 		live = append(live, w)
@@ -103,11 +119,12 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	}
 	// Stop agents still alive on a worker whose agent should no longer run —
 	// TERMINAL (the kill crash-orphan, or a worker finalized lost/failed with a
-	// lingering pane) OR PAUSED (auto-kill-on-pause: a worker paused by pool-TTL /
-	// escalation-timeout has only an idle agent burning quota; its worktree is
-	// preserved). Identity-strict, so it never closes a stranger's recycled pane.
-	// Runs before the liveness loop and even when len(live)==0.
-	res.AgentsReaped = e.reapOrphanedAgents(ctx, all, agents)
+	// lingering pane) OR PAUSED-without-a-pending-escalation (auto-kill-on-pause: a
+	// worker paused by pool-TTL / escalation-timeout has only an idle agent burning
+	// quota; its worktree is preserved). Identity-strict, so it never closes a
+	// stranger's recycled pane. Runs before the liveness loop and even when
+	// len(live)==0.
+	res.AgentsReaped = e.reapOrphanedAgents(ctx, all, agents, pendingEsc)
 
 	if len(live) == 0 {
 		return res, nil
@@ -312,15 +329,28 @@ func aliveLookup(agents []core.AgentObs) func(core.Worker) (core.AgentObs, bool)
 
 // agentReclaimable reports whether a worker's herdr agent should no longer be
 // running, so the sweep may stop it (reaper) and must not treat its absence as a
-// death (liveness). Two cases:
+// death (liveness):
 //   - TERMINAL (killed/failed/lost/completed_verified): done forever.
-//   - PAUSED: intentionally stopped by the sweep (pool-TTL / escalation-timeout).
-//     Its worktree (work product) is preserved and resume is via RELAUNCH (a fresh
-//     agent), never by reconnecting to this one — so a lingering paused agent is
-//     pure idle quota leak with no upside (MED-3 auto-kill-on-pause). Reclaiming it
-//     cannot strand the worker: there is no reconnect path to lose.
-func agentReclaimable(s core.WorkerState) bool {
-	return s.Terminal() || s == core.WorkerPaused
+//   - PAUSED with NO pending escalation: intentionally stopped (pool-TTL /
+//     escalation-timeout), its worktree preserved and resume via RELAUNCH, so its
+//     idle agent is pure quota leak (MED-3 auto-kill-on-pause).
+//
+// A worker with a PENDING escalation is NOT reclaimable even when paused: an
+// operator approval re-prompts the SAME live pane (deliverDecision reconnect —
+// e.g. an AuditDeniedAttempt danger confirm), so its agent must survive to be
+// re-driven. (A terminal worker is always reclaimable — decide() refuses to resume
+// a terminal worker, so no live escalation can reconnect it.)
+//
+// INVARIANT for future changes: the pending-escalation check stands in for "no
+// path will re-prompt THIS worker's live pane." A pending escalation is the only
+// such path today (deliverDecision). If a new same-pane delivery is added (e.g.
+// operator-to-worker messages, or task delivery reusing the live pane instead of
+// relaunch), it MUST also keep the agent alive here (qwen review).
+func agentReclaimable(w core.Worker, pendingEsc map[string]bool) bool {
+	if w.State.Terminal() {
+		return true
+	}
+	return w.State == core.WorkerPaused && !pendingEsc[w.ID]
 }
 
 // reapOrphanedAgents stops herdr agents still alive on a worker whose agent should
@@ -342,11 +372,11 @@ func agentReclaimable(s core.WorkerState) bool {
 // has no recorded terminal_id (persisted only on the liveness alive-path, not at
 // launch) → it is left for manual cleanup: a rare, NON-destructive miss is the
 // right trade against a destructive false-close (docs §12).
-func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agents []core.AgentObs) int {
+func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agents []core.AgentObs, pendingEsc map[string]bool) int {
 	lookup := aliveLookup(agents)
 	n := 0
 	for _, w := range all {
-		if !agentReclaimable(w.State) {
+		if !agentReclaimable(w, pendingEsc) {
 			continue
 		}
 		obs, alive := lookup(w)
