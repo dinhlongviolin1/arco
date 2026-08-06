@@ -55,6 +55,12 @@ type Engine struct {
 	// clavis/provider rate quotas against a single session storming the brain.
 	BrainRate int
 
+	// EscalationTimeout auto-resolves a pending escalation the operator never
+	// answered: after this age the sweep expires it and PAUSES the waiting worker
+	// (build-guide "timeout → auto-pause"), so a worker can't wait on a human
+	// forever. 0 = disabled.
+	EscalationTimeout time.Duration
+
 	// BrainIntentGrace is how old a dangling brain_intent must be before the sweep
 	// re-drives it (a classification lost to a crash in the off-write-path call
 	// window). It is floored to ≥ 2× the brain-call timeout so a still-in-flight

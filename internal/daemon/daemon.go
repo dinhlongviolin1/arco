@@ -98,6 +98,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.BrainRate = cfg.PerSessionBrainRate
 	eng.MaxChildren = cfg.MaxChildrenPerSession
 	eng.RollupInterval = cfg.RollupInterval
+	eng.EscalationTimeout = cfg.EscalationTimeout // sweep auto-pauses a worker whose escalation went unanswered
 	eng.DefaultVM = cfg.DefaultVM
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
