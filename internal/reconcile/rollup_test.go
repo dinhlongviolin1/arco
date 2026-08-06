@@ -89,6 +89,38 @@ func TestRollup_CoalescesWithinInterval(t *testing.T) {
 	_ = prompt
 }
 
+// Per-parent (not per-session) coalescing: a depth-2 session can hold two
+// parents (root, and a depth-1 child that itself delegated). Both alive parents
+// with terminal children must EACH roll up — neither starves the other (opus
+// MED finding). Per-session coalescing would fire only one.
+func TestRollup_PerParentNotPerSession(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.RollupInterval = time.Hour
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"run_again","instruction":"go"}`), nil
+		}}
+
+	root := dispatchRunning(t, e)
+	childA, err := e.Delegate(context.Background(), root, "A") // depth 1, a parent-to-be
+	require.NoError(t, err)
+	childB, err := e.Delegate(context.Background(), root, "B") // depth 1, root's terminal child
+	require.NoError(t, err)
+	grandchild, err := e.Delegate(context.Background(), childA.WorkerID, "gc") // depth 2, childA's child
+	require.NoError(t, err)
+
+	completeChild(t, s, childB.WorkerID)     // → root has a terminal child
+	completeChild(t, s, grandchild.WorkerID) // → childA has a terminal child
+
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, res.RollupsTriggered, "both root and childA are parents with terminal children")
+	e.Exec.Wait()
+	require.Equal(t, int32(2), calls.Load(), "each parent rolls up independently — no per-session starvation")
+}
+
 func TestRollup_DisabledByZeroInterval(t *testing.T) {
 	var calls atomic.Int32
 	e, s, _ := newEngine(t)

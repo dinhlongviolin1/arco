@@ -35,16 +35,25 @@ func (e *Engine) maybeRollup(parentWorkerID string) {
 // lock, so concurrent child completions in a session yield at most one rollup
 // per interval (race-free, mirrors the brain-rate gate).
 func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
-	parent, err := e.Store.Reader().GetWorker(parentWorkerID)
-	// Only an ALIVE parent is worth re-driving; a terminal/absent parent has
-	// nothing to steer.
-	if err != nil || parent.State.Terminal() {
+	// Cheap pre-check to avoid a tx for an obviously-dead parent.
+	if w, err := e.Store.Reader().GetWorker(parentWorkerID); err != nil || w.State.Terminal() {
 		return
 	}
 
 	proceed := true
+	var parent core.Worker
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
-		n, err := tx.CountRecentRollups(parent.OwnerSession, e.RollupInterval)
+		// Re-read INSIDE the tx: a concurrent TransferWorker moves a running worker
+		// between sessions, so the pre-check snapshot's OwnerSession/state can be
+		// stale — attribute the rollup to the CURRENT owner and re-check terminal
+		// (mirrors brainClassify; opus review).
+		cur, err := tx.GetWorker(parentWorkerID)
+		if err != nil || cur.State.Terminal() {
+			proceed = false
+			return nil
+		}
+		parent = cur
+		n, err := tx.CountRecentRollups(parentWorkerID, e.RollupInterval) // per-parent
 		if err != nil {
 			return err
 		}
@@ -53,7 +62,7 @@ func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
 			return nil
 		}
 		_, _, _, e2 := tx.AppendEvent(core.Event{
-			Kind: "rollup_intent", WorkerID: parentWorkerID, SessionID: parent.OwnerSession, Actor: "brain",
+			Kind: "rollup_intent", WorkerID: parentWorkerID, SessionID: cur.OwnerSession, Actor: "brain",
 			// M19 provenance: rollup context is advisory + tainted, never authority.
 			Payload: `{"call_kind":"rollup","tainted":true}`,
 		})

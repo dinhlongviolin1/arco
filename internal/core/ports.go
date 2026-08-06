@@ -170,9 +170,10 @@ type Tx interface {
 	// last window — per-session brain-rate admission. Called inside the write tx
 	// that records the next brain_intent so the count→admit→insert is race-free.
 	CountRecentBrainCalls(sessionID string, window time.Duration) (int, error)
-	// CountRecentRollups counts rollup_intent events for sessionID within the last
-	// window — the coalescing denominator for supersession rollup (≤1/interval).
-	CountRecentRollups(sessionID string, window time.Duration) (int, error)
+	// CountRecentRollups counts rollup_intent events for one PARENT WORKER within
+	// the last window — the per-parent coalescing denominator for supersession
+	// rollup (≤1 rollup per parent per interval).
+	CountRecentRollups(parentWorkerID string, window time.Duration) (int, error)
 }
 
 // ErrHighBlastScope is returned when a caller tries to promote a high-blast
