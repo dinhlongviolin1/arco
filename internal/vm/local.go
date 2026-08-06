@@ -21,15 +21,27 @@ import (
 const maxPatchBytes = 1 << 20 // 1 MiB
 
 // terminalHerdrStatus is the set of herdr agent statuses that mean "not alive".
-// Confirm the real values in the Task-S spike; anything NOT in this set (incl.
-// empty/unknown) is treated as alive (presence in the list = alive).
-var terminalHerdrStatus = map[string]bool{"done": true, "gone": true, "exited": true, "dead": true}
+// CONFIRMED against herdr 0.7.5 (Task-S spike): the agent_status enum is exactly
+// idle|working|blocked|done|unknown — only `done` means the agent finished;
+// idle/working/blocked/unknown are alive (a pane absent from the list = gone).
+// NB: a pane that PERSISTS as "unknown" stays alive; its cleanup relies on the
+// pane eventually dropping from `agent list` (real process death), not on status.
+var terminalHerdrStatus = map[string]bool{"done": true}
 
 // LocalVMClient drives agents on the local machine: git for HEAD/diff (real,
 // deterministic) and the herdr CLI over its socket API for liveness + prompting.
-// The herdr JSON field mapping is against herdr's documented `agent list --json`
-// / `agent prompt` contract; exact fields/types must be confirmed against a live
-// herdr in the Task-S spike before this is the daemon default (default = Fake).
+// The herdr JSON mapping is CONFIRMED against herdr 0.7.5 (Task-S spike; see
+// docs/herdr-contract.md). Still default=Fake, and two integration items remain
+// before this is the daemon default: (1) worker↔agent correlation — herdr
+// identifies agents by workspace_id/pane_id, not arco's "arco_<ulid>" workspace,
+// so Prompt/Kill's target must be the herdr pane_id captured at launch; (2) the
+// launch itself (`herdr agent start <name> --kind <kind> --pane <id> -- <args>`)
+// is not yet wired (arco currently only prompts an existing pane).
+//
+// DO NOT set use_local_vm before (1) is wired: the sweep looks up liveness by
+// w.Workspace ("arco_<ulid>") against herdr's workspace_id ("wB"), which NEVER
+// matches, so every live worker would miss and be false-finalized Lost/Failed.
+// It is not merely inert — enabling it early actively nukes the fleet.
 type LocalVMClient struct {
 	Herdr string
 	Git   string
@@ -45,53 +57,49 @@ func NewLocal(herdr string) *LocalVMClient {
 	return &LocalVMClient{Herdr: herdr, Git: "git"}
 }
 
-// herdrAgent mirrors the fields we consume. Identity fields are RawMessage so a
-// numeric OR string encoding both decode (herdr's exact types are spike-TBD).
-type herdrAgent struct {
-	Workspace string          `json:"workspace"`
-	Label     string          `json:"label"`
-	Status    string          `json:"status"`
-	BootID    json.RawMessage `json:"boot_id"`
-	PIDStart  json.RawMessage `json:"pid_start_time"`
+// herdrListResp / herdrAgent mirror the CONFIRMED herdr 0.7.5 `agent list`
+// output (Task-S spike): a wrapped envelope, NOT a bare array, and no boot_id/
+// pid_start_time (herdr exposes no PID identity). See docs/herdr-contract.md.
+//
+//	{"result":{"agents":[{"agent":"claude","agent_status":"idle",
+//	 "pane_id":"wB:p1","workspace_id":"wB","terminal_id":"term_…", …}],
+//	 "type":"agent_list"}}
+type herdrListResp struct {
+	Result struct {
+		Agents []herdrAgent `json:"agents"`
+	} `json:"result"`
 }
 
-func rawStr(r json.RawMessage) string {
-	s := strings.TrimSpace(string(r))
-	if s == "" || s == "null" {
-		return ""
-	}
-	if len(s) >= 2 && s[0] == '"' {
-		var out string
-		if json.Unmarshal(r, &out) == nil {
-			return out
-		}
-	}
-	return s
+type herdrAgent struct {
+	Agent       string `json:"agent"`        // agent kind, e.g. "claude"
+	AgentStatus string `json:"agent_status"` // idle|working|blocked|done|unknown
+	PaneID      string `json:"pane_id"`      // "wB:p1"
+	WorkspaceID string `json:"workspace_id"` // "wB"
+	TerminalID  string `json:"terminal_id"`  // stable per-pane identity (PID-reuse guard)
 }
 
 // ListAgents returns observed agents. Presence = alive unless the status is a
 // terminal one. Empty stdout is an empty list (not an error).
 func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error) {
-	out, err := runOutput(ctx, l.Herdr, "agent", "list", "--json")
+	// `agent list` (NOT `--json` — that flag is rejected; list is JSON by default).
+	out, err := runOutput(ctx, l.Herdr, "agent", "list")
 	if err != nil {
 		return nil, err
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
 		return nil, nil
 	}
-	var raw []herdrAgent
-	if err := json.Unmarshal(out, &raw); err != nil {
+	var resp herdrListResp
+	if err := json.Unmarshal(out, &resp); err != nil {
 		return nil, fmt.Errorf("herdr agent list: bad json: %w", err)
 	}
-	obs := make([]core.AgentObs, 0, len(raw))
-	for _, a := range raw {
-		ws := a.Workspace
-		if ws == "" {
-			ws = a.Label
-		}
+	obs := make([]core.AgentObs, 0, len(resp.Result.Agents))
+	for _, a := range resp.Result.Agents {
+		// herdr has no boot_id/pid_start_time; terminal_id is the stable per-pane
+		// identity, so it carries the PID-reuse guard (AgentObs.BootID slot).
 		obs = append(obs, core.AgentObs{
-			Workspace: ws, BootID: rawStr(a.BootID), PIDStartTime: rawStr(a.PIDStart),
-			Alive: !terminalHerdrStatus[a.Status],
+			Workspace: a.WorkspaceID, BootID: a.TerminalID,
+			Alive: !terminalHerdrStatus[a.AgentStatus],
 		})
 	}
 	return obs, nil
