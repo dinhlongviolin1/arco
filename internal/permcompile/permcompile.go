@@ -162,7 +162,7 @@ func Compile(configDir, worktree string, granted map[string]bool, cat []core.Cat
 		},
 		"hooks": map[string]any{
 			"PreToolUse": []any{map[string]any{
-				"matcher": "Bash|Edit|Write",
+				"matcher": "Bash|Edit|Write|Read",
 				"hooks":   []any{map[string]any{"type": "command", "command": filepath.Join(configDir, "hooks", "pretooluse.sh")}},
 			}},
 		},
@@ -205,7 +205,9 @@ func Flags(granted map[string]bool, cat []core.CatalogRow) (allowed, disallowed 
 	return keys(as), keys(ds)
 }
 
-// hookScript denies out-of-worktree file writes and blocked git subcommands.
+// hookScript denies out-of-worktree file reads/writes and blocked git subcommands
+// (Read is gated too — fs.worktree grants an unscoped Read, so containment is
+// enforced here; capstone audit).
 // Command-string matching is best-effort — arco's boundary is the real gate.
 func hookScript(worktree string) string {
 	return `#!/bin/sh
@@ -226,7 +228,7 @@ if [ -n "$fp" ]; then
   wt=$(readlink -m "$WORKTREE")
   case "$real" in
     "$wt"/* | "$wt" ) ;;                    # inside the worktree — ok
-    * ) deny "write outside worktree" ;;    # anywhere else (incl. .. escapes) — deny
+    * ) deny "path outside worktree" ;;     # read OR write anywhere else (incl. .. escapes) — deny
   esac
 fi
 

@@ -114,6 +114,15 @@ func TestCompile_HookBlocksOutOfWorktreeWrite(t *testing.T) {
 	require.NotContains(t, run(`{"tool":"Write","file_path":"`+wt+`/a.go"}`), `"deny"`)
 	// push to master → denied (parity with settings.json staticDeny)
 	require.Contains(t, run(`{"tool":"Bash","command":"git push origin master"}`), `"deny"`)
+
+	// capstone audit MED-7: fs.worktree grants an unscoped Read, so the hook must
+	// contain READS too — an out-of-worktree Read is denied; an in-worktree Read is
+	// allowed. And the settings matcher must include Read so the agent invokes it.
+	require.Contains(t, run(`{"tool":"Read","file_path":"/etc/passwd"}`), `"deny"`)
+	require.NotContains(t, run(`{"tool":"Read","file_path":"`+wt+`/a.go"}`), `"deny"`)
+	b, _ := os.ReadFile(filepath.Join(cfg, "settings.json"))
+	require.Contains(t, string(b), "Read", "PreToolUse matcher gates Read")
+	require.Regexp(t, `Bash\|Edit\|Write\|Read`, string(b), "matcher includes Read")
 }
 
 // Regression (opus re-review HIGH-1): a `..` traversal that textually starts
