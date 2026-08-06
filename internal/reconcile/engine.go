@@ -88,6 +88,11 @@ type Engine struct {
 	DefaultPool string
 	LeaseTTL    time.Duration
 
+	// Creds resolves a spawned worker's SCOPED provider env from its pool's clavis
+	// profile (injected post-scrub at launch). nil → workers launch credential-less
+	// (the Fake/headless path). Set by the daemon when use_local_vm.
+	Creds core.AgentCredentials
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 	// redriving guards against a sweep stacking duplicate crash-recovery re-drives

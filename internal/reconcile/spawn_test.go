@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/ledger"
 )
 
 // localRepo builds a temp source repo with one commit; returns dir, head.
@@ -251,4 +252,83 @@ func TestSpawn_ThenRunAgain_TargetsPane(t *testing.T) {
 	prompts := fake.Prompts()
 	require.Greater(t, len(prompts), before, "run_again delivered a prompt")
 	require.Equal(t, w.AgentRef, prompts[len(prompts)-1].Workspace, "run_again targets the pane, not the label")
+}
+
+// fakeCreds is a test AgentCredentials that records the profile it was asked for.
+type fakeCreds struct {
+	env     []string
+	err     error
+	profile string
+}
+
+func (f *fakeCreds) EnvFor(_ context.Context, profile string) ([]string, error) {
+	f.profile = profile
+	return f.env, f.err
+}
+
+func seedPool(t *testing.T, s *ledger.Store, id, clavisProfile string) {
+	t.Helper()
+	_, err := s.DB().Exec(
+		`INSERT INTO provider_pools(id,provider,org,clavis_profile,model_class,max_active,max_starts_per_min,state,cooldown_until,created_at)
+		 VALUES(?,'anthropic','',?,'',10,100,'ok',NULL,?)`,
+		id, clavisProfile, time.Now().UTC().Format(time.RFC3339Nano))
+	require.NoError(t, err)
+}
+
+// A worker leased from a pool with a clavis_profile launches with that profile's
+// SCOPED creds injected into the launch env (post-scrub) — the provider-pool
+// worker-auth model. The resolver is asked for the POOL's profile.
+func TestSpawn_InjectsPoolClavisCreds(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.DefaultPool = "p1"
+	e.LeaseTTL = time.Hour
+	fc := &fakeCreds{env: []string{"ANTHROPIC_AUTH_TOKEN=scoped-tok", "ANTHROPIC_BASE_URL=https://ds"}}
+	e.Creds = fc
+	seedPool(t, s, "p1", "deepseek-1")
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State)
+	require.Equal(t, "deepseek-1", fc.profile, "resolved the pool's clavis_profile")
+	joined := strings.Join(fake.Launched()[0].Env, " ")
+	require.Contains(t, joined, "ANTHROPIC_AUTH_TOKEN=scoped-tok", "scoped creds injected")
+	require.Contains(t, joined, "ANTHROPIC_BASE_URL=https://ds")
+}
+
+// A pool with NO clavis_profile injects nothing (worker launches credential-less).
+func TestSpawn_NoProfileNoCredInjection(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.DefaultPool = "p1"
+	e.LeaseTTL = time.Hour
+	fc := &fakeCreds{env: []string{"ANTHROPIC_AUTH_TOKEN=scoped-tok"}}
+	e.Creds = fc
+	seedPool(t, s, "p1", "") // no profile
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerRunning, res.State)
+	require.Empty(t, fc.profile, "EnvFor not called when the pool sets no profile")
+	require.NotContains(t, strings.Join(fake.Launched()[0].Env, " "), "scoped-tok")
+}
+
+// A credential-resolve error fails the spawn (worker not launched unauthenticated)
+// and cleans up the worktree — a pre-launch failure.
+func TestSpawn_CredResolveErrorFailsAndCleansUp(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.DefaultPool = "p1"
+	e.LeaseTTL = time.Hour
+	e.Creds = &fakeCreds{err: errors.New("clavis boom")}
+	seedPool(t, s, "p1", "deepseek-1")
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+	require.Equal(t, core.WorkerFailed, res.State, "unauthenticated worker not launched")
+	require.Empty(t, fake.Launched(), "no launch on a credential-resolve failure")
+	require.NoDirExists(t, filepath.Join(e.ConfigDir, res.WorkerID), "worktree cleaned up (pre-launch failure)")
 }

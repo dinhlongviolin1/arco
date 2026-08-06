@@ -274,6 +274,17 @@ type VMClient interface {
 	Diff(ctx context.Context, worktree, base, head string) (Diff, error)
 }
 
+// AgentCredentials supplies the SCOPED provider env a spawned worker launches
+// with — the env of its pool's clavis profile (ANTHROPIC_AUTH_TOKEN/BASE_URL +
+// model vars). It is appended to the launch env AFTER the P1 scrub: this
+// deliberately re-adds provider vars the scrub removed, but a pool-SCOPED set
+// (a named clavis profile), NEVER arco's own inherited credentials — the
+// provider-pool security model. An empty profile yields no vars (no injection),
+// so a worker with no pool/profile launches credential-less (inert by default).
+type AgentCredentials interface {
+	EnvFor(ctx context.Context, profile string) ([]string, error) // "KEY=VALUE" lines; empty profile → nil
+}
+
 // ---- redaction port (write-time; deterministic + versioned) ----------------
 
 // Scrubber removes secrets before persistence and before the brain prompt.

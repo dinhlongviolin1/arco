@@ -104,6 +104,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.GitBin = "git"
 	eng.DefaultPool = cfg.DefaultPool
 	eng.LeaseTTL = cfg.LeaseTTL
+	if cfg.UseLocalVM {
+		// A spawned worker authenticates via its pool's clavis profile (scoped
+		// creds injected post-scrub at launch) — not arco's inherited creds (P1).
+		// Inert unless a pool sets a clavis_profile. Fake/headless deploys skip this.
+		eng.Creds = vm.NewClavisCreds("")
+	}
 	// Fail LOUD at startup on a misconfigured pool rather than failing every spawn
 	// (AcquireLease→GetPool would ErrNotFound per dispatch). NB: leases gate only
 	// the repo-spawn path today; the prompt-path Dispatch is uncapped (follow-up).
