@@ -21,12 +21,13 @@ const defaultBrainIntentGrace = 5 * time.Minute
 
 // SweepResult summarizes one sweep pass (handy for logging/tests).
 type SweepResult struct {
-	Observed         int
-	Transitions      int
-	LeasesReaped     int // leaked/stale provider-pool leases released (B10-lease)
-	PooledPaused     int // workers paused after sitting unclaimed past the pool TTL
-	RollupsTriggered int // parents with completed children enqueued for a coalesced rollup
-	BrainRedrives    int // dangling brain_intents (crash-lost calls) re-submitted
+	Observed            int
+	Transitions         int
+	LeasesReaped        int // leaked/stale provider-pool leases released (B10-lease)
+	PooledPaused        int // workers paused after sitting unclaimed past the pool TTL
+	RollupsTriggered    int // parents with completed children enqueued for a coalesced rollup
+	BrainRedrives       int // dangling brain_intents (crash-lost calls) re-submitted
+	EscalationsTimedOut int // pending escalations expired past EscalationTimeout (+ worker paused)
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -52,6 +53,12 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// Pause workers that have sat unclaimed in the pool past the TTL.
 	if e.PoolTTL > 0 {
 		res.PooledPaused, _ = e.reapPooled(ctx)
+	}
+	// Auto-resolve escalations the operator never answered: expire + pause the
+	// waiting worker so it can't wait on a human forever (build-guide timeout →
+	// auto-pause).
+	if e.EscalationTimeout > 0 {
+		res.EscalationsTimedOut = e.reapEscalations(ctx)
 	}
 	// Supersession rollup: re-drive any ALIVE parent whose children have
 	// completed. maybeRollup coalesces to ≤1 rollup brain call per session per
@@ -188,6 +195,44 @@ func (e *Engine) releaseRedrive(workerID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.redriving, workerID)
+}
+
+// reapEscalations expires pending escalations older than EscalationTimeout and
+// pauses the waiting worker (build-guide "timeout → auto-pause"), so a worker
+// can't wait on a human indefinitely. Per-worker tx; a non-waiting worker (e.g. a
+// danger escalation on an already-paused worker) is just expired + left as-is
+// (still fail-safe). Returns how many were timed out.
+func (e *Engine) reapEscalations(ctx context.Context) int {
+	pend, err := e.Store.Reader().ListEscalations(core.EscalationFilter{Status: "pending"})
+	if err != nil {
+		return 0
+	}
+	cutoff := e.Store.Now().Add(-e.EscalationTimeout)
+	n := 0
+	for _, esc := range pend {
+		ts, perr := time.Parse(time.RFC3339Nano, esc.RequestedAt)
+		if perr != nil || !ts.Before(cutoff) {
+			continue // unparseable or not yet timed out
+		}
+		_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+			if _, err := tx.ExpirePendingForWorker(esc.WorkerID); err != nil {
+				return err
+			}
+			w, err := tx.GetWorker(esc.WorkerID)
+			if err != nil {
+				return nil
+			}
+			if isWaiting(w.State) && core.LegalWorkerTransition(w.State, core.WorkerPaused) {
+				return tx.TransitionWorker(esc.WorkerID, core.WorkerPaused, w.Rev, core.Event{
+					Kind: "state_change", WorkerID: esc.WorkerID, SessionID: w.OwnerSession,
+					Payload: `{"reason":"escalation_timeout"}`,
+				})
+			}
+			return nil
+		})
+		n++
+	}
+	return n
 }
 
 // reapLeases releases leaked/stale provider-pool leases in one tx (B10-lease).

@@ -3,6 +3,7 @@ package reconcile
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -229,4 +230,40 @@ func TestSweep_TerminalizeExpiresEscalation_NoResurrect(t *testing.T) {
 	})
 	w2, _ := s.Reader().GetWorker(id)
 	require.True(t, w2.State.Terminal(), "a late answer must not resurrect a terminal worker")
+}
+
+// MED-1: a pending escalation older than EscalationTimeout is expired and its
+// waiting worker auto-paused (so a worker can't wait on a human forever).
+func TestSweep_EscalationTimeout_ExpiresAndPauses(t *testing.T) {
+	base := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	clk := &settableClock{}
+	clk.set(base)
+	e, s, _ := newEngine(t)
+	s.SetClock(clk.now)
+	e.EscalationTimeout = 30 * time.Minute
+	id := mkRunning(t, e, s, "/wt/e", "base")
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		w, _ := tx.GetWorker(id)
+		if err := tx.TransitionWorker(id, core.WorkerWaitingForUser, w.Rev, core.Event{Kind: "state_change", WorkerID: id, SessionID: w.OwnerSession, Payload: "{}"}); err != nil {
+			return err
+		}
+		_, err := tx.OpenEscalation(core.Escalation{WorkerID: id, SessionID: w.OwnerSession, Kind: "question", Action: "clarify?"})
+		return err
+	}))
+
+	// not yet timed out
+	clk.set(base.Add(20 * time.Minute))
+	res, err := e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 0, res.EscalationsTimedOut)
+	require.Equal(t, core.WorkerWaitingForUser, mustWorker(t, s, id).State)
+
+	// past the timeout → expired + worker paused
+	clk.set(base.Add(31 * time.Minute))
+	res, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, res.EscalationsTimedOut)
+	require.Equal(t, core.WorkerPaused, mustWorker(t, s, id).State)
+	pend, _ := s.Reader().ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: id})
+	require.Empty(t, pend, "timed-out escalation expired")
 }
