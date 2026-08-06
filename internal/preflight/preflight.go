@@ -16,26 +16,37 @@ import (
 	"os/exec"
 )
 
+// minIntakeSecretLen is the shortest HMAC intake secret we accept for network
+// intake — the sole guard on the network event-injection surface, so a trivial
+// (brute-forceable) secret is rejected.
+const minIntakeSecretLen = 16
+
 // Probe is the observed system/config state the checks decide over (injected so
 // Check is deterministic and testable).
 type Probe struct {
-	Euid         int         // effective uid; 0 = root
-	GitPath      string      // resolved path to git, "" if not found
-	StateDir     string      // arco state dir (holds the ledger + worker configs)
-	StateDirMode fs.FileMode // permission bits of StateDir (0 if it doesn't exist)
-	StateDirOK   bool        // whether StateDir was stat-able
-	TCPAddr      string      // configured network intake address ("" = socket only)
-	IntakeSecret string      // configured HMAC intake secret
+	Euid          int         // effective uid; 0 = root (euid, so setuid-root is caught)
+	GitPath       string      // resolved path to git, "" if not found
+	StateDir      string      // arco state dir (holds the ledger + worker configs)
+	StateDirMode  fs.FileMode // permission bits of StateDir (0 if it doesn't exist)
+	StateDirOK    bool        // whether StateDir was stat-able
+	SocketDir     string      // dir holding the unix control socket (local-auth trust root)
+	SocketDirMode fs.FileMode // permission bits of SocketDir
+	SocketDirOK   bool        // whether SocketDir was stat-able
+	TCPAddr       string      // configured network intake address ("" = socket only)
+	IntakeSecret  string      // configured HMAC intake secret
 }
 
 // Gather collects the real Probe from the OS + the given config values.
-func Gather(stateDir, tcpAddr, intakeSecret string) Probe {
-	p := Probe{Euid: os.Geteuid(), StateDir: stateDir, TCPAddr: tcpAddr, IntakeSecret: intakeSecret}
+func Gather(stateDir, socketDir, tcpAddr, intakeSecret string) Probe {
+	p := Probe{Euid: os.Geteuid(), StateDir: stateDir, SocketDir: socketDir, TCPAddr: tcpAddr, IntakeSecret: intakeSecret}
 	if path, err := exec.LookPath("git"); err == nil {
 		p.GitPath = path
 	}
 	if fi, err := os.Stat(stateDir); err == nil {
 		p.StateDirMode, p.StateDirOK = fi.Mode(), true
+	}
+	if fi, err := os.Stat(socketDir); err == nil {
+		p.SocketDirMode, p.SocketDirOK = fi.Mode(), true
 	}
 	return p
 }
@@ -82,10 +93,12 @@ func Evaluate(p Probe) Report {
 	var r Report
 
 	// not_root (CRITICAL): a supervisor running as root means a worker/subprocess
-	// escape defeats every filesystem sandbox — refuse.
+	// escape defeats every filesystem sandbox — refuse. NB: checks euid only; it
+	// does NOT catch gid 0 or elevated capabilities (CAP_DAC_OVERRIDE/…) — those
+	// stay the operator's responsibility (OS-user separation).
 	r.Checks = append(r.Checks, Check{
 		Name: "not_root", Critical: true, Pass: p.Euid != 0,
-		Detail: "arco must not run as root (uid 0) — a worker escape would be unconfined",
+		Detail: "arco must not run with effective uid 0 — a worker escape would be unconfined",
 	})
 
 	// git_present (CRITICAL): quarantine + git hardening + diff-gate all shell out
@@ -95,25 +108,32 @@ func Evaluate(p Probe) Report {
 		Detail: "git binary not found on PATH — quarantine / git-hardening / diff-gate require it",
 	})
 
-	// state_dir_private (WARNING, not fatal): the ledger + compiled worker configs
-	// live here; world/group access exposes the event log and lets others tamper
-	// with a worker's staged config, so 0700 is recommended. It is NOT critical
-	// because arco must not refuse to run — nor chmod — a state dir it may not own
-	// (the operator can point db_path at a shared dir); arco's authoritative
-	// controls (Allowed(), redaction) don't depend on these bits. Surfaced so the
-	// operator tightens it.
-	privatePerm := p.StateDirOK && p.StateDirMode.Perm()&0o077 == 0
-	r.Checks = append(r.Checks, Check{
-		Name: "state_dir_private", Critical: false, Pass: privatePerm,
-		Detail: fmt.Sprintf("state dir %s should be 0700 (no group/other access); got %v (exists=%v)", p.StateDir, p.StateDirMode.Perm(), p.StateDirOK),
-	})
+	// {state,socket}_dir_private (WARNING, not fatal): the ledger + compiled worker
+	// configs live in the state dir; the unix control socket's dir is the trust
+	// root for the local (unauthenticated) mutating routes. 0700 is recommended
+	// for both, but NEITHER is critical: arco must not refuse to run — nor chmod —
+	// a dir it may not own (the operator can point db_path/socket at a shared
+	// dir), and its authoritative controls don't depend on these bits. Surfaced so
+	// the operator tightens them.
+	r.Checks = append(r.Checks, dirPrivate("state_dir_private", p.StateDir, p.StateDirMode, p.StateDirOK))
+	r.Checks = append(r.Checks, dirPrivate("socket_dir_private", p.SocketDir, p.SocketDirMode, p.SocketDirOK))
 
-	// tcp_intake_signed (CRITICAL): a network-exposed intake without a shared
-	// secret is an unauthenticated event-injection surface (P4).
+	// tcp_intake_signed (CRITICAL): a network-exposed intake without a
+	// sufficiently-long shared secret is an unauthenticated (or brute-forceable)
+	// event-injection surface (P4).
+	signed := p.TCPAddr == "" || len(p.IntakeSecret) >= minIntakeSecretLen
 	r.Checks = append(r.Checks, Check{
-		Name: "tcp_intake_signed", Critical: true, Pass: p.TCPAddr == "" || p.IntakeSecret != "",
-		Detail: "tcp_addr is set but intake_secret is empty — network intake must be HMAC-signed",
+		Name: "tcp_intake_signed", Critical: true, Pass: signed,
+		Detail: fmt.Sprintf("tcp_addr is set but intake_secret is missing or shorter than %d bytes — network intake must be HMAC-signed with a strong secret", minIntakeSecretLen),
 	})
 
 	return r
+}
+
+// dirPrivate is a WARNING check that a directory is 0700 (no group/other bits).
+func dirPrivate(name, dir string, mode fs.FileMode, ok bool) Check {
+	return Check{
+		Name: name, Critical: false, Pass: ok && mode.Perm()&0o077 == 0,
+		Detail: fmt.Sprintf("dir %s should be 0700 (no group/other access); got %v (exists=%v)", dir, mode.Perm(), ok),
+	}
 }

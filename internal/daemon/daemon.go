@@ -5,6 +5,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -42,8 +43,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// as root, no git, a world-readable state dir, or network intake without a
 	// signing secret. arco enforces its half; the operator owns OS-user setup /
 	// branch protection.
-	if pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), cfg.TCPAddr, cfg.IntakeSecret)); !pf.OK() {
+	pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), filepath.Dir(cfg.Socket), cfg.TCPAddr, cfg.IntakeSecret))
+	if !pf.OK() {
 		return fmt.Errorf("daemon: preflight failed: %v", pf.Failures())
+	}
+	for _, w := range pf.Failures() { // surface non-fatal warnings on the happy path
+		log.Printf("arco: preflight %s", w)
 	}
 
 	// Single-instance guard: an exclusive advisory lock on the DB. Two daemons

@@ -10,7 +10,11 @@ import (
 )
 
 func base(euid int) Probe {
-	return Probe{Euid: euid, GitPath: "/usr/bin/git", StateDir: "/x", StateDirMode: 0o700, StateDirOK: true}
+	return Probe{
+		Euid: euid, GitPath: "/usr/bin/git",
+		StateDir: "/x", StateDirMode: 0o700, StateDirOK: true,
+		SocketDir: "/run/arco", SocketDirMode: 0o700, SocketDirOK: true,
+	}
 }
 
 func TestEvaluate_AllPassForSafePosture(t *testing.T) {
@@ -30,7 +34,7 @@ func TestEvaluate_CriticalFailures(t *testing.T) {
 	p.TCPAddr = "0.0.0.0:9000"
 	require.False(t, Evaluate(p).OK())
 	// TCP intake WITH a secret is fine
-	p.IntakeSecret = "s"
+	p.IntakeSecret = "0123456789abcdef01"
 	require.True(t, Evaluate(p).OK())
 }
 
@@ -58,7 +62,7 @@ func TestEvaluate_WideStateDirIsWarningNotFatal(t *testing.T) {
 func TestGather_DaemonStyleStateDirIsPrivate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
-	p := Gather(dir, "", "")
+	p := Gather(dir, dir, "", "")
 	require.True(t, p.StateDirOK)
 	require.Equal(t, os.FileMode(0o700), p.StateDirMode.Perm(),
 		"MkdirAll(0700) state dir mode (if this isn't 0700, umask widened it)")
