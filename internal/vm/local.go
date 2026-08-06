@@ -155,6 +155,13 @@ func (l *LocalVMClient) Kill(ctx context.Context, workspace string) error {
 // `workspace create --env` REPLACES or merely augments the pane's shell env —
 // P1's scrubbed-spawn-env only fully holds if it replaces (else herdr's own env,
 // which may carry creds, leaks to the worker). See docs/herdr-contract.md.
+// herdrAgentName maps arco's workspace label ("arco_<ULID>", where the Crockford
+// ULID is UPPERCASE) to a name herdr's `agent start` accepts: 1–32 chars,
+// starting with a lowercase letter, only [a-z0-9_-]. Lowercasing satisfies the
+// rule while keeping the ULID unique. (`workspace create --label` is laxer and
+// takes the original; correlation is by pane_id, not this name.)
+func herdrAgentName(label string) string { return strings.ToLower(label) }
+
 func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (string, error) {
 	kind := spec.Kind
 	if kind == "" {
@@ -178,7 +185,13 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	if err != nil {
 		return "", err
 	}
-	start := []string{"agent", "start", spec.Name, "--kind", kind, "--pane", paneID}
+	// herdr `agent start <name>` requires 1–32 chars, starting with a lowercase
+	// letter and containing only [a-z0-9_-]. arco's workspace label embeds an
+	// UPPERCASE Crockford ULID ("arco_01KZ…"), which `workspace create --label`
+	// accepts but `agent start` rejects (invalid_agent_name — live-verified on
+	// herdr 0.7.5). Lowercase it: the ULID stays unique, and arco correlates the
+	// worker by the returned pane_id (AgentRef), never by this agent name.
+	start := []string{"agent", "start", herdrAgentName(spec.Name), "--kind", kind, "--pane", paneID}
 	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
 		start = append(append(start, "--"), spec.Args...)
 	}
