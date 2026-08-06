@@ -1,7 +1,8 @@
 // Package reconcile is the application layer: it wires the ledger, the VMClient,
-// and (later) the brain into the supervise loop. Dispatch is crash-safe
+// and the brain into the supervise loop. Dispatch is crash-safe
 // (intent→execute→result); event application is deterministic via fusion, with
-// the brain reserved for genuinely ambiguous states (added in a later pass).
+// the brain reserved for genuinely ambiguous states (off the write path, via
+// per-worker Exec).
 package reconcile
 
 import (

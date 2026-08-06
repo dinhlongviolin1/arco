@@ -27,9 +27,10 @@ import (
 // dir (cleaned up on a pre-launch *error*; a *crash* orphan awaits a sweep-GC
 // follow-up — there is no GC today). Additive —
 // it does NOT touch the prompt-based Dispatch path; the API routes here only
-// when a repo is supplied. NOTE: with the default Fake VMClient this runs
-// end-to-end; the real LocalVMClient.Launch backend is Task-S-gated (a stub),
-// so repo-based spawn against real herdr awaits that wiring.
+// when a repo is supplied. NOTE: the real LocalVMClient.Launch backend is now
+// implemented against the confirmed herdr 0.7.5 contract (workspace create →
+// list → agent start); live end-to-end verification against a running herdr is
+// user-gated (spawning a real agent is an outward, quota-consuming side effect).
 func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession bool, repo, base string) (DispatchResult, error) {
 	if repo == "" {
 		return DispatchResult{}, fmt.Errorf("reconcile: Spawn requires a repo (use Dispatch for the prompt path)")
