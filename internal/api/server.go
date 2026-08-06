@@ -462,12 +462,10 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
-		return tx.AnswerQuestion(req.ID, req.Text, parseScope(req.Scope), core.Event{
-			Kind: "question_esc", Payload: `{"decided_by":"human"}`,
-		})
-	})
-	if err != nil {
+	// Via the Engine (not a bare tx) so a resume also DELIVERS the answer to the
+	// worker's agent post-commit (audit MED-2) — the ledger resume alone leaves the
+	// agent parked with the answer never typed in.
+	if err := s.eng.AnswerQuestion(r.Context(), req.ID, req.Text, parseScope(req.Scope)); err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}
@@ -480,12 +478,8 @@ func (s *Server) confirm(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
-		return tx.DecideConfirm(req.ID, req.Yes, parseScope(req.Scope), core.Event{
-			Kind: "confirm_dec", Payload: `{"decided_by":"human"}`,
-		})
-	})
-	if err != nil {
+	// Via the Engine so an approval also delivers to the worker's agent (MED-2).
+	if err := s.eng.DecideConfirm(r.Context(), req.ID, req.Yes, parseScope(req.Scope)); err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}
