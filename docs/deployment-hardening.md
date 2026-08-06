@@ -135,7 +135,12 @@ the actual worker launch is gated on the herdr launch contract** — see §9.
 
 ---
 
-## 9. Task-S: live-herdr spike (gates the real worker-spawn path)
+## 9. Task-S: live-herdr spike (gates the real worker-spawn path) — ✅ DONE
+
+**Completed + the real spawn path is live-verified end-to-end (§11).** herdr 0.7.5's
+contract is confirmed (`docs/herdr-contract.md`), `vm.LocalVMClient.Launch` is
+implemented, and `use_local_vm=true` runs the real repo-spawn on vm0. The original
+spike notes are kept below for provenance; §11 is the reproducible procedure.
 
 `vm.LocalVMClient` maps herdr's `agent list --json` / `agent prompt` /
 `send-keys` against herdr's *documented* contract; the exact JSON fields and the
@@ -164,6 +169,65 @@ Spike checklist:
   Postgres + a queue (the `Store`/`Reader` ports were kept engine-agnostic for
   this).
 
+## 11. Live deployment (VERIFIED end-to-end on vm0, herdr 0.7.5)
+
+The full repo-spawn is live-verified: `dispatch(repo)` → clone-per-worker →
+quarantine → permcompile → herdr launch → **scoped pool credentials** →
+authenticated agent → **autonomous task completion** in the isolated clone. The
+reproducible procedure:
+
+**Prereqs on the host:** `herdr` (0.7.x) running, `clavis` with at least one
+profile (`clavis list`), `git`. arco talks to the local herdr over its socket.
+
+**1. Config** (`~/.arco/config.toml`, outside the repo — never commit it):
+```toml
+use_local_vm = true      # real herdr LocalVMClient (else Fake)
+herdr_bin    = "herdr"
+default_pool = "p1"      # every repo-spawn leases from this pool
+lease_ttl    = "1h"
+```
+`chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
+
+**2. Start the daemon:** `arco daemon --config ~/.arco/config.toml`
+(preflight fails fast if `herdr` is missing or `default_pool` doesn't exist yet —
+so create the pool first, or seed it, then start).
+
+**3. Create the credential pool** — a worker leased from it launches Claude Code
+with that clavis profile's scoped creds (NOT arco's own — P1):
+```
+arco pool create p1 --profile deepseek-1 --max-active 10
+```
+
+**4. Dispatch a repo task** (the autonomous path):
+```
+arco dispatch "…the task…" --repo https://github.com/you/repo.git --new
+```
+→ worker `running`; it clones, authenticates as the pool's profile, and completes
+the task in `~/.arco/workers/<id>/worktree` with no human in the loop.
+
+**Worker auth model (how §1's P1 is honored while the worker still authenticates):**
+`spawnenv.Scrub` strips ALL provider creds from the launch env (so a worker never
+inherits arco's key); Spawn then injects the *pool's* clavis-profile env
+(`clavis env <profile> --json --reveal-key`) — a **scoped** credential, delivered
+via herdr `workspace create --env` which **replaces** the pane env. Caveat: `--env`
+puts the token in the herdr `create` argv (visible in `ps` briefly) — acceptable
+for a scoped, low-privilege pool key on a single-user host; use a dedicated,
+tightly-scoped clavis profile per pool.
+
+**Live-caught gotchas (already handled in code, noted for operators):**
+- herdr `agent start <name>` needs a lowercase name (arco lowercases the ULID).
+- `agent prompt`/`send-keys` target a **pane_id**, not the workspace label
+  (arco correlates + prompts by the captured pane_id).
+- herdr returns some errors as `{"error":…}` with **exit 0** (arco treats these
+  as failures) and its only env mechanism is `--env` (argv).
+- The initial task prompt races the agent's TUI boot → arco delivers it async with
+  a `--wait`-confirmed retry.
+
+**Known follow-ups (non-blocking):** narrow initial-prompt double-submit edge; a
+delivery holding an Exec slot on the rare never-boots path; the legacy prompt-path
+`dispatch` (no `--repo`) doesn't fit real herdr (use `--repo`); no `pool
+delete/update` CLI.
+
 ---
 
 ## Pre-flight checklist (before real repos/creds)
@@ -179,4 +243,5 @@ Spike checklist:
       split not exposed raw (§5).
 - [ ] Telegram/Web left off, or enabled with auth (§6).
 - [ ] Redaction patterns reviewed for your credential shapes (§7).
-- [ ] Task-S spike done before `use_local_vm` (§8/§9).
+- [x] Task-S spike done (§9); real spawn path live-verified — follow §11 to deploy
+      `use_local_vm` with a scoped clavis-profile pool.
