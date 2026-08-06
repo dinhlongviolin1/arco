@@ -143,13 +143,16 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// Authoritative reconcile sweep on a ticker (push is an optimization over it).
 	ticker := time.NewTicker(cfg.SweepInterval)
 	defer ticker.Stop()
-	// A local cancel ctx + WaitGroup so the sweep goroutine is joined before the
-	// deferred store.Close on EVERY return path (incl. the errCh server-error path,
-	// where the caller's ctx may still be live). Deferred so cancel→wait→Close is
-	// LIFO-ordered ahead of the store.Close deferred at function entry.
+	// Drain the off-write-path brain work AND the periodic sweep goroutine before
+	// the store.Close deferred at function entry, on EVERY return path — including
+	// the errCh server-error path, where the caller's ctx may still be live and a
+	// brain task on eng.bg() would otherwise tx after Close (deepseek review). LIFO
+	// over these + the entry store.Close gives sweepCancel → sweepWG.Wait →
+	// Exec.Stop → store.Close.
 	sweepCtx, sweepCancel := context.WithCancel(ctx)
 	var sweepWG sync.WaitGroup
 	sweepWG.Add(1)
+	defer eng.Exec.Stop()
 	defer sweepWG.Wait()
 	defer sweepCancel()
 	go func() {
@@ -171,11 +174,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		sh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(sh)
-		// Drain off-write-path brain work BEFORE the deferred store.Close, so no
-		// async tx runs after the DB is closed (ctx is already cancelled, so
-		// in-flight clavis calls / txs abort promptly). The sweep goroutine is
-		// cancelled + joined by the deferred sweepCancel/sweepWG.Wait above.
-		eng.Exec.Stop()
+		// Off-write-path brain work + the sweep goroutine are drained before the
+		// deferred store.Close by the deferred Exec.Stop/sweepWG.Wait above (ctx is
+		// already cancelled, so in-flight clavis calls / txs abort promptly).
 		_ = os.Remove(cfg.Socket)
 		return nil
 	case err := <-errCh:
