@@ -249,3 +249,40 @@ func TestBrain_PoolOwnedNotReclassified(t *testing.T) {
 	e.Exec.Wait()
 	require.Equal(t, int32(1), calls.Load(), "pool-owned worker is inert to the brain")
 }
+
+// Execute-time guard: if a worker is released to the pool AFTER the brain's entry
+// gate but BEFORE a side effect applies (a transfer racing the off-write-path
+// classification), EVERY applyStep branch must be inert — the pool is inert to
+// the brain across all its side effects (opus capstone review). No prompt, no
+// escalation, no transition/terminalization/park of the pooled worker.
+func TestBrain_PoolReleasedWorkerInertToAllBrainSideEffects(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]func(e *Engine, id string){
+		"run_again": func(e *Engine, id string) {
+			e.applyStep(ctx, id, "c", core.StepResult{Kind: "run_again", Instruction: "go"})
+		},
+		"final_output": func(e *Engine, id string) { e.applyStep(ctx, id, "c", core.StepResult{Kind: "final_output"}) },
+		"question":     func(e *Engine, id string) { e.applyStep(ctx, id, "c", core.StepResult{Kind: "question"}) },
+		"confirm":      func(e *Engine, id string) { e.applyStep(ctx, id, "c", core.StepResult{Kind: "confirm"}) },
+		"park":         func(e *Engine, id string) { e.park(ctx, id, "billing wall") },
+	}
+	for name, fn := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, s, fake := brainEngine(t, `{}`, nil)
+			id := dispatchRunning(t, e)
+			// Race: released to the pool between classification and apply (stays running).
+			require.NoError(t, s.WithTx(ctx, func(tx core.Tx) error { return tx.ReleaseWorker(id, "brain") }))
+			require.Equal(t, core.PoolSessionID, mustWorker(t, s, id).OwnerSession)
+			before := len(fake.Prompts())
+
+			fn(e, id)
+
+			w := mustWorker(t, s, id)
+			require.Equal(t, core.WorkerRunning, w.State, "brain must not transition/terminalize/park a pooled worker")
+			require.Equal(t, core.PoolSessionID, w.OwnerSession, "still pool-owned")
+			require.Len(t, fake.Prompts(), before, "no prompt to a pooled worker")
+			escs, _ := s.Reader().ListEscalations(core.EscalationFilter{})
+			require.Empty(t, escs, "no escalation opened for a pooled worker")
+		})
+	}
+}
