@@ -24,6 +24,29 @@ type Fake struct {
 	// (ambiguous launch): a prompted workspace is thereafter reported alive.
 	AliveOnPrompt bool
 	killed        []string
+	launched      []core.LaunchSpec
+	LaunchErr     error
+}
+
+// Launched returns the LaunchSpecs seen (test inspection).
+func (f *Fake) Launched() []core.LaunchSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]core.LaunchSpec(nil), f.launched...)
+}
+
+// Launch records the spec and returns a deterministic synthetic ref, registering
+// the new agent as alive (so a subsequent ListAgents/sweep correlates by it).
+func (f *Fake) Launch(_ context.Context, spec core.LaunchSpec) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.launched = append(f.launched, spec)
+	if f.LaunchErr != nil {
+		return "", f.LaunchErr
+	}
+	ref := "pane:" + spec.Name
+	f.Agents = append(f.Agents, core.AgentObs{Ref: ref, Workspace: spec.Name, Alive: true})
+	return ref, nil
 }
 
 var _ core.VMClient = (*Fake)(nil)

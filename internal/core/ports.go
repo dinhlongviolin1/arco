@@ -84,6 +84,9 @@ type Reader interface {
 	GetEscalation(id string) (Escalation, error)
 	Capability(name string) (CatalogRow, bool, error)
 	DefaultTree() ([]CatalogRow, error)
+	// Catalog returns the FULL capability_catalog (all rows incl. high-blast) —
+	// permcompile.Compile's required input.
+	Catalog() ([]CatalogRow, error)
 	// Allowed is the authoritative capability check for arco-executed actions
 	// (O(1) own-tree read; cascade keeps it O(1)).
 	Allowed(sessionID, capability string) (bool, error)
@@ -209,6 +212,18 @@ type Store interface {
 
 // ---- worker-execution port (LocalVMClient now; SSHVMClient in P3) ----------
 
+// LaunchSpec is the pinned worker-launch request (security precond P6): the
+// agent Kind, the daemon-owned Workdir (worktree), the pinned tool/permission
+// Args (permcompile.LaunchArgs), and the scrubbed Env (spawnenv.Scrub). Name is
+// arco's workspace id ("arco_<ulid>"), a stable label for the backend agent.
+type LaunchSpec struct {
+	Name    string
+	Kind    string
+	Workdir string
+	Args    []string
+	Env     []string
+}
+
 // AgentObs is one observed agent from a VM. Ref is the backend's own agent
 // handle (herdr's pane_id) — the correlation key when a worker was launched via
 // the arco-owned spawn path; Workspace is the fallback for Prompt-model/Fake
@@ -238,6 +253,10 @@ type VMClient interface {
 	GitHeads(ctx context.Context, worktrees []string) (map[string]string, error)
 	Prompt(ctx context.Context, workspace, text string) error // text embeds a prompt_intent ULID
 	Kill(ctx context.Context, workspace string) error
+	// Launch starts a NEW agent per spec and returns the backend's agent handle
+	// (herdr pane_id) — the ref stored via BindAgentRef for sweep correlation.
+	// The pinned launch flags + scrubbed env are in the spec.
+	Launch(ctx context.Context, spec LaunchSpec) (ref string, err error)
 	Diff(ctx context.Context, worktree, base, head string) (Diff, error)
 }
 

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/dinhlongviolin1/arco/internal/core"
 )
 
 func git(t *testing.T, dir string, args ...string) string {
@@ -118,4 +120,18 @@ func TestLocal_ListAgentsAndPrompt(t *testing.T) {
 	require.Contains(t, string(b), "wB:p1 :: do X")
 
 	require.NoError(t, l.Kill(context.Background(), "wB:p1"))
+}
+
+func TestFake_Launch(t *testing.T) {
+	f := NewFake()
+	ref, err := f.Launch(context.Background(), core.LaunchSpec{Name: "arco_x", Kind: "claude", Args: []string{"--settings", "/cfg"}})
+	require.NoError(t, err)
+	require.Equal(t, "pane:arco_x", ref)
+	// the launched spec is recorded, and the new agent shows alive by ref
+	require.Len(t, f.Launched(), 1)
+	require.Equal(t, "claude", f.Launched()[0].Kind)
+	agents, _ := f.ListAgents(context.Background())
+	require.Len(t, agents, 1)
+	require.Equal(t, ref, agents[0].Ref)
+	require.True(t, agents[0].Alive)
 }
