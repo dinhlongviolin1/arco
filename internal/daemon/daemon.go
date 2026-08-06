@@ -16,6 +16,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
 	"github.com/dinhlongviolin1/arco/internal/vm"
@@ -35,6 +36,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.Socket), 0o700); err != nil {
 		return err
+	}
+
+	// Security preflight (PASS-3): refuse to start in an unsafe posture — running
+	// as root, no git, a world-readable state dir, or network intake without a
+	// signing secret. arco enforces its half; the operator owns OS-user setup /
+	// branch protection.
+	if pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), cfg.TCPAddr, cfg.IntakeSecret)); !pf.OK() {
+		return fmt.Errorf("daemon: preflight failed: %v", pf.Failures())
 	}
 
 	// Single-instance guard: an exclusive advisory lock on the DB. Two daemons
@@ -82,9 +91,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if cfg.BrainProfile != "" {
 		eng.Brain = reconcile.BrainCfg{Enabled: true, Profile: cfg.BrainProfile, Model: cfg.BrainModel}
 	}
-	// Network-exposed intake MUST be signed (security precondition P4): refuse to
-	// start with a TCP listener but no shared secret rather than expose an
-	// unauthenticated event-injection surface.
+	// Network-exposed intake must be signed — enforced by the preflight
+	// tcp_intake_signed check above.
 	//
 	// SCOPE WARNING for whoever wires TCP: the HMAC gate covers ONLY POST
 	// /v1/events. dispatch / verify / escalations{answer,confirm} are mutating and
@@ -93,9 +101,6 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// as-is — serve only /v1/events (+ read-only GETs) over TCP, or gate every
 	// mutating route behind the same HMAC (and teach the CLI to sign), before any
 	// TCP listener is added (opus review, MED latent gap).
-	if cfg.TCPAddr != "" && cfg.IntakeSecret == "" {
-		return fmt.Errorf("daemon: tcp_addr is set but intake_secret is empty — network intake must be signed (set ARCO_INTAKE_SECRET)")
-	}
 	srv := api.New(store, eng)
 	srv.SetIntakeSecret(cfg.IntakeSecret)
 
