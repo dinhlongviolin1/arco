@@ -12,6 +12,7 @@ import (
 
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // brainClassify runs a short-lived brain call for an ambiguous worker OFF the
@@ -316,6 +317,8 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 	if kind == "confirm" {
 		waiting = core.WorkerWaitingConfirmation
 	}
+	var opened bool       // the escalation was NEWLY opened in the tx (no dedup)
+	var escID, task string // its id + the worker's task, for the decision card
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -342,12 +345,42 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 				return err
 			}
 		}
-		_, err = tx.OpenEscalation(core.Escalation{
+		// Detect NEWLY-opened for the notify card: OpenEscalation dedupes to an
+		// existing pending row silently, and a dedup must not re-notify. Reading
+		// the pending state in the SAME serialized tx is race-free.
+		pend, err := tx.ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: workerID})
+		if err != nil {
+			return err
+		}
+		escID, err = tx.OpenEscalation(core.Escalation{
 			WorkerID: workerID, SessionID: w.OwnerSession, Kind: kind, ActionClass: ac, Tier: tier,
 			QuestionClass: "clarify", Action: step.Instruction, DraftAnswer: step.Reason, BrainRationale: step.Reason,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if len(pend) == 0 {
+			opened, task = true, w.Task
+		}
+		return nil
 	})
+	if !opened {
+		return
+	}
+	// POST-COMMIT: re-read the escalation so the card carries the STORED (write-time
+	// scrubbed, B4) draft/rationale rather than the raw brain output.
+	esc, err := e.Store.Reader().GetEscalation(escID)
+	if err != nil {
+		return
+	}
+	e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+		WorkerID:   workerID,
+		TaskTail:   taskTail(task),
+		Question:   esc.Action,
+		Draft:      esc.DraftAnswer,
+		Confidence: esc.DraftConfidence,
+		Rationale:  esc.BrainRationale,
+	}))
 }
 
 func (e *Engine) park(ctx context.Context, workerID, reason string) {

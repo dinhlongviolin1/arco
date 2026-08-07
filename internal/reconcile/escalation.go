@@ -2,8 +2,10 @@ package reconcile
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // AnswerQuestion resolves a pending QUESTION escalation by a human and, when that
@@ -13,10 +15,20 @@ import (
 // mis-finalize it. Delivery is async + best-effort (off the API response path),
 // exactly like the initial-task delivery on the spawn path.
 func (e *Engine) AnswerQuestion(ctx context.Context, id, text string, scope core.Scope) error {
+	// Pre-read for the POST-COMMIT card (the worker the answer reaches). A read
+	// failure here means the tx below fails too — no card on a failed answer.
+	esc, escErr := e.Store.Reader().GetEscalation(id)
 	if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		return tx.AnswerQuestion(id, text, scope, core.Event{Kind: "question_esc", Payload: `{"decided_by":"human"}`})
 	}); err != nil {
 		return err
+	}
+	if escErr == nil {
+		e.notifyCard(notify.Card{
+			Level: notify.LevelInfo,
+			Title: "arco: escalation answered — " + esc.WorkerID,
+			Body:  fmt.Sprintf("worker: %s\nanswer: %s", esc.WorkerID, text),
+		})
 	}
 	e.deliverDecision(id, text)
 	return nil
@@ -26,10 +38,24 @@ func (e *Engine) AnswerQuestion(ctx context.Context, id, text string, scope core
 // resumes the worker and is delivered to its agent (a rejection blocks the worker
 // and delivers nothing — it must NOT proceed).
 func (e *Engine) DecideConfirm(ctx context.Context, id string, yes bool, scope core.Scope) error {
+	// Pre-read for the POST-COMMIT card (the worker the decision reaches). A read
+	// failure here means the tx below fails too — no card on a failed decision.
+	esc, escErr := e.Store.Reader().GetEscalation(id)
 	if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		return tx.DecideConfirm(id, yes, scope, core.Event{Kind: "confirm_dec", Payload: `{"decided_by":"human"}`})
 	}); err != nil {
 		return err
+	}
+	if escErr == nil {
+		decision := "rejected"
+		if yes {
+			decision = "approved"
+		}
+		e.notifyCard(notify.Card{
+			Level: notify.LevelInfo,
+			Title: "arco: escalation answered — " + esc.WorkerID,
+			Body:  fmt.Sprintf("worker: %s\ndecision: %s", esc.WorkerID, decision),
+		})
 	}
 	if yes {
 		e.deliverDecision(id, "Approved — continue.")

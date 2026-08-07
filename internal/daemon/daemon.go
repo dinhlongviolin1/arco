@@ -19,6 +19,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
@@ -106,6 +107,13 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.GitBin = "git"
 	eng.DefaultPool = cfg.DefaultPool
 	eng.LeaseTTL = cfg.LeaseTTL
+	// Push decision cards (rev7/T1.1): no URLs → a no-op sender (disabled). Load
+	// validates min_level, so this cannot fail for a loaded config.
+	notifyLevel, err := notify.ParseLevel(cfg.Notify.MinLevel)
+	if err != nil {
+		return fmt.Errorf("daemon: notify: %w", err)
+	}
+	eng.Notify = notify.New(cfg.Notify.URLs, notifyLevel)
 	if cfg.UseLocalVM {
 		// A spawned worker authenticates via its pool's clavis profile (scoped
 		// creds injected post-scrub at launch) — not arco's inherited creds (P1).

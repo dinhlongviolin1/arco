@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // AuditDeniedAttempt handles a worker's attempt at a DENY-LISTED action, reported
@@ -25,7 +26,9 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 	detail = truncate(detail, eventPayloadCap)
 	payload, _ := json.Marshal(map[string]string{"capability": capability, "detail": detail})
 
-	return e.Store.WithTx(ctx, func(tx core.Tx) error {
+	var opened bool // the danger confirm was opened in the tx (not a redelivery)
+	var task string // the worker's task, for the decision card
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
@@ -61,15 +64,32 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 		// so a pre-existing benign question would otherwise shadow it (and answering
 		// that question would resume the worker without the danger ever shown).
 		// Expire any pending escalation first so the danger confirm is what the
-		// operator sees (opus review). The worker is paused regardless.
+		// operator sees (opus review). The worker is paused regardless. Expiring
+		// first also means the OpenEscalation below ALWAYS creates a new row — the
+		// notify card fires (no dedup is possible at this point).
 		if _, err := tx.ExpirePendingForWorker(workerID); err != nil {
 			return err
 		}
-		_, err = tx.OpenEscalation(core.Escalation{
+		if _, err = tx.OpenEscalation(core.Escalation{
 			WorkerID: workerID, SessionID: w.OwnerSession, Kind: "confirm",
 			QuestionClass: "proceed-confirmation", ActionClass: core.ClassDanger, Tier: core.TierHighBlast,
 			Capability: capability, Action: "worker attempted a deny-listed capability", Detail: detail,
-		})
-		return err
+		}); err != nil {
+			return err
+		}
+		opened, task = true, w.Task
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// POST-COMMIT: push the danger-confirm decision card.
+	if opened {
+		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+			WorkerID: workerID,
+			TaskTail: taskTail(task),
+			Question: "worker attempted a deny-listed capability",
+		}))
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/permcompile"
 	"github.com/dinhlongviolin1/arco/internal/quarantine"
 	"github.com/dinhlongviolin1/arco/internal/spawnenv"
@@ -169,6 +170,14 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	})
 	if err != nil {
 		return DispatchResult{}, err
+	}
+	// POST-COMMIT: a spawn that parked failed (provision/compile/launch) surfaces.
+	if finalState == core.WorkerFailed {
+		e.notifyCard(notify.Card{
+			Level: notify.LevelWarn,
+			Title: "arco: worker failed — " + workerID,
+			Body:  fmt.Sprintf("worker: %s\nspawn failed: %v", workerID, perr),
+		})
 	}
 	// Deliver the initial task to the freshly-launched agent, targeted at its
 	// captured pane (ref), AFTER the running-state commit. Done ASYNC (off the

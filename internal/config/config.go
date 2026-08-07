@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // Telegram is the optional Telegram add-on config (off by default).
@@ -24,6 +26,15 @@ type Telegram struct {
 type Web struct {
 	Enabled bool   `toml:"enabled"`
 	Addr    string `toml:"addr"`
+}
+
+// Notify is the push decision-card config (off by default: no URLs → a no-op
+// sender). URLs are shoutrrr service URLs (ntfy and friends); MinLevel filters
+// out cards below that severity ("info"|"warn"|"urgent", "" = info). An
+// invalid MinLevel fails Load loudly.
+type Notify struct {
+	URLs     []string `toml:"urls"`
+	MinLevel string   `toml:"min_level"`
 }
 
 // Config is the fully-resolved daemon configuration. All durations are real
@@ -65,6 +76,7 @@ type Config struct {
 
 	Telegram Telegram `toml:"telegram"`
 	Web      Web      `toml:"web"`
+	Notify   Notify   `toml:"notify"`
 }
 
 // Defaults returns a Config populated with the pinned build-guide defaults.
@@ -92,6 +104,8 @@ func Defaults() Config {
 		PerSessionBrainRate:   6,
 		PoolTTL:               24 * time.Hour,
 		LeaseTTL:              15 * time.Minute,
+
+		Notify: Notify{MinLevel: "info"}, // empty URLs → disabled; everything passes the filter
 	}
 }
 
@@ -114,6 +128,14 @@ func Load(path string) (Config, error) {
 	// A CHEAP default must survive an empty brain_model in the TOML.
 	if cfg.BrainModel == "" {
 		cfg.BrainModel = "haiku"
+	}
+	// min_level defaults to info (empty == info); anything else must be a real
+	// level or Load fails loudly, naming the key.
+	if cfg.Notify.MinLevel == "" {
+		cfg.Notify.MinLevel = "info"
+	}
+	if _, err := notify.ParseLevel(cfg.Notify.MinLevel); err != nil {
+		return Config{}, fmt.Errorf("config: key notify.min_level: %w", err)
 	}
 	return cfg, nil
 }
