@@ -104,6 +104,13 @@ type Engine struct {
 	// (the Fake/headless path). Set by the daemon when use_local_vm.
 	Creds core.AgentCredentials
 
+	// SpawnUID is the UID the daemon spawns workers under (its own UID, when the
+	// local herdr launches them), recorded on the worker row at spawn so the UDS
+	// intake can bind incoming events to it via SO_PEERCRED (a same-box HMAC
+	// holder can't forge events for a worker recorded under another UID). nil =
+	// don't record (Fake/cross-VM) → the intake leaves the worker ungated.
+	SpawnUID *int
+
 	mu     sync.Mutex
 	misses map[string]int // workerID → consecutive missed sweeps (in-memory)
 	// redriving guards against a sweep stacking duplicate crash-recovery re-drives
@@ -173,6 +180,7 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 		if err := tx.CreateWorker(core.Worker{
 			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting,
 			VM: e.DefaultVM, Workspace: workspace, Task: task, RunReason: "dispatch",
+			IntakeUID: e.SpawnUID,
 		}); err != nil {
 			return err
 		}

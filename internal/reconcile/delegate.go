@@ -74,6 +74,7 @@ func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task, brainCID st
 			ID: childID, OwnerSession: sessionID, State: core.WorkerStarting,
 			VM: e.DefaultVM, Workspace: workspace, Task: task, RunReason: "delegate",
 			ParentWorkerID: parentWorkerID, DelegationDepth: childDepth,
+			IntakeUID:      e.SpawnUID, // children are UID-gated like every other spawn (T1.6)
 		}); err != nil {
 			return err
 		}

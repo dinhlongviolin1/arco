@@ -133,6 +133,13 @@ type Worker struct {
 	// pane_id), the key the sweep correlates liveness by. "" = not launched via
 	// the arco-owned spawn path → sweep falls back to a Workspace match.
 	AgentRef string
+	// IntakeUID is the UID the worker was spawned under (recorded by the daemon
+	// on the local VM path). The UDS intake resolves the connecting peer's UID
+	// via SO_PEERCRED and rejects events whose peer UID differs, so a same-box
+	// holder of the intake HMAC secret can't forge per-worker events. nil =
+	// unknown/ungated (legacy rows, cross-VM, Fake) → intake keeps today's
+	// behavior.
+	IntakeUID *int
 }
 
 // Session is the first-class unit of work + conversation; sessions form a
