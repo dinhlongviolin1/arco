@@ -130,6 +130,14 @@ func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	return r, err
 }
 
+// Status fetches the one-call fleet snapshot (workers by state, sessions by
+// status, pending escalations with age, pool lease usage).
+func (c *Client) Status(ctx context.Context) (api.StatusResp, error) {
+	var r api.StatusResp
+	err := c.do(ctx, http.MethodGet, "/v1/status", nil, &r)
+	return r, err
+}
+
 // Verify moves a completed_candidate worker to completed_verified. expectedRev
 // is the rev the caller observed via Diff — the server CASes against it so a
 // re-run between review and verify is refused.
