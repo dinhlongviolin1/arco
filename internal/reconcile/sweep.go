@@ -170,6 +170,13 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 					HeadCommit: headNow, BootID: obsBootID, PIDStartTime: obs.PIDStartTime,
 				})
 			})
+			blocked, err := e.checkStall(ctx, w, headNow)
+			if err != nil {
+				return res, err
+			}
+			if blocked {
+				res.Transitions++
+			}
 			continue
 		}
 
@@ -483,6 +490,70 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// checkStall enforces StallN for one ALIVE worker (called after its observation
+// is recorded): a running worker whose git HEAD was observed and did NOT advance
+// is making no progress. After StallN consecutive such sweeps it is transitioned
+// running→blocked and a stall question escalation is opened in ONE tx
+// (OpenEscalation keeps it idempotent one-pending-per-worker), and the counter
+// is reset in the same tx so a later unblock starts fresh. HEAD advance resets
+// the counter; an unobservable HEAD is no signal at all (absence of evidence is
+// not no-progress). Only state `running` accrues/triggers stall. Returns whether
+// the worker was blocked.
+func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) (bool, error) {
+	if e.StallN <= 0 || w.State != core.WorkerRunning || headNow == "" {
+		return false, nil
+	}
+	if headNow != w.HeadCommit {
+		if w.StallCount == 0 {
+			return false, nil // already zero — no write needed
+		}
+		err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			return tx.ResetWorkerStall(w.ID)
+		})
+		return false, err
+	}
+	var blocked bool
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		cur, err := tx.GetWorker(w.ID)
+		if err != nil {
+			return err
+		}
+		if cur.State != core.WorkerRunning {
+			return nil // another writer moved it; the next sweep re-derives
+		}
+		n, err := tx.BumpWorkerStall(w.ID)
+		if err != nil {
+			return err
+		}
+		if n < e.StallN {
+			return nil
+		}
+		if err := tx.TransitionWorker(w.ID, core.WorkerBlocked, cur.Rev, core.Event{
+			Kind: "reconcile", WorkerID: w.ID, SessionID: cur.OwnerSession,
+			Payload: fmt.Sprintf(`{"stall":true,"sweeps":%d}`, n),
+		}); err != nil {
+			return err
+		}
+		// QuestionClass must stay inside the frozen schema's enum (0001 CHECK):
+		// the catch-all "other" carries it, the stall semantics live in Action +
+		// the reconcile event payload ("stall":true). A dedicated 'stall' class
+		// would need an escalations-table rebuild — out of scope (no migrations).
+		if _, err := tx.OpenEscalation(core.Escalation{
+			WorkerID: w.ID, SessionID: cur.OwnerSession, Kind: "question",
+			QuestionClass: "other", ActionClass: core.ClassAmbiguous, Tier: core.TierMedium,
+			Action: fmt.Sprintf("worker made no progress for %d sweeps", n),
+		}); err != nil {
+			return err
+		}
+		blocked = true
+		return tx.ResetWorkerStall(w.ID) // same tx: a later unblock starts fresh
+	})
+	if err != nil {
+		return false, err
+	}
+	return blocked, nil
 }
 
 // headKey is the git-HEAD lookup key for a worker: its worktree if known, else

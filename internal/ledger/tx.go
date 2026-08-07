@@ -207,6 +207,38 @@ func (t *txn) ObserveWorker(id string, obs core.WorkerObservation) error {
 	return nil
 }
 
+// BumpWorkerStall increments workers.stall_count and returns the new count —
+// the sweep's alive-no-progress counter behind stall_n. Observation-like: no
+// state change, no rev bump. ErrNotFound if the worker is gone.
+func (t *txn) BumpWorkerStall(id string) (int, error) {
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE workers SET stall_count=stall_count+1 WHERE id=?`, id)
+	if err != nil {
+		return 0, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, core.ErrNotFound
+	}
+	var count int
+	err = t.q.QueryRowContext(context.Background(),
+		`SELECT stall_count FROM workers WHERE id=?`, id).Scan(&count)
+	return count, err
+}
+
+// ResetWorkerStall zeroes workers.stall_count (HEAD advanced, or a stall was
+// resolved). ErrNotFound if the worker is gone.
+func (t *txn) ResetWorkerStall(id string) error {
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE workers SET stall_count=0 WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return core.ErrNotFound
+	}
+	return nil
+}
+
 // appendChecked appends an internal event and treats a hash-conflict as an
 // error so the surrounding CAS tx rolls back rather than committing a state
 // change with no corresponding event (build-guide "never a silent dedup").

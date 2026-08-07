@@ -132,6 +132,14 @@ type Tx interface {
 	// pid, boot_id) without a state change or rev bump — the sweep/intake truth.
 	ObserveWorker(id string, obs WorkerObservation) error
 
+	// BumpWorkerStall increments workers.stall_count (the sweep's alive-no-progress
+	// counter behind stall_n) and returns the new count. Observation-like: no state
+	// change, no rev bump.
+	BumpWorkerStall(id string) (int, error)
+	// ResetWorkerStall zeroes workers.stall_count (HEAD advanced, or a stall was
+	// resolved). No state change, no rev bump.
+	ResetWorkerStall(id string) error
+
 	// BindAgentRef records the VM-backend agent handle (e.g. herdr pane_id)
 	// captured at launch, so the sweep can correlate this worker's liveness by it.
 	BindAgentRef(workerID, ref string) error

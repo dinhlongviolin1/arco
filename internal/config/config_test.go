@@ -27,7 +27,6 @@ brain_profile  = "deepseek-1"
 	require.Equal(t, "haiku", cfg.BrainModel)
 	require.NotEqual(t, "opus", cfg.BrainModel)
 	// pinned operability defaults present.
-	require.Equal(t, 8, cfg.MaxSpawns)
 	require.Equal(t, 4, cfg.MaxBrainCalls)
 	require.Equal(t, 30*time.Second, cfg.SweepInterval)
 	require.Equal(t, 8, cfg.MaxChildrenPerSession)

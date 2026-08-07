@@ -47,6 +47,11 @@ type Engine struct {
 	// before it is finalized (suspect_missing → lost / completed_candidate).
 	MissThreshold int
 
+	// StallN is how many consecutive sweeps an ALIVE worker may be observed with
+	// an UNCHANGED git HEAD (no progress) before it is transitioned running→blocked
+	// with a stall question escalation (0 = disabled). Set from config by the daemon.
+	StallN int
+
 	// PoolTTL is how long a released worker may sit unclaimed in the pool before
 	// the sweep pauses it (0 = reaping disabled). Set from config by the daemon.
 	PoolTTL time.Duration
