@@ -43,3 +43,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# --- rev-7 factory worktrees ---
+.wt/
