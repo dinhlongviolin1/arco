@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -195,6 +198,61 @@ func newSessionsCmd() *cobra.Command {
 			return tw.Flush()
 		},
 	}
+}
+
+// newStatusCmd renders the one-call fleet snapshot (rev7/T1.2) — the
+// one-screen view an operator checks from a phone. --json emits the raw
+// StatusResp for machines.
+func newStatusCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "one-screen fleet view: workers by state, pending escalations, pool lease usage",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.Status(context.Background())
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				b, err := json.Marshal(res)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), string(b))
+				return nil
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "WORKERS")
+			states := make([]string, 0, len(res.Workers))
+			for st := range res.Workers {
+				states = append(states, st)
+			}
+			sort.Strings(states)
+			for _, st := range states {
+				fmt.Fprintf(tw, "%s\t%d\n", st, res.Workers[st])
+			}
+			fmt.Fprintln(tw)
+			fmt.Fprintln(tw, "ESCALATIONS")
+			for _, e := range res.PendingEscalations {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.ID, e.Kind, e.Action,
+					time.Duration(e.AgeSeconds*int64(time.Second)).String())
+			}
+			if len(res.Pools) > 0 {
+				fmt.Fprintln(tw)
+				fmt.Fprintln(tw, "POOLS")
+				for _, p := range res.Pools {
+					fmt.Fprintf(tw, "%s\t%s\t%d/%d\n", p.ID, p.State, p.ActiveLeases, p.MaxActive)
+				}
+			}
+			return tw.Flush()
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the raw StatusResp JSON")
+	return cmd
 }
 
 func newVerifyCmd() *cobra.Command {

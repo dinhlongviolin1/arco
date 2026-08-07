@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
@@ -41,6 +42,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /healthz", s.health)
 	s.mux.HandleFunc("GET /v1/workers", s.listWorkers)
 	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
+	s.mux.HandleFunc("GET /v1/status", s.status)
 	s.mux.HandleFunc("POST /v1/dispatch", s.dispatch)
 	s.mux.HandleFunc("GET /v1/pools", s.listPools)
 	s.mux.HandleFunc("POST /v1/pools", s.createPool)
@@ -105,6 +107,29 @@ type SessionDTO struct {
 }
 type SessionsResp struct {
 	Sessions []SessionDTO `json:"sessions"`
+}
+
+// StatusResp is the one-call fleet snapshot (rev7/T1.2): workers by state,
+// sessions by status, pending escalations with age, pool lease usage.
+type StatusEscalationDTO struct {
+	ID         string `json:"id"`
+	Worker     string `json:"worker"`
+	Kind       string `json:"kind"`
+	Action     string `json:"action"`
+	AgeSeconds int64  `json:"age_seconds"`
+}
+type PoolStatusDTO struct {
+	ID           string `json:"id"`
+	State        string `json:"state"`
+	ActiveLeases int    `json:"active_leases"`
+	MaxActive    int    `json:"max_active"`
+}
+type StatusResp struct {
+	Status             string                `json:"status"` // always "ok" when the daemon answers
+	Sessions           map[string]int        `json:"sessions"`
+	Workers            map[string]int        `json:"workers"`
+	PendingEscalations []StatusEscalationDTO `json:"pending_escalations"`
+	Pools              []PoolStatusDTO       `json:"pools"`
 }
 
 // EventReq is the herdr-hook intake payload.
@@ -268,6 +293,74 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 		out.Sessions = append(out.Sessions, SessionDTO{ID: x.ID, Slug: x.Slug, Status: string(x.Status), Goal: x.Goal})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// status aggregates the one-call fleet snapshot from the reader: workers by
+// state, sessions by status, pending escalations with age, pool lease usage.
+func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
+	r := s.store.Reader()
+	ws, err := r.ListWorkers(core.WorkerFilter{})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	ss, err := r.ListSessions(core.SessionFilter{})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	es, err := r.ListEscalations(core.EscalationFilter{Status: "pending"})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	ps, err := r.ListPools()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := StatusResp{
+		Status:             "ok",
+		Sessions:           map[string]int{}, // never nil: zero state serializes as {}
+		Workers:            map[string]int{},
+		PendingEscalations: []StatusEscalationDTO{},
+		Pools:              []PoolStatusDTO{},
+	}
+	for _, x := range ws {
+		out.Workers[string(x.State)]++
+	}
+	for _, x := range ss {
+		out.Sessions[string(x.Status)]++
+	}
+	now := time.Now()
+	for _, e := range es {
+		out.PendingEscalations = append(out.PendingEscalations, StatusEscalationDTO{
+			ID: e.ID, Worker: e.WorkerID, Kind: e.Kind, Action: e.Action,
+			AgeSeconds: ageSeconds(e.RequestedAt, now),
+		})
+	}
+	for _, p := range ps {
+		n, err := r.CountActiveLeases(p.ID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		out.Pools = append(out.Pools, PoolStatusDTO{ID: p.ID, State: string(p.State), ActiveLeases: n, MaxActive: p.MaxActive})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ageSeconds turns an RFC3339Nano timestamp into non-negative elapsed seconds
+// (0 on parse error — an unreadable clock must not poison the snapshot).
+func ageSeconds(requestedAt string, now time.Time) int64 {
+	ts, err := time.Parse(time.RFC3339Nano, requestedAt)
+	if err != nil {
+		return 0
+	}
+	if age := int64(now.Sub(ts).Seconds()); age > 0 {
+		return age
+	}
+	return 0
 }
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
