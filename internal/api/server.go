@@ -140,6 +140,10 @@ type EscalationDTO struct {
 	Action      string `json:"action"`
 	Status      string `json:"status"`
 	Draft       string `json:"draft"`
+	// The brain's draft metadata, so an operator can judge a draft without
+	// opening the ledger (rev7/T1.4). Zero values when there is no draft.
+	DraftConfidence float64 `json:"draft_confidence"`
+	BrainRationale  string  `json:"brain_rationale"`
 }
 type EscalationsResp struct {
 	Escalations []EscalationDTO `json:"escalations"`
@@ -462,6 +466,7 @@ func (s *Server) listEscalations(w http.ResponseWriter, r *http.Request) {
 			ID: e.ID, Worker: e.WorkerID, Session: e.SessionID, Kind: e.Kind,
 			ActionClass: string(e.ActionClass), Tier: string(e.Tier), Capability: e.Capability,
 			Action: e.Action, Status: e.Status, Draft: e.DraftAnswer,
+			DraftConfidence: e.DraftConfidence, BrainRationale: e.BrainRationale,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

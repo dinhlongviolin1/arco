@@ -258,9 +258,14 @@ func newEscalationsCmd() *cobra.Command {
 				return err
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "ID\tKIND\tCLASS\tTIER\tCAP\tACTION")
+			fmt.Fprintln(tw, "ID\tKIND\tCLASS\tTIER\tCAP\tACTION\tDRAFT\tCONF\tRATIONALE")
 			for _, e := range res.Escalations {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", e.ID, e.Kind, e.ActionClass, e.Tier, e.Capability, e.Action)
+				conf := ""
+				if e.Draft != "" {
+					conf = fmt.Sprintf("%.2f", e.DraftConfidence)
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					e.ID, e.Kind, e.ActionClass, e.Tier, e.Capability, e.Action, e.Draft, conf, e.BrainRationale)
 			}
 			return tw.Flush()
 		},
