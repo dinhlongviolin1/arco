@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -442,6 +443,34 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		})
 		writeJSON(w, http.StatusAccepted, EventResp{Note: "unknown worker_ref"})
 		return
+	}
+
+	// SO_PEERCRED gate (rev7/T1.6): a worker recorded under a spawn-time UID
+	// only accepts events from that UID — the HMAC secret alone can't forge
+	// events for another UID's worker from the same box. A mismatch is audited
+	// (deduped on the delivery id like every intake write) and answered 403; the
+	// event is NEVER applied as a liveness/state signal. No peer UID on the ctx
+	// (TCP/httptest) or no recorded UID → ungated, exactly as before.
+	wk, err := s.store.Reader().GetWorker(workerID)
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	if wk.IntakeUID != nil {
+		if peerUID, ok := peerUIDFrom(r.Context()); ok && peerUID != *wk.IntakeUID {
+			// 403 even if the audit write fails: the denial decision must not
+			// depend on the ledger being writable.
+			_ = s.store.WithTx(r.Context(), func(tx core.Tx) error {
+				_, _, _, e := tx.AppendEvent(core.Event{
+					Kind: "intake_denied", WorkerID: workerID, SessionID: wk.OwnerSession,
+					Source: srcOrDefault(req.Source), SourceEventID: req.SourceEventID, SourceEventHash: req.Hash,
+					Payload: fmt.Sprintf(`{"peer_uid":%d,"expected_uid":%d}`, peerUID, *wk.IntakeUID),
+				})
+				return e
+			})
+			writeErr(w, http.StatusForbidden, errors.New("api: peer UID does not match the worker's recorded spawn UID"))
+			return
+		}
 	}
 
 	// Audit tail: a deny-listed-capability attempt is not a liveness signal — it

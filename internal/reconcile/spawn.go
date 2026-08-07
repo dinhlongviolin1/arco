@@ -79,6 +79,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		if err := tx.CreateWorker(core.Worker{
 			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting, VM: e.DefaultVM,
 			Workspace: workspace, Task: task, RunReason: "spawn", AgentKind: "claude",
+			IntakeUID: e.SpawnUID,
 		}); err != nil {
 			return err
 		}

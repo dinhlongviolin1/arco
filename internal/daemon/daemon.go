@@ -110,6 +110,11 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		// creds injected post-scrub at launch) — not arco's inherited creds (P1).
 		// Inert unless a pool sets a clavis_profile. Fake/headless deploys skip this.
 		eng.Creds = vm.NewClavisCreds("")
+		// The local herdr spawns workers under OUR UID — record it on the worker
+		// row so the UDS intake can bind events to it via SO_PEERCRED (rev7/T1.6).
+		// Fake/cross-VM leave it nil (ungated, as before).
+		uid := os.Getuid()
+		eng.SpawnUID = &uid
 	}
 	// Fail LOUD at startup on a misconfigured pool rather than failing every spawn
 	// (AcquireLease→GetPool would ErrNotFound per dispatch). NB: leases gate only
@@ -153,7 +158,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		return fmt.Errorf("daemon: listen %s: %w", cfg.Socket, err)
 	}
 
-	httpSrv := &http.Server{Handler: srv.Handler()}
+	// ConnContext captures each conn's peer UID via SO_PEERCRED (unix only), so
+	// the intake can bind worker events to the worker's spawn-time UID (rev7/T1.6).
+	httpSrv := &http.Server{Handler: srv.Handler(), ConnContext: api.PeerCredConnContext}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.Serve(ln) }()
 
