@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -44,11 +45,9 @@ type Config struct {
 	IntakeSecret string `toml:"intake_secret"`
 
 	// Pinned operability defaults (build-guide-rev6 §C).
-	MaxSpawns             int           `toml:"max_spawns"`
 	MaxBrainCalls         int           `toml:"max_brain_calls"`
 	SweepInterval         time.Duration `toml:"sweep_interval"`
 	StallN                int           `toml:"stall_n"`
-	CrashLoopRestarts     int           `toml:"crash_loop_restarts"`
 	CrashLoopWindow       time.Duration `toml:"crash_loop_window"`
 	LivenessMissThreshold int           `toml:"liveness_miss_threshold"`
 	SuspectTimeout        time.Duration `toml:"suspect_timeout"`
@@ -78,12 +77,10 @@ func Defaults() Config {
 		Socket:        filepath.Join(base, "arco.sock"),
 		BrainModel:    "haiku", // cheap tier by default (NOT opus)
 		HerdrBin:      "herdr",
-		MaxSpawns:     8,
 		MaxBrainCalls: 4,
 		SweepInterval: 30 * time.Second,
 
 		StallN:                3,
-		CrashLoopRestarts:     5,
 		CrashLoopWindow:       10 * time.Minute,
 		LivenessMissThreshold: 3,
 		SuspectTimeout:        60 * time.Second, // >= one SweepInterval
@@ -104,7 +101,11 @@ func Load(path string) (Config, error) {
 	cfg := Defaults()
 	if path != "" {
 		if _, err := os.Stat(path); err == nil {
-			if _, err := toml.DecodeFile(path, &cfg); err != nil {
+			md, err := toml.DecodeFile(path, &cfg)
+			if err != nil {
+				return Config{}, err
+			}
+			if err := rejectRemovedKnobs(md.Undecoded()); err != nil {
 				return Config{}, err
 			}
 		}
@@ -115,6 +116,25 @@ func Load(path string) (Config, error) {
 		cfg.BrainModel = "haiku"
 	}
 	return cfg, nil
+}
+
+// removedKnobs are config keys that no longer exist (rev7/T1.3 deleted the dead
+// knobs that were parsed but never enforced by any code path). A config that
+// still sets one must fail LOUD at Load instead of silently doing nothing.
+var removedKnobs = map[string]bool{
+	"max_spawns":          true,
+	"crash_loop_restarts": true,
+}
+
+// rejectRemovedKnobs errors on a removed top-level key; other unknown keys are
+// not our concern here.
+func rejectRemovedKnobs(undecoded []toml.Key) error {
+	for _, k := range undecoded {
+		if len(k) == 1 && removedKnobs[k[0]] {
+			return fmt.Errorf("config: key %q was removed; delete it from your config", k[0])
+		}
+	}
+	return nil
 }
 
 func applyEnv(cfg *Config) {

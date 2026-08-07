@@ -94,6 +94,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	eng := reconcile.New(store, vmc)
 	eng.MissThreshold = cfg.LivenessMissThreshold
+	eng.StallN = cfg.StallN // sweep blocks a running worker after this many no-progress sweeps
 	eng.PoolTTL = cfg.PoolTTL
 	eng.BrainRate = cfg.PerSessionBrainRate
 	eng.MaxChildren = cfg.MaxChildrenPerSession
