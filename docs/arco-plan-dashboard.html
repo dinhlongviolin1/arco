@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>arco — Plan · Progress · rev-7</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg2: #10141d;
+    --card: #141a26;
+    --card2: #1a2233;
+    --border: #232c40;
+    --text: #dbe2ef;
+    --muted: #8b96ad;
+    --faint: #5c6780;
+    --accent: #e8a33d;      /* bow amber */
+    --accent2: #7aa2f7;     /* blue */
+    --green: #4ade80;
+    --yellow: #facc15;
+    --orange: #fb923c;
+    --red: #f87171;
+    --violet: #c084fc;
+    --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace;
+    --sans: -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.55;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(232,163,61,.08), transparent),
+      radial-gradient(ellipse 60% 40% at 90% 10%, rgba(122,162,247,.05), transparent);
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px 120px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(14px);
+    background: rgba(11,14,20,.82);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1180px; margin: 0 auto; padding: 14px 28px;
+    display: flex; align-items: center; gap: 26px;
+  }
+  .logo { font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--accent); letter-spacing: .5px; }
+  .logo span { color: var(--muted); font-weight: 400; }
+  nav a { color: var(--muted); text-decoration: none; font-size: 13.5px; padding: 4px 2px; transition: color .15s; }
+  nav a:hover { color: var(--text); }
+  nav a.n1:hover { color: var(--accent2); }
+  nav a.n2:hover { color: var(--green); }
+  nav a.n3:hover { color: var(--violet); }
+  .nav-date { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+
+  /* ---------- hero ---------- */
+  header { padding: 72px 0 46px; }
+  h1 { font-size: 42px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
+  h1 em { font-style: normal; color: var(--accent); }
+  .sub { margin-top: 14px; font-size: 16.5px; color: var(--muted); max-width: 800px; }
+  .sub code { font-family: var(--mono); font-size: 14px; color: var(--accent2); }
+
+  .oneliner {
+    margin-top: 26px; max-width: 820px;
+    background: linear-gradient(135deg, rgba(232,163,61,.09), rgba(192,132,252,.06));
+    border: 1px solid rgba(232,163,61,.3); border-radius: 14px; padding: 18px 22px;
+    font-size: 15.5px;
+  }
+  .oneliner b { color: var(--accent); }
+  .oneliner small { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; }
+
+  .hero-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 34px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .stat .k { font-family: var(--mono); font-size: 30px; font-weight: 700; }
+  .stat .l { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .stat.s1 .k { color: var(--green); }
+  .stat.s2 .k { color: var(--accent); }
+  .stat.s3 .k { color: var(--accent2); }
+  .stat.s4 .k { color: var(--violet); }
+
+  /* ---------- sections ---------- */
+  section { margin-top: 90px; }
+  .sec-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12px; letter-spacing: 2px; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted);
+  }
+  .sec-tag .dot { width: 7px; height: 7px; border-radius: 50%; }
+  h2 { font-size: 30px; font-weight: 750; letter-spacing: -.5px; margin-top: 16px; }
+  .sec-desc { color: var(--muted); margin-top: 8px; max-width: 800px; font-size: 15px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 28px; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 24px; position: relative; overflow: hidden;
+  }
+  .card h3 { font-size: 16.5px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .card h3 .chip { font-family: var(--mono); font-size: 11px; padding: 2px 9px; border-radius: 6px; font-weight: 600; }
+  .card p { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .card ul { margin: 10px 0 0 18px; font-size: 13.5px; color: var(--muted); }
+  .card li { margin-top: 5px; }
+  .card li b { color: var(--text); font-weight: 600; }
+  code, .mono { font-family: var(--mono); }
+  li code, p code, td code, div code { font-size: 12.5px; color: var(--accent2); background: rgba(122,162,247,.08); padding: 1px 5px; border-radius: 4px; }
+
+  /* roadmap table */
+  table { width: 100%; border-collapse: collapse; margin-top: 26px; font-size: 14px; }
+  th { text-align: left; font-family: var(--mono); font-size: 11.5px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--faint); padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  td { padding: 13px 14px; border-bottom: 1px solid rgba(35,44,64,.55); color: var(--muted); vertical-align: top; }
+  td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .tbl-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 6px 10px 10px; margin-top: 28px; }
+
+  .pill { display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .p-done   { background: rgba(74,222,128,.12); color: var(--green); border: 1px solid rgba(74,222,128,.3); }
+  .p-live   { background: rgba(74,222,128,.18); color: var(--green); border: 1px solid rgba(74,222,128,.45); }
+  .p-part   { background: rgba(250,204,21,.10); color: var(--yellow); border: 1px solid rgba(250,204,21,.3); }
+  .p-todo   { background: rgba(248,113,113,.10); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
+  .p-cut    { background: rgba(139,150,173,.10); color: var(--muted); border: 1px solid rgba(139,150,173,.3); text-decoration: line-through; }
+  .p-shadow { background: rgba(192,132,252,.10); color: var(--violet); border: 1px solid rgba(192,132,252,.3); }
+
+  /* ---------- progress ---------- */
+  .dials { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+  .dial-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 26px; display: flex; align-items: center; gap: 26px; }
+  .ring { position: relative; width: 128px; height: 128px; flex-shrink: 0; }
+  .ring svg { transform: rotate(-90deg); }
+  .ring .num { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .ring .num b { font-family: var(--mono); font-size: 27px; font-weight: 700; }
+  .ring .num s { font-size: 10.5px; color: var(--faint); text-decoration: none; letter-spacing: 1px; }
+  .dial-card h3 { font-size: 17px; }
+  .dial-card p { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
+
+  .bar-row { display: grid; grid-template-columns: 210px 1fr 64px; align-items: center; gap: 16px; padding: 13px 0; border-bottom: 1px solid rgba(35,44,64,.5); }
+  .bar-row:last-child { border-bottom: none; }
+  .bar-row .name { font-size: 14px; font-weight: 600; }
+  .bar-row .name small { display: block; font-weight: 400; font-size: 12px; color: var(--faint); font-family: var(--mono); }
+  .track { height: 9px; background: var(--bg2); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }
+  .fill { height: 100%; border-radius: 999px; transition: width 1.2s cubic-bezier(.2,.8,.2,1); width: 0; }
+  .bar-row .pct { font-family: var(--mono); font-size: 13.5px; text-align: right; font-weight: 600; }
+  .f-green  { background: linear-gradient(90deg, #22c55e, #4ade80); }
+  .f-yellow { background: linear-gradient(90deg, #eab308, #facc15); }
+  .f-orange { background: linear-gradient(90deg, #f97316, #fb923c); }
+  .f-red    { background: linear-gradient(90deg, #ef4444, #f87171); }
+  .f-blue   { background: linear-gradient(90deg, #3b82f6, #7aa2f7); }
+
+  /* CLI grid */
+  .cli-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; margin-top: 22px; }
+  .cli {
+    font-family: var(--mono); font-size: 12.5px; padding: 9px 12px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--bg2); display: flex; align-items: center; gap: 8px;
+  }
+  .cli::before { content: ""; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .cli.ok    { color: var(--text); } .cli.ok::before { background: var(--green); }
+  .cli.miss  { color: var(--faint); } .cli.miss::before { background: var(--red); }
+  .cli.extra { color: var(--accent2); border-color: rgba(122,162,247,.35); } .cli.extra::before { background: var(--accent2); }
+
+  .legend { display: flex; gap: 20px; margin-top: 14px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+  /* verified findings */
+  .find { display: grid; grid-template-columns: 86px 1fr; gap: 14px; padding: 13px 0; border-bottom: 1px solid rgba(35,44,64,.5); font-size: 13.5px; }
+  .find:last-child { border-bottom: none; }
+  .sev { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 3px 0; border-radius: 6px; text-align: center; height: fit-content; }
+  .sev.high { background: rgba(248,113,113,.13); color: var(--red); }
+  .sev.med  { background: rgba(251,146,60,.13); color: var(--orange); }
+  .find .t { color: var(--text); font-weight: 600; }
+  .find .d { color: var(--muted); margin-top: 2px; font-size: 13px; }
+
+  /* ---------- layers diagram ---------- */
+  .layers { margin-top: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .layer {
+    display: grid; grid-template-columns: 92px 1fr auto; gap: 16px; align-items: center;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+  }
+  .layer .ln { font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 1px; color: var(--faint); }
+  .layer .lt b { font-size: 14.5px; color: var(--text); }
+  .layer .lt p { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .layer .lt .who { font-family: var(--mono); font-size: 11.5px; color: var(--accent2); margin-top: 6px; display: block; }
+  .layer .verdict { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+  .layer.taken .verdict { background: rgba(248,113,113,.1); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
+  .layer.arco { border-color: rgba(232,163,61,.5); background: linear-gradient(135deg, rgba(232,163,61,.08), rgba(192,132,252,.05)); }
+  .layer.arco .verdict { background: rgba(74,222,128,.12); color: var(--green); border: 1px solid rgba(74,222,128,.35); }
+
+  /* ---------- decisions ---------- */
+  .dec {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px;
+    border-left: 3px solid var(--faint);
+  }
+  .dec.changed  { border-left-color: var(--accent); }
+  .dec.newdec   { border-left-color: var(--green); }
+  .dec.promoted { border-left-color: var(--accent2); }
+  .dec .dnum { font-family: var(--mono); font-size: 12px; color: var(--violet); font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+  .badge { font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: 1px; padding: 3px 9px; border-radius: 6px; }
+  .b-changed  { background: rgba(232,163,61,.14); color: var(--accent); }
+  .b-new      { background: rgba(74,222,128,.14); color: var(--green); }
+  .b-kept     { background: rgba(139,150,173,.14); color: var(--muted); }
+  .b-promoted { background: rgba(122,162,247,.14); color: var(--accent2); }
+  .dec h3 { font-size: 16.5px; margin-top: 8px; }
+  .dec p { font-size: 13.5px; color: var(--muted); margin-top: 8px; }
+  .wasnow { margin-top: 10px; font-size: 13px; }
+  .wasnow .was { color: var(--faint); text-decoration: line-through; }
+  .wasnow .now { color: var(--text); }
+  .wasnow .arr { color: var(--accent); font-family: var(--mono); padding: 0 6px; }
+  .plain {
+    margin-top: 12px; padding: 10px 14px; border-left: 2px solid var(--green);
+    background: rgba(74,222,128,.05); border-radius: 0 8px 8px 0;
+    font-size: 13px; color: var(--muted);
+  }
+  .plain b { color: var(--green); font-size: 11px; font-family: var(--mono); letter-spacing: 1px; display: block; margin-bottom: 3px; }
+  .phase-tag { position: absolute; top: 20px; right: 20px; font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--faint); border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; }
+
+  /* phases timeline */
+  .phases { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 30px; }
+  .phase { background: var(--card2); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+  .phase .ph { font-family: var(--mono); font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  .phase .ph .b { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .phase.h1 .b { background: rgba(74,222,128,.15); color: var(--green); }
+  .phase.h2 .b { background: rgba(122,162,247,.15); color: var(--accent2); }
+  .phase.h3 .b { background: rgba(192,132,252,.15); color: var(--violet); }
+  .phase .sub2 { font-size: 12px; color: var(--faint); margin-top: 4px; font-family: var(--mono); }
+  .phase ul { margin: 14px 0 0 16px; font-size: 13px; color: var(--muted); }
+  .phase li { margin-top: 6px; }
+
+  .open-calls { margin-top: 28px; background: linear-gradient(135deg, rgba(232,163,61,.06), rgba(192,132,252,.05)); border: 1px solid rgba(232,163,61,.25); border-radius: 16px; padding: 26px; }
+  .open-calls h3 { font-size: 16px; color: var(--accent); }
+  .open-calls ol { margin: 12px 0 0 20px; font-size: 14px; color: var(--muted); }
+  .open-calls li { margin-top: 8px; }
+  .open-calls b { color: var(--text); }
+
+  footer { margin-top: 100px; padding-top: 26px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--faint); font-family: var(--mono); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+  @media (max-width: 900px) {
+    .hero-stats, .grid2, .grid3, .dials, .phases { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 130px 1fr 52px; }
+    .layer { grid-template-columns: 1fr; gap: 8px; }
+    .nav-inner { flex-wrap: wrap; gap: 14px; }
+    h1 { font-size: 32px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="logo">arco<span> / plan · progress · rev-7</span></div>
+    <a class="n1" href="#plan">① Original Plan</a>
+    <a class="n2" href="#progress">② What's Done</a>
+    <a class="n3" href="#change">③ rev-7 — What Changes</a>
+    <div class="nav-date">2026-08-07 · rev-7</div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<header>
+  <h1>The <em>arco</em> ledger of itself.</h1>
+  <p class="sub">One page, three questions: what did the docs promise (<code>overview.md</code>, <code>build-guide-rev6.md</code>), how much of it is real and live-verified today, and what changes in <b>rev-7</b> (full text: <code>docs/plan-rev7.md</code>) after the 7-agent review, the research wave, and a 3-round consideration pass.</p>
+  <div class="oneliner">
+    hap answers your agents' prompts. Auto Mode approves their tool calls. Collie extends your thumb.<br>
+    <b>arco is what tells you the work actually got done — on every machine, with receipts.</b>
+    <small>The rev-7 repositioning: arco stops competing on remote control and prompt-answering (both taken), and owns the empty layer — outcome supervision.</small>
+  </div>
+  <div class="hero-stats">
+    <div class="stat s1"><div class="k">~88%</div><div class="l">of P2 MVP scope built &amp; live-verified end-to-end on vm0</div></div>
+    <div class="stat s2"><div class="k">~58%</div><div class="l">of the full documented vision (incl. P3 swarm + add-ons)</div></div>
+    <div class="stat s3"><div class="k">15 / 25</div><div class="l">promised CLI commands shipped (60%)</div></div>
+    <div class="stat s4"><div class="k">D1–D9</div><div class="l">rev-7 decisions: 5 changed · 1 new · 1 promoted · 2 kept</div></div>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section id="plan">
+  <div class="sec-tag"><span class="dot" style="background:var(--accent2)"></span>Section 01</div>
+  <h2>The Original Plan</h2>
+  <p class="sec-desc">As frozen in the docs: a self-hosted Go daemon + SQLite ledger that supervises fleets of coding agents in tmux panes (herdr), launched with scoped credentials (clavis), with a cheap short-lived LLM "brain" invoked only on ambiguity. Rule #1: <b>the ledger is the product</b> — every side effect is intent→execute→result.</p>
+
+  <div class="grid3">
+    <div class="card">
+      <h3><span class="chip p-done">FROZEN</span>Design Rules</h3>
+      <ul>
+        <li><b>Ledger-first.</b> SQLite WAL, single writer, CAS revs, idempotent event intake (<code>UNIQUE(source, source_event_id)</code>).</li>
+        <li><b>Authoritative reconcile.</b> Periodic sweep re-derives truth (liveness + git HEAD), never trusts cached state.</li>
+        <li><b>Cheap brain.</b> Haiku-class, 120s timeout, called only on ambiguity; every call transcripted.</li>
+        <li><b>Capability tree.</b> Grants compile onto worker <code>settings.json</code> (permcompile) + enforced again at the arco boundary.</li>
+        <li><b>Shadow-mode autonomy.</b> Brain drafts escalation answers but is never authoritative in P2.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="chip p-done">FROZEN</span>Promised Features</h3>
+      <ul>
+        <li>Sessions &amp; workers with 11-state lifecycle (incl. <code>lost</code>, D-decision).</li>
+        <li>Two-level escalation (question / confirm), one pending per worker.</li>
+        <li>Diff-gated completion: <code>completed_candidate → completed_verified</code>.</li>
+        <li>4-tier memory (facts, context summary, revisions, playbooks).</li>
+        <li>Provider pools + leases for rate-limit concurrency.</li>
+        <li>HMAC-SHA256 signed hook intake.</li>
+        <li>Cross-VM workers over SSH.</li>
+        <li>Cost tracking — <span class="pill p-cut">CUT in §A</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3><span class="chip p-done">FROZEN</span>Build Order (§D)</h3>
+      <ul>
+        <li><b>PASS-0</b> — freeze decisions, schema <code>0001_init.sql</code>, Go contracts, pinned defaults.</li>
+        <li><b>PASS-1</b> — the spine: ledger, store, domain, reconcile skeleton, TDD with <code>-race</code>.</li>
+        <li><b>PASS-2</b> — single-VM walking skeleton: dispatch→clone→quarantine→permcompile→herdr launch→completion.</li>
+        <li><b>PASS-3</b> — hardening &amp; security preconditions P1–P6, escalation plumbing, ops recovery.</li>
+        <li><b>Task S</b> — de-risk spike: real <code>LocalVMClient</code> against real herdr.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="tbl-card">
+    <table>
+      <thead><tr><th style="width:120px">Roadmap</th><th style="width:170px">Codename</th><th>Promise</th><th style="width:130px">Status today</th></tr></thead>
+      <tbody>
+        <tr><td>P1</td><td class="mono" style="color:var(--accent2)">Concierge</td><td>One VM, one worker, full ledger loop, human answers every escalation.</td><td><span class="pill p-live">LIVE ✓</span></td></tr>
+        <tr><td>P2</td><td class="mono" style="color:var(--accent2)">MVP</td><td>Pools &amp; leases, capability tree, diff-gated verify, brain drafts in shadow mode, signed intake.</td><td><span class="pill p-part">~88%</span></td></tr>
+        <tr><td>P3</td><td class="mono" style="color:var(--accent2)">Swarm</td><td>Cross-VM fleets over SSH, multi-worker sessions, supersession, autonomy graduation.</td><td><span class="pill p-todo">FOUNDATION</span></td></tr>
+        <tr><td>Add-ons</td><td class="mono" style="color:var(--accent2)">—</td><td>Telegram notify, web dashboard, scheduler, playbooks.</td><td><span class="pill p-todo">0%</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="progress">
+  <div class="sec-tag"><span class="dot" style="background:var(--green)"></span>Section 02</div>
+  <h2>What We Have Done</h2>
+  <p class="sec-desc">Measured against the frozen plan above. Anchor evidence: <code>deployment-hardening.md §11</code> — a real dispatch on vm0 ran the whole loop autonomously (clone → quarantine → permcompile → herdr launch → scoped creds → work → completion), and an adversarial verifier agent <b>refuted</b> the five scariest durability claims with line-level evidence. All tests green under <code>-race</code>, ~6.8k test lines.</p>
+
+  <div class="dials">
+    <div class="dial-card">
+      <div class="ring">
+        <svg width="128" height="128" viewBox="0 0 128 128">
+          <circle cx="64" cy="64" r="54" fill="none" stroke="#1c2434" stroke-width="11"/>
+          <circle class="ring-fill" cx="64" cy="64" r="54" fill="none" stroke="#4ade80" stroke-width="11"
+                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="88"/>
+        </svg>
+        <div class="num"><b style="color:var(--green)">88%</b><s>P2 MVP</s></div>
+      </div>
+      <div>
+        <h3>P2 MVP scope</h3>
+        <p>PASS-0/1 complete, PASS-2 live-verified, Task S done. Remaining: brain never sees the memory it checkpoints, memory tier 24a is manual-only, and three §E tests are missing.</p>
+      </div>
+    </div>
+    <div class="dial-card">
+      <div class="ring">
+        <svg width="128" height="128" viewBox="0 0 128 128">
+          <circle cx="64" cy="64" r="54" fill="none" stroke="#1c2434" stroke-width="11"/>
+          <circle class="ring-fill" cx="64" cy="64" r="54" fill="none" stroke="#e8a33d" stroke-width="11"
+                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="58"/>
+        </svg>
+        <div class="num"><b style="color:var(--accent)">58%</b><s>FULL VISION</s></div>
+      </div>
+      <div>
+        <h3>Full documented vision</h3>
+        <p>Weighted across P1–P3 + operator surface + add-ons. The cross-VM SSH layer is built and cross-host-validated (PR #69/#70) but not yet wired into dispatch; supersession, depth-2 sessions, and every add-on are unstarted. (rev-7 deliberately cuts part of this denominator — see §3.)</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>Completion by build pass &amp; area</h3>
+    <div style="margin-top:14px">
+      <div class="bar-row"><div class="name">PASS-0 · Freeze<small>decisions · schema · contracts</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
+      <div class="bar-row"><div class="name">PASS-1 · Spine<small>ledger · store · domain · reconcile</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
+      <div class="bar-row"><div class="name">PASS-2 · Walking skeleton<small>live-verified §11 · memory gaps</small></div><div class="track"><div class="fill f-green" data-w="95"></div></div><div class="pct" style="color:var(--green)">95%</div></div>
+      <div class="bar-row"><div class="name">PASS-3 · Hardening<small>P1–P6 · ops recovery</small></div><div class="track"><div class="fill f-yellow" data-w="55"></div></div><div class="pct" style="color:var(--yellow)">55%</div></div>
+      <div class="bar-row"><div class="name">Task S + S-cross<small>real herdr · real 2nd host</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
+      <div class="bar-row"><div class="name">CLI operator surface<small>15 of ~25 promised commands</small></div><div class="track"><div class="fill f-yellow" data-w="60"></div></div><div class="pct" style="color:var(--yellow)">60%</div></div>
+      <div class="bar-row"><div class="name">Cross-VM (P3 gate)<small>SSH layer validated, not wired</small></div><div class="track"><div class="fill f-orange" data-w="40"></div></div><div class="pct" style="color:var(--orange)">40%</div></div>
+      <div class="bar-row"><div class="name">Memory system<small>checkpoints written, never read by brain</small></div><div class="track"><div class="fill f-orange" data-w="35"></div></div><div class="pct" style="color:var(--orange)">35%</div></div>
+      <div class="bar-row"><div class="name">Notifications / observability<small>notify_level column exists, unused</small></div><div class="track"><div class="fill f-red" data-w="5"></div></div><div class="pct" style="color:var(--red)">5%</div></div>
+      <div class="bar-row"><div class="name">Add-ons<small>telegram · web · scheduler · playbooks</small></div><div class="track"><div class="fill f-red" data-w="0"></div></div><div class="pct" style="color:var(--red)">0%</div></div>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>PASS-3 ledger: done vs open</h3>
+      <ul>
+        <li><span class="pill p-done">DONE</span> quarantine clone · permcompile · signed intake (HMAC) · preflight · redaction · spawn-env scrubbing · <code>arco kill</code> · <code>arco redeliver</code> (#71) · escalation timeout (#58) · auto-kill-on-pause (#67)</li>
+        <li style="margin-top:10px"><span class="pill p-todo">OPEN</span> ownership-transfer intent unrouted · supersession &amp; depth-2 sessions · cross-VM wiring (§10) · <code>--env</code> argv leak (MED-5) · inert config knobs (§12)</li>
+        <li style="margin-top:10px"><span class="pill p-shadow">BY DESIGN</span> resume-via-relaunch intentionally not built (§12, #68) · cost tracking CUT (§A)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Verified findings still open <span class="chip" style="background:rgba(248,113,113,.1);color:var(--red)">7-agent review</span></h3>
+      <div style="margin-top:8px">
+        <div class="find"><div class="sev high">HIGH</div><div><div class="t">Brain context starvation</div><div class="d">20 events × 200 chars; Facts / ContextSummary / memory never enter the prompt — <code>brain_apply.go:136-167</code>.</div></div></div>
+        <div class="find"><div class="sev med">MED→HIGH</div><div><div class="t">Intake workspace-name fallback</div><div class="d">Any HMAC holder can forge per-worker events — <code>server.go:508-528</code>. Becomes HIGH at cross-VM.</div></div></div>
+        <div class="find"><div class="sev med">MED</div><div><div class="t">Dead safety knobs</div><div class="d"><code>crash_loop_restarts</code>, <code>max_spawns</code>, <code>stall_n</code> parsed but never enforced; no futility bound.</div></div></div>
+        <div class="find"><div class="sev med">MED</div><div><div class="t">Operator floor missing</div><div class="d">No <code>arco status</code> / <code>logs</code> / notifications; <code>brain_rationale</code> absent from EscalationDTO.</div></div></div>
+        <div class="find"><div class="sev med">MED</div><div><div class="t">herdr <code>--</code> flag-parse task loss</div><div class="d">Looks fixed at herdr HEAD (0.8.0, #1878) — re-verify on upgrade, then close.</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h3>CLI surface — promised vs shipped</h3>
+    <div class="cli-grid">
+      <div class="cli ok">dispatch</div>
+      <div class="cli ok">sessions</div>
+      <div class="cli ok">workers</div>
+      <div class="cli ok">kill</div>
+      <div class="cli ok">answer</div>
+      <div class="cli ok">verify</div>
+      <div class="cli ok">diff</div>
+      <div class="cli ok">escalations</div>
+      <div class="cli ok">confirm</div>
+      <div class="cli ok">hook</div>
+      <div class="cli ok">pool create / list</div>
+      <div class="cli ok">daemon</div>
+      <div class="cli ok">version</div>
+      <div class="cli extra">redeliver ★</div>
+      <div class="cli miss">status</div>
+      <div class="cli miss">session &lt;id&gt;</div>
+      <div class="cli miss">logs</div>
+      <div class="cli miss">attach</div>
+      <div class="cli miss">pause</div>
+      <div class="cli miss">resume</div>
+      <div class="cli miss">grant</div>
+      <div class="cli miss">revoke</div>
+      <div class="cli miss">schedule</div>
+      <div class="cli miss">playbook</div>
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--green)"></i>shipped (15)</span>
+      <span><i style="background:var(--accent2)"></i>★ shipped beyond plan</span>
+      <span><i style="background:var(--red)"></i>promised, missing (10) — rev-7 cuts <span class="mono">attach / schedule / playbook / grant / revoke</span> and replaces <span class="mono">logs</span>-style needs with ntfy cards</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="change">
+  <div class="sec-tag"><span class="dot" style="background:var(--violet)"></span>Section 03</div>
+  <h2>rev-7 — What Changes &amp; Why</h2>
+  <p class="sec-desc">Full text in <code>docs/plan-rev7.md</code>. This revision came from a 3-round pass: reading herdr's actual source (HEAD 0.8.0), sweeping ~200 ecosystem plugins, red-teaming arco's own thesis, and source-auditing the competitor we found. Every decision below is badged: <span class="badge b-changed">CHANGED</span> = different from the earlier draft, <span class="badge b-new">NEW</span>, <span class="badge b-promoted">PROMOTED</span>, <span class="badge b-kept">KEPT</span>.</p>
+
+  <!-- the market picture -->
+  <div class="card" style="margin-top:30px">
+    <h3>Why arco repositioned — the market in one picture</h3>
+    <p>Your goal: drive agents manually in herdr at home; while away, supervise the 3-VM homelab from your phone; eventually only peek in. The tooling world splits into three layers:</p>
+    <div class="layers">
+      <div class="layer taken">
+        <div class="ln">LAYER 1</div>
+        <div class="lt"><b>Remote control</b><p>A longer arm for your thumb — you still read everything and make every decision.</p><span class="who">collie · herdr-remote · Anthropic Remote Control · Codex Remote</span></div>
+        <div class="verdict">TAKEN — don't build</div>
+      </div>
+      <div class="layer taken">
+        <div class="ln">LAYER 2</div>
+        <div class="lt"><b>Prompt answering</b><p>Unblocks the agent: approves permissions, answers menu questions. We found a direct competitor here — <b>herdr-auto-pilot ("hap")</b>, 1 month old, source-audited: its answering loop is genuinely mature. Anthropic's Auto Mode does permissions first-party.</p><span class="who">hap · Claude Code Auto Mode</span></div>
+        <div class="verdict">TAKEN — don't fight</div>
+      </div>
+      <div class="layer arco">
+        <div class="ln">LAYER 3</div>
+        <div class="lt"><b>Outcome supervision</b><p>Proves the work actually got done: diff/test-verified completion, an audit ledger of who did what (you or the machine), across all machines, with the phone pinged only when judgment is needed. Source-verified: <b>nobody does this</b> — hap stops at "message delivered", never "work correct".</p><span class="who">arco</span></div>
+        <div class="verdict">EMPTY — arco's slot</div>
+      </div>
+    </div>
+    <div class="plain"><b>IN PLAIN WORDS</b>The more layers 1–2 improve, the more work happens while nobody watches — which makes "prove it and keep receipts" <i>more</i> valuable over time, not less. That's the bet.</div>
+  </div>
+
+  <!-- decisions -->
+  <div class="grid2" style="margin-top:24px">
+    <div class="dec changed">
+      <span class="phase-tag">H2</span>
+      <div class="dnum">D1 — SIGNALS <span class="badge b-changed">CHANGED</span></div>
+      <h3>Listen to herdr's push events; own hooks deferred</h3>
+      <div class="wasnow"><span class="was">Build our own Claude Code hook wiring in H2</span><span class="arr">→</span><span class="now">subscribe to herdr's documented socket event stream (<code>events.subscribe</code>); build our own hooks only if autonomy later needs them</span></div>
+      <p>Reading herdr's source settled it: herdr <i>had</i> hook-driven Claude state and deleted it in 0.6.7 because hooks made unreliable authority. Their docs explicitly invite external orchestrators to use the socket API instead.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Instead of arco asking "anything new?" every 30 seconds, herdr now taps arco on the shoulder the moment an agent's state changes. And we don't build our own Claude wiretap until we actually need it.</div>
+    </div>
+
+    <div class="dec changed">
+      <span class="phase-tag">H2</span>
+      <div class="dnum">D2 — CONTAINMENT <span class="badge b-changed">CHANGED</span></div>
+      <h3>Use Anthropic's sandbox, not a bespoke one</h3>
+      <div class="wasnow"><span class="was">Build our own bubblewrap + landlock wrapper + egress proxy</span><span class="arr">→</span><span class="now">wrap agent launches with <code>srt</code> (anthropic-experimental/sandbox-runtime) + systemd-run limits as layer 2</span></div>
+      <p>srt <i>is</i> the thing we were going to build — bubblewrap isolation with all network egress forced through its allowlist proxy — already written and maintained by the vendor of the agents we're caging.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Anthropic already built the cage. Use theirs, add systemd's free locks on top, and delete a whole bespoke subsystem from the plan.</div>
+    </div>
+
+    <div class="dec">
+      <span class="phase-tag">H1→H3</span>
+      <div class="dnum">D3 — IDENTITY <span class="badge b-kept">KEPT</span></div>
+      <h3>Fix who's allowed to report events</h3>
+      <p>Local: bind events to the worker's UID via <code>SO_PEERCRED</code> (H1). Cross-VM: per-worker derived HMAC keys (HKDF) + replay guards (H3). Remove the workspace-name fallback that lets any key holder forge any worker's events.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Right now, one leaked key lets anyone impersonate any worker. After this, each worker can only speak as itself.</div>
+    </div>
+
+    <div class="dec promoted">
+      <span class="phase-tag">H3</span>
+      <div class="dnum">D4 — EVIDENCE <span class="badge b-promoted">PROMOTED</span></div>
+      <h3>Verification becomes THE product moat</h3>
+      <div class="wasnow"><span class="was">Merge queue = one hardening item among eight</span><span class="arr">→</span><span class="now">verification is arco's differentiating layer, phased: diff-gate (live) → reuse the repo's own CI as the test leg → in-daemon rebase→test→merge queue emitting a proof artifact</span></div>
+      <p>Source-verified: nobody on herdr closes the loop between "agent says done" and "work is actually done". Verified 2026: nothing light and self-hostable exists to buy (bors-ng dead, GitHub MQ needs org repos).</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>"Done" stops meaning "the agent said so" and starts meaning "the branch rebased, the tests passed, here's the proof." This is the one thing no competitor does.</div>
+    </div>
+
+    <div class="dec changed">
+      <span class="phase-tag">H1→H2</span>
+      <div class="dnum">D5 — BRAIN <span class="badge b-changed">CHANGED</span></div>
+      <h3>Brain suggests; you decide — for a long time</h3>
+      <div class="wasnow"><span class="was">Push brain quality toward auto-answering</span><span class="arr">→</span><span class="now">brain = classifier + shadow drafter only; auto-mode is gated on D4 verification being live; borrow hap's MIT-licensed LLM plumbing (MCP <code>get_context</code>/<code>submit_decision</code>)</span></div>
+      <p>Still fixes the HIGH finding (feed facts/summary/memory into the prompt), enforces <code>stall_n</code>, and exposes the brain's rationale in escalations. But hap's answering loop is a month ahead and it's their whole product — we don't fight their strength.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>The brain writes a suggested answer under every escalation on your phone; you tap or override. It only gets to act alone once the receipts system can catch its mistakes — because an idle agent is recoverable, a misdirected one burns a day.</div>
+    </div>
+
+    <div class="dec changed">
+      <span class="phase-tag">H1</span>
+      <div class="dnum">D6 — OPERATOR <span class="badge b-changed">CHANGED</span></div>
+      <h3>Phone decision cards ARE the product</h3>
+      <div class="wasnow"><span class="was">status/logs/webhook as niceties; Telegram + web dashboard as add-ons</span><span class="arr">→</span><span class="now">ntfy push cards (context + draft + one-tap answer) as the primary interface; <code>arco status</code> CLI; web dashboard KILLED</span></div>
+      <p>Implementation: the <code>shoutrrr</code> Go lib → self-hosted <code>ntfy</code> (real iOS/Android push). One dependency deletes both the bespoke webhook code and the entire Telegram roadmap item. collie/herdr-remote own the visual remote surface — arco won't rebuild it.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Away from home, arco's entire face is a phone notification you can answer with one tap. At home, its face is herdr itself plus one CLI command. No web app to build or maintain.</div>
+    </div>
+
+    <div class="dec changed">
+      <span class="phase-tag">H2</span>
+      <div class="dnum">D7 — SECRETS <span class="badge b-changed">CHANGED</span></div>
+      <h3>Yes, a secrets manager — the one systemd already ships</h3>
+      <div class="wasnow"><span class="was">Bespoke tmpfs file now, custom credential socket later</span><span class="arr">→</span><span class="now">systemd-creds / <code>LoadCredential=</code> for arco's own secrets; keep the per-spawn tmpfs handoff for agents (it already matches systemd's model)</span></div>
+      <p>Secrets arrive as files in <code>/run/credentials/arco.service/</code> — never in argv or env, encrypted at rest, TPM-bindable, ~0 lines of Go. Fixes the MED-5 argv leak at the root. OpenBao/Infisical verified alive but rejected: another daemon to babysit.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>No token ever shows up in <code>ps</code> output or a process environment again — and we get that by using what's already installed, not by running a vault service.</div>
+    </div>
+
+    <div class="dec">
+      <span class="phase-tag">H1</span>
+      <div class="dnum">D8 — DEBT <span class="badge b-kept">KEPT +2</span></div>
+      <h3>Close the drift</h3>
+      <p>Three missing §E tests; kill-9 crash matrix; wire <code>stall_n</code>, delete the other dead knobs; quota-policy contingency. <b>New additions:</b> competitive teardown updated for hap + Gas City + Auto Mode, and adopt hap's idea of a CI-validated "never-auto" safety-regex corpus.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Pay down the small known lies in the codebase (config options that do nothing), and keep the competitor analysis honest now that we know who the competitors actually are.</div>
+    </div>
+
+    <div class="dec newdec" style="grid-column: 1 / -1;">
+      <span class="phase-tag">H1</span>
+      <div class="dnum">D9 — COEXISTENCE <span class="badge b-new">NEW</span></div>
+      <h3>When you're at the keyboard, arco gets out of the way</h3>
+      <p>Born from your "support tool" requirement: manual herdr at home must never fight arco. Per-session mode <b><code>auto | assist | manual</code></b> — <code>manual</code>: arco watches and records but never acts or pings; <code>assist</code>: notifies + drafts, never acts; <code>auto</code>: earned (D5 gate). Source-verified back-off signals: herdr exposes no "human is typing" API, but three reliable proxies exist — focus-change events arco didn't cause, <code>done→idle</code> status flips (only human viewing triggers those), and scrollback movement (only humans scroll). Any of them starts a "human is active" timer that drops <code>auto</code> → <code>assist</code>. Two hard rules from the source read: arco never calls <code>pane.focus</code> in auto mode (it would fake herdr's "seen" flag), and since arco's keystrokes are indistinguishable from yours at the terminal level, <b>every ledger entry records who answered — you or arco</b>.</p>
+      <div class="plain"><b>IN PLAIN WORDS</b>Sit down at your laptop and start driving — arco notices within seconds and automatically demotes itself to "suggest only". Walk away, and it resumes. And you can always check the ledger to see which answers were yours and which were the machine's.</div>
+    </div>
+  </div>
+
+  <!-- cut list -->
+  <div class="card" style="margin-top:24px; border-color: rgba(248,113,113,.3)">
+    <h3>The cut list — what rev-7 removes <span class="chip" style="background:rgba(248,113,113,.1);color:var(--red)">−⅓ of remaining surface</span></h3>
+    <p>Red-team verdict: as-scoped, rev-6 was a 10× overbuild for "3 VMs, phone, away-mode" — and scope is what makes the two-upstream treadmill (Claude Code weekly, herdr 0.x) unsustainable solo. Cut:</p>
+    <ul>
+      <li><b>Web dashboard, <code>attach</code>, session-detail UI</b> — collie / herdr-remote / herdr own visual surfaces</li>
+      <li><b>Session trees, supersession, depth-2</b> — scaffolding for a fleet size that doesn't exist</li>
+      <li><b>Memory tiers 3–4</b> (revisions, playbooks) — tiers 1–2 (facts, context summary) suffice for the brain fix</li>
+      <li><b>Provider pools beyond one static pool</b> — single-operator homelab</li>
+      <li><b>Telegram forum UX</b> — replaced by ntfy cards (D6)</li>
+      <li><b>Bespoke sandbox + own hook layer</b> — replaced by srt (D2) and herdr events (D1)</li>
+      <li><b>P3 "swarm" ambition</b> — demoted to "3 known VMs over Tailscale"; the validated SSH layer covers it</li>
+    </ul>
+    <p style="margin-top:10px">Frozen §B schema keeps the unused tables — harmless, no migration needed.</p>
+  </div>
+
+  <!-- phases -->
+  <div class="phases">
+    <div class="phase h1">
+      <div class="ph"><span class="b">H1</span> Trust &amp; Floor</div>
+      <div class="sub2">pure-add · ~days · the product appears</div>
+      <ul>
+        <li><b>ntfy decision cards</b> via shoutrrr — escalations + completion receipts (D6)</li>
+        <li><b>D9 supervision modes</b> + human-activity back-off</li>
+        <li><code>arco status</code> CLI table (D6)</li>
+        <li>Enforce <code>stall_n</code>, delete dead knobs (D5/D8)</li>
+        <li><code>brain_rationale</code> + confidence in EscalationDTO (D5)</li>
+        <li><code>SO_PEERCRED</code> intake binding (D3)</li>
+        <li>Missing §E tests + kill-9 matrix (D8)</li>
+      </ul>
+    </div>
+    <div class="phase h2">
+      <div class="ph"><span class="b">H2</span> Signals &amp; Containment</div>
+      <div class="sub2">medium risk · dependency swaps</div>
+      <ul>
+        <li><code>events.subscribe</code> socket client replaces polling (D1)</li>
+        <li>srt sandbox at the launch seam + systemd-run layer 2 (D2)</li>
+        <li>systemd-creds migration — kills MED-5 argv leak (D7)</li>
+        <li>Brain context fix + MCP get_context pattern (D5)</li>
+        <li>50-line <code>/metrics</code> side door (D6)</li>
+      </ul>
+    </div>
+    <div class="phase h3">
+      <div class="ph"><span class="b">H3</span> Proof &amp; Fleet</div>
+      <div class="sub2">the moat · 3-VM topology</div>
+      <ul>
+        <li>Merge queue + <code>verification_artifact</code> → proof-gated verify (D4)</li>
+        <li>Wire the validated SSH layer — real 3-VM supervision (D3/D4)</li>
+        <li>HKDF per-worker keys; drop workspace fallback (D3)</li>
+        <li>Autonomy earn-out per question class — gated on verification live (D5)</li>
+        <li>Thin herdr plugin exposing <code>arco status</code> — ecosystem citizenship</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="open-calls">
+    <h3>⟡ Open calls — needs your decision</h3>
+    <ol>
+      <li><b>hap relationship:</b> ignore, borrow patterns only (current plan), or reach out? "hap answers prompts, arco verifies outcomes" is a genuinely complementary split — both are herdr-citizen Go daemons.</li>
+      <li><b>Merge queue timing:</b> keep in H3, or pull the CI-check-run leg (the cheap 80%) into H2 since verification is now the moat?</li>
+      <li><b>Earn-out thresholds:</b> config-tunable or frozen like the §C pinned defaults?</li>
+      <li><b>First upstream PR to herdr:</b> env-file secrets mechanism, or typed blocked-reason in <code>agent list</code>?</li>
+    </ol>
+  </div>
+</section>
+
+<footer>
+  <span>arco — sounded with the bow · built solo by dinhlongviolin1</span>
+  <span>sources: overview.md · build-guide-rev6.md · deployment-hardening.md §0–§12 · plan-rev7.md · herdr 0.8.0 source · hap v0.5.31 source audit · 7-agent review + 3-round consideration (2026-08-07)</span>
+</footer>
+
+</div>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      const el = e.target;
+      if (el.classList.contains('fill')) el.style.width = el.dataset.w + '%';
+      if (el.classList.contains('ring-fill')) {
+        const c = 339.3;
+        el.style.transition = 'stroke-dashoffset 1.4s cubic-bezier(.2,.8,.2,1)';
+        el.style.strokeDashoffset = c * (1 - el.dataset.pct / 100);
+      }
+      io.unobserve(el);
+    });
+  }, { threshold: 0.4 });
+  document.querySelectorAll('.fill, .ring-fill').forEach(el => io.observe(el));
+</script>
+</body>
+</html>
