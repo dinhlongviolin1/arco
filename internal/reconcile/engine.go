@@ -17,6 +17,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/fusion"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // BrainCfg configures the short-lived decision brain. Enabled=false (default)
@@ -42,6 +43,11 @@ type Engine struct {
 	// Redact scrubs the brain prompt before it leaves for a third-party LLM (the
 	// biggest exfil surface, build-guide B4). nil → no scrub.
 	Redact core.Scrubber
+
+	// Notify receives push decision cards (escalation opened/answered/expired,
+	// worker lost/failed/verified). nil = disabled. Emits are POST-COMMIT and
+	// best-effort: a send error is logged, never fails the reconcile path.
+	Notify notify.Sender
 
 	// MissThreshold is how many consecutive sweeps a worker may be unobserved
 	// before it is finalized (suspect_missing → lost / completed_candidate).
@@ -253,6 +259,13 @@ func (e *Engine) launchAndFinalize(ctx context.Context, workerID, workspace, ses
 			Kind: "dispatch_done", WorkerID: workerID, SessionID: sessionID, Payload: payload,
 		})
 	})
+	if err == nil && finalState == core.WorkerFailed {
+		e.notifyCard(notify.Card{
+			Level: notify.LevelWarn,
+			Title: "arco: worker failed — " + workerID,
+			Body:  fmt.Sprintf("worker: %s\nlaunch failed: %v", workerID, launchErr),
+		})
+	}
 	return finalState, err
 }
 
@@ -270,6 +283,8 @@ type EventInput struct {
 // Deterministic (no brain call); ambiguity is left for a later brain pass.
 func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	var ambiguous bool
+	var openedEsc bool   // a question escalation was NEWLY opened in the tx (no dedup)
+	var task string      // the opened worker's task, for the decision card
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(in.WorkerID)
 		if err != nil {
@@ -310,12 +325,24 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		// operator decides; no unattended auto-answer in P2). One-pending-per-worker
 		// is enforced by OpenEscalation, so repeat events don't pile up.
 		if target == core.WorkerWaitingForUser {
-			_, err := tx.OpenEscalation(core.Escalation{
+			// Detect NEWLY-opened for the notify card: OpenEscalation dedupes to an
+			// existing pending row silently, and a dedup must not re-notify. Reading
+			// the pending state in the SAME serialized tx is race-free.
+			pend, err := tx.ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: in.WorkerID})
+			if err != nil {
+				return err
+			}
+			if _, err := tx.OpenEscalation(core.Escalation{
 				WorkerID: in.WorkerID, SessionID: w.OwnerSession, Kind: "question",
 				QuestionClass: "clarify", ActionClass: core.ClassAmbiguous, Tier: core.TierMedium,
 				Action: "worker is awaiting input",
-			})
-			return err
+			}); err != nil {
+				return err
+			}
+			if len(pend) == 0 {
+				openedEsc, task = true, w.Task
+			}
+			return nil
 		}
 		// If the worker LEFT a waiting state by another path (e.g. a later herdr
 		// signal), close any lingering pending escalation so it isn't a phantom.
@@ -328,6 +355,14 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	})
 	if err != nil {
 		return err
+	}
+	// POST-COMMIT: push the decision card for a newly-opened escalation.
+	if openedEsc {
+		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+			WorkerID: in.WorkerID,
+			TaskTail: taskTail(task),
+			Question: "worker is awaiting input",
+		}))
 	}
 	// Ambiguous signals → ask the brain to classify, OFF the write path, serialized
 	// per worker via Exec (Submit fires strictly after the commit above; no

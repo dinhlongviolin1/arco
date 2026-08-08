@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // brainCallTimeout mirrors the brain.Invoke default (invoke.go): the wall-clock
@@ -274,8 +275,10 @@ func (e *Engine) reapEscalations(ctx context.Context) int {
 		if perr != nil || !ts.Before(cutoff) {
 			continue // unparseable or not yet timed out
 		}
-		_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
-			if _, err := tx.ExpirePendingForWorker(esc.WorkerID); err != nil {
+		var expired int
+		txErr := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			var err error
+			if expired, err = tx.ExpirePendingForWorker(esc.WorkerID); err != nil {
 				return err
 			}
 			w, err := tx.GetWorker(esc.WorkerID)
@@ -290,6 +293,14 @@ func (e *Engine) reapEscalations(ctx context.Context) int {
 			}
 			return nil
 		})
+		// POST-COMMIT: one warn card per escalation the operator never answered.
+		if txErr == nil && expired > 0 {
+			e.notifyCard(notify.Card{
+				Level: notify.LevelWarn,
+				Title: "arco: escalation expired — " + esc.WorkerID,
+				Body:  fmt.Sprintf("worker: %s\nquestion: %s", esc.WorkerID, esc.Action),
+			})
+		}
 		n++
 	}
 	return n
@@ -451,7 +462,9 @@ func (e *Engine) reapPooled(ctx context.Context) (int, error) {
 }
 
 func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.WorkerState, headNow string) (bool, error) {
+	var transitioned bool // the worker was actually moved to the target in the tx
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		transitioned = false
 		cur, err := tx.GetWorker(w.ID)
 		if err != nil {
 			return err
@@ -481,6 +494,7 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 		}); err != nil {
 			return err
 		}
+		transitioned = true
 		// Expire any pending escalation as the worker terminalizes, so a later human
 		// answer can't drive lost→running and resurrect a dead worker (capstone audit).
 		_, xerr := tx.ExpirePendingForWorker(w.ID)
@@ -488,6 +502,15 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 	})
 	if errors.Is(err, core.ErrRevMismatch) {
 		return false, nil
+	}
+	// POST-COMMIT: a worker finalized `lost` (missed too many sweeps with no HEAD
+	// progress) is worth paging about; completed_candidate is not (it made progress).
+	if err == nil && transitioned && target == core.WorkerLost {
+		e.notifyCard(notify.Card{
+			Level: notify.LevelWarn,
+			Title: "arco: worker lost — " + w.ID,
+			Body:  fmt.Sprintf("worker: %s\nagent missing for %d consecutive sweeps", w.ID, e.MissThreshold),
+		})
 	}
 	return err == nil, err
 }
@@ -515,6 +538,8 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 		return false, err
 	}
 	var blocked bool
+	var opened bool   // the stall question was NEWLY opened (no dedup) → notify
+	var action, task string
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		cur, err := tx.GetWorker(w.ID)
 		if err != nil {
@@ -540,18 +565,36 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 		// the catch-all "other" carries it, the stall semantics live in Action +
 		// the reconcile event payload ("stall":true). A dedicated 'stall' class
 		// would need an escalations-table rebuild — out of scope (no migrations).
+		action = fmt.Sprintf("worker made no progress for %d sweeps", n)
+		// Detect NEWLY-opened for the notify card (a dedup must not re-notify);
+		// reading the pending state in the SAME serialized tx is race-free.
+		pend, err := tx.ListEscalations(core.EscalationFilter{Status: "pending", WorkerID: w.ID})
+		if err != nil {
+			return err
+		}
 		if _, err := tx.OpenEscalation(core.Escalation{
 			WorkerID: w.ID, SessionID: cur.OwnerSession, Kind: "question",
 			QuestionClass: "other", ActionClass: core.ClassAmbiguous, Tier: core.TierMedium,
-			Action: fmt.Sprintf("worker made no progress for %d sweeps", n),
+			Action: action,
 		}); err != nil {
 			return err
 		}
 		blocked = true
+		if len(pend) == 0 {
+			opened, task = true, cur.Task
+		}
 		return tx.ResetWorkerStall(w.ID) // same tx: a later unblock starts fresh
 	})
 	if err != nil {
 		return false, err
+	}
+	// POST-COMMIT: push the decision card for a newly-opened stall question.
+	if opened {
+		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+			WorkerID: w.ID,
+			TaskTail: taskTail(task),
+			Question: action,
+		}))
 	}
 	return blocked, nil
 }
@@ -606,7 +649,9 @@ func (e *Engine) Recover(ctx context.Context) error {
 		if alive {
 			target, reason = core.WorkerRunning, "boot: adopted live worker"
 		}
+		var transitioned bool
 		if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			transitioned = false
 			cur, err := tx.GetWorker(w.ID)
 			if err != nil {
 				return err
@@ -614,12 +659,24 @@ func (e *Engine) Recover(ctx context.Context) error {
 			if cur.State != core.WorkerStarting {
 				return nil
 			}
-			return tx.TransitionWorker(w.ID, target, cur.Rev, core.Event{
+			if err := tx.TransitionWorker(w.ID, target, cur.Rev, core.Event{
 				Kind: "reconcile", WorkerID: w.ID, SessionID: cur.OwnerSession,
 				Payload: fmt.Sprintf(`{"boot_recovery":true,"reason":%q}`, reason),
-			})
+			}); err != nil {
+				return err
+			}
+			transitioned = true
+			return nil
 		}); err != nil && firstErr == nil {
 			firstErr = err // record but keep going: one bad worker mustn't skip the rest + the sweep
+		}
+		// POST-COMMIT: a launch that never came up (parked failed at boot) surfaces.
+		if transitioned && target == core.WorkerFailed {
+			e.notifyCard(notify.Card{
+				Level: notify.LevelWarn,
+				Title: "arco: worker failed — " + w.ID,
+				Body:  fmt.Sprintf("worker: %s\n%s", w.ID, reason),
+			})
 		}
 	}
 	// Always run the sweep, even if a per-worker recovery failed, so live-but-

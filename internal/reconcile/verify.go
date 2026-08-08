@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 // WorkerDiff returns the base→head diff for a worker (via the VMClient). It is a
@@ -28,7 +29,8 @@ func (e *Engine) Verify(ctx context.Context, workerID string, expectedRev int64,
 	if actor == "" {
 		actor = "human"
 	}
-	return e.Store.WithTx(ctx, func(tx core.Tx) error {
+	var base, head string
+	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
@@ -39,6 +41,7 @@ func (e *Engine) Verify(ctx context.Context, workerID string, expectedRev int64,
 		if w.HeadCommit == "" {
 			return fmt.Errorf("%w: nothing to verify (no head commit)", core.ErrIllegalTransition)
 		}
+		base, head = w.BaseCommit, w.HeadCommit
 		// Record exactly what was verified (base→head), attributed to the actor,
 		// so the ledger proves WHAT was blessed and BY WHOM.
 		return tx.TransitionWorker(workerID, core.WorkerCompletedVerified, expectedRev, core.Event{
@@ -46,4 +49,14 @@ func (e *Engine) Verify(ctx context.Context, workerID string, expectedRev int64,
 			Payload: fmt.Sprintf(`{"verified":true,"base":%q,"head":%q}`, w.BaseCommit, w.HeadCommit),
 		})
 	})
+	if err != nil {
+		return err
+	}
+	// POST-COMMIT: the diff gate passed — a blessed worker is worth an info card.
+	e.notifyCard(notify.Card{
+		Level: notify.LevelInfo,
+		Title: "arco: worker verified — " + workerID,
+		Body:  fmt.Sprintf("worker: %s\nverified by %s (base %s → head %s)", workerID, actor, base, head),
+	})
+	return nil
 }
