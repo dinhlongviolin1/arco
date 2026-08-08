@@ -41,6 +41,13 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	if e.ConfigDir == "" {
 		return DispatchResult{}, fmt.Errorf("reconcile: Spawn requires Engine.ConfigDir")
 	}
+	// Resolve the assigned VM's client BEFORE anything durable or external: with
+	// routing on, a typo'd VM refuses the spawn here — no worker row, no
+	// provisioning, and nothing ever launched anywhere (T3.3).
+	vmc, err := e.vmFor(e.DefaultVM)
+	if err != nil {
+		return DispatchResult{}, err
+	}
 	workerID := ulid.Make().String()
 	workspace := "arco_" + workerID
 	var sessionID string
@@ -48,7 +55,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	var leaseID string // function-scoped so phase 3 can release it on a failed spawn
 
 	// Phase 1: durable intent + worker row + granted-set snapshot (atomic).
-	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		if newSession {
 			sessionID = ulid.Make().String()
 			if err := tx.CreateSession(core.Session{
@@ -116,7 +123,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	}
 
 	// Phase 2: external side effects (provision → quarantine → compile → launch).
-	ref, bootID, wt, head, perr := e.provisionAndLaunch(ctx, workspace, repo, base, workerID, granted, credProfile)
+	ref, bootID, wt, head, perr := e.provisionAndLaunch(ctx, vmc, workspace, repo, base, workerID, granted, credProfile)
 
 	// Phase 3: durable result + state. On a Phase-2 error the launch may still have
 	// spawned the agent before erroring (ref-capture timeout, transient post-spawn
@@ -126,7 +133,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	finalState := core.WorkerRunning
 	if perr != nil {
 		finalState = core.WorkerFailed
-		if agents, aerr := e.VM.ListAgents(ctx); aerr == nil {
+		if agents, aerr := vmc.ListAgents(ctx); aerr == nil {
 			for _, a := range agents {
 				if a.Alive && a.Workspace == workspace {
 					finalState = core.WorkerRunning
@@ -190,20 +197,21 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	// + re-promptable). Falls back to synchronous if Exec is unset.
 	if finalState == core.WorkerRunning && perr == nil && ref != "" {
 		if e.Exec != nil {
-			e.Exec.Submit(workerID, func() { e.deliverInitialTask(e.bg(), workerID, sessionID, ref, task) })
+			e.Exec.Submit(workerID, func() { e.deliverInitialTask(e.bg(), vmc, workerID, sessionID, ref, task) })
 		} else {
-			e.deliverInitialTask(ctx, workerID, sessionID, ref, task)
+			e.deliverInitialTask(ctx, vmc, workerID, sessionID, ref, task)
 		}
 	}
 	return DispatchResult{SessionID: sessionID, WorkerID: workerID, State: finalState}, nil
 }
 
 // deliverInitialTask prompts a just-launched repo-spawned worker with its task,
-// targeted at the captured pane (ref), via PromptReady (confirms delivery +
-// retries past the agent's TUI boot). Records prompt_intent BEFORE the prompt
-// (crash-safe intent, mirrors preparePrompt); a delivery error is recorded but
-// does not fail/park the worker (it is running + claimable/re-promptable).
-func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, target, task string) {
+// targeted at the captured pane (ref) ON ITS VM (vmc — the same client that
+// launched it), via PromptReady (confirms delivery + retries past the agent's
+// TUI boot). Records prompt_intent BEFORE the prompt (crash-safe intent, mirrors
+// preparePrompt); a delivery error is recorded but does not fail/park the worker
+// (it is running + claimable/re-promptable).
+func (e *Engine) deliverInitialTask(ctx context.Context, vmc core.VMClient, workerID, sessionID, target, task string) {
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "prompt_intent", WorkerID: workerID, SessionID: sessionID, Actor: "spawn",
@@ -212,7 +220,7 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 		return e2
 	})
 	e.NoteSelfPaneOp(target) // the focus/scroll echo of this prompt is arco's, not a human's (D9 back-off)
-	if err := e.VM.PromptReady(ctx, target, promptIntentText(task)); err != nil {
+	if err := vmc.PromptReady(ctx, target, promptIntentText(task)); err != nil {
 		e.errorEvent(ctx, workerID, "initial task delivery failed: "+err.Error())
 	}
 }
@@ -223,7 +231,10 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 // LAUNCH failure leaves the dir (the agent may be live and adopted by the caller).
 // NB: a crash mid-provision still orphans the dir — a sweep-side GC of terminal
 // workers' ConfigDir subtrees is a documented follow-up (there is no GC today).
-func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, workerID string, granted map[string]bool, credProfile string) (ref, bootID, wt, head string, err error) {
+// Only the LAUNCH goes to the assigned VM's client (vmc); provisioning + the
+// cred-file writes run on THIS host — a remote-VM spawn is correct only when the
+// worker root is on storage shared with that VM (deployment-hardening §10).
+func (e *Engine) provisionAndLaunch(ctx context.Context, vmc core.VMClient, workspace, repo, base, workerID string, granted map[string]bool, credProfile string) (ref, bootID, wt, head string, err error) {
 	root := filepath.Join(e.ConfigDir, workerID)
 	wt = filepath.Join(root, "worktree")
 	cfgDir := filepath.Join(root, "cfg") // sibling of the worktree (config OUTSIDE it, B6)
@@ -309,7 +320,7 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 		Args: permcompile.LaunchArgs(cfgDir, granted, cat),
 		Env:  env,
 	}
-	ref, bootID, err = e.VM.Launch(ctx, spec)
+	ref, bootID, err = vmc.Launch(ctx, spec)
 	if err != nil {
 		// Do NOT remove — the agent may have spawned; the caller resolves by liveness.
 		return "", "", wt, head, fmt.Errorf("launch: %w", err)

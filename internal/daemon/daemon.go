@@ -35,6 +35,10 @@ type Deps struct {
 	VM core.VMClient
 }
 
+// vmProbeTimeout bounds each fleet host's boot-time reachability probe (one
+// ListAgents over ssh; BatchMode fails fast, this is the hang ceiling).
+const vmProbeTimeout = 10 * time.Second
+
 // Run opens the ledger, migrates, and serves the API on cfg.Socket until ctx is
 // cancelled. It closes the listener and store on shutdown.
 func Run(ctx context.Context, cfg config.Config, deps Deps) error {
@@ -108,6 +112,49 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.ActivityRestoreAfter = cfg.ActivityRestoreAfter
 	eng.DefaultVM = cfg.DefaultVM
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
+	// Cross-VM fleet registry (rev7/T3.3): one vm.NewRemote client per [[vms]]
+	// entry, so each worker's VM ops (launch/prompt/liveness/heads/kill/diff)
+	// route to ITS host over the validated SSH layer. Gated on use_local_vm —
+	// Fake/headless mode stays single-client with VM names as labels. A bad
+	// definition (empty/duplicate name, empty or '-'-prefixed host, a default_vm
+	// with no entry) fails startup: a typo'd fleet must not half-start.
+	// VMDef.Socket is stored but RESERVED — the confirmed herdr CLI takes no
+	// socket flag/env input (docs/herdr-contract.md; §10).
+	if cfg.UseLocalVM && len(cfg.VMs) > 0 {
+		reg := make(map[string]core.VMClient, len(cfg.VMs))
+		for _, def := range cfg.VMs {
+			if def.Name == "" {
+				return fmt.Errorf("daemon: [[vms]] entry with empty name (host %q)", def.Host)
+			}
+			if _, dup := reg[def.Name]; dup {
+				return fmt.Errorf("daemon: duplicate [[vms]] name %q", def.Name)
+			}
+			c, err := vm.NewRemote(def.Host, def.Herdr)
+			if err != nil {
+				return fmt.Errorf("daemon: vm %q: %w", def.Name, err)
+			}
+			reg[def.Name] = c
+		}
+		if cfg.DefaultVM != "" {
+			if _, ok := reg[cfg.DefaultVM]; !ok {
+				return fmt.Errorf("daemon: default_vm %q has no [[vms]] entry — every dispatch would be refused", cfg.DefaultVM)
+			}
+		}
+		eng.VMs = reg
+		// Per-VM reachability preflight: one ListAgents probe per fleet host.
+		// LOGGED, not fatal (documented choice, §10): an unreachable host is
+		// transient (reboot ordering, network) and its workers are simply
+		// unobservable until it recovers — matching the sweep's per-VM posture —
+		// whereas the definition errors above can never self-heal and do refuse
+		// startup.
+		for name, c := range reg {
+			pctx, cancel := context.WithTimeout(ctx, vmProbeTimeout)
+			if _, err := c.ListAgents(pctx); err != nil {
+				log.Printf("arco: preflight: vm %q unreachable (%v) — its workers stay unobservable until it recovers", name, err)
+			}
+			cancel()
+		}
+	}
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
 	// Manual memory (USER.md + MEMORY.md) rooted next to the ledger, so the brain
 	// prompt and any hand-editing of those files see the SAME tree (T2.4).

@@ -27,13 +27,19 @@ const defaultMaxDepth = 2
 // re-drive sees the cid resolved and never spawns a duplicate child (empty for
 // non-brain callers).
 func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task, brainCID string) (DispatchResult, error) {
+	// Children are assigned DefaultVM like every other spawn — resolve its client
+	// before any durable write (routing on + unresolvable VM refuses, T3.3).
+	vmc, err := e.vmFor(e.DefaultVM)
+	if err != nil {
+		return DispatchResult{}, err
+	}
 	childID := ulid.Make().String()
 	workspace := "arco_" + childID
 	var sessionID string
 	var childDepth int
 
 	// Phase 1: admission + durable intent + child row (all atomic).
-	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		parent, err := tx.GetWorker(parentWorkerID)
 		if err != nil {
 			return err
@@ -101,7 +107,7 @@ func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task, brainCID st
 	}
 
 	// Phases 2+3: launch the child + durable result/state (shared with Dispatch).
-	finalState, err := e.launchAndFinalize(ctx, childID, workspace, sessionID, task)
+	finalState, err := e.launchAndFinalize(ctx, vmc, childID, workspace, sessionID, task)
 	if err != nil {
 		return DispatchResult{}, err
 	}

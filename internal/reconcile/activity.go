@@ -96,6 +96,12 @@ func (e *Engine) ApplyHumanActivity(ctx context.Context, paneID string) error {
 		if w.AgentRef == "" || w.AgentRef != paneID {
 			continue
 		}
+		// The activity subscription is LOCAL-ONLY (T3.3 scope, like ApplyHerdrStatus):
+		// with routing on, a local pane id colliding with a remote worker's per-host
+		// ref is someone else's pane — never back that session off.
+		if e.VMs != nil && w.VM != "" {
+			continue
+		}
 		return e.backOffSession(ctx, w.OwnerSession)
 	}
 	return nil

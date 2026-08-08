@@ -52,6 +52,19 @@ type Sandbox struct {
 	PolicyPath string `toml:"policy_path"`
 }
 
+// VMDef is one [[vms]] fleet entry: a named remote VM the daemon builds a
+// vm.NewRemote client for (rev7/T3.3). Herdr is the remote herdr binary path
+// ("" → the remote default "herdr"). Socket is the per-VM herdr socket path —
+// a RESERVED knob: the confirmed herdr 0.7.5 CLI takes no socket flag/env
+// input (docs/herdr-contract.md), so it is stored but not yet passed through
+// (docs/deployment-hardening.md §10).
+type VMDef struct {
+	Name   string `toml:"name"`
+	Host   string `toml:"host"`
+	Herdr  string `toml:"herdr"`
+	Socket string `toml:"socket"`
+}
+
 // Config is the fully-resolved daemon configuration. All durations are real
 // time.Duration values; the pinned operability defaults come from
 // build-guide-rev6 §C and are overridable via TOML or ARCO_* env vars.
@@ -115,6 +128,11 @@ type Config struct {
 	// operator's hands is the surprise D9 exists to prevent).
 	SelfOpWindow         time.Duration `toml:"self_op_window"`
 	ActivityRestoreAfter time.Duration `toml:"activity_restore_after"`
+
+	// VMs is the configured VM fleet ([[vms]] blocks) the daemon builds the
+	// Engine's named-VM registry from (rev7/T3.3). Default: empty — routing
+	// stays off and VM names stay pure labels.
+	VMs []VMDef `toml:"vms"`
 
 	Telegram Telegram `toml:"telegram"`
 	Web      Web      `toml:"web"`

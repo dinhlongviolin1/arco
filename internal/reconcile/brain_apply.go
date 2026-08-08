@@ -311,12 +311,19 @@ func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.
 		// RIGHT before the prompt, and skip if the worker has since moved (a
 		// concurrent intake transition) — the CAS protects state, prompt_intent(cid)
 		// protects the un-recallable external side effect from a re-drive.
-		ws, ok := e.preparePrompt(ctx, workerID, cid, step)
+		ws, vmName, ok := e.preparePrompt(ctx, workerID, cid, step)
 		if !ok {
 			return
 		}
+		// Route to the worker's own VM; an unresolvable VM is a delivery failure
+		// (park, like a failed prompt — the ledger must not claim running).
+		vmc, verr := e.vmFor(vmName)
+		if verr != nil {
+			e.park(ctx, workerID, "brain prompt delivery failed: "+verr.Error())
+			return
+		}
 		e.NoteSelfPaneOp(ws) // arco-caused pane activity — excluded from the D9 back-off
-		if err := e.VM.Prompt(ctx, ws, promptIntentText(step.Instruction)); err != nil {
+		if err := vmc.Prompt(ctx, ws, promptIntentText(step.Instruction)); err != nil {
 			// Delivery failed — do NOT record a normal running decision (the ledger
 			// would claim running while the worker was never prompted). Park it.
 			e.park(ctx, workerID, "brain prompt delivery failed: "+err.Error())
@@ -361,9 +368,10 @@ func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.
 }
 
 // preparePrompt verifies (under the write lock) that the worker is still in a
-// promptable state and records prompt_intent; returns the workspace + ok. If the
-// worker moved, ok=false and the caller skips the prompt.
-func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step core.StepResult) (workspace string, ok bool) {
+// promptable state and records prompt_intent; returns the workspace + the
+// worker's VM name (for routing the prompt to its own host) + ok. If the worker
+// moved, ok=false and the caller skips the prompt.
+func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step core.StepResult) (workspace, vmName string, ok bool) {
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -384,7 +392,7 @@ func (e *Engine) preparePrompt(ctx context.Context, workerID, cid string, step c
 		// Target the worker's pane_id (AgentRef) so herdr `agent prompt` addresses
 		// the right pane; falls back to the workspace label for the Fake/legacy
 		// prompt-path (no captured pane). Returned to the caller as the Prompt target.
-		workspace, ok = promptTarget(w), true
+		workspace, vmName, ok = promptTarget(w), w.VM, true
 		_, _, _, e2 := tx.AppendEvent(core.Event{
 			Kind: "prompt_intent", WorkerID: workerID, SessionID: w.OwnerSession, Actor: "brain",
 			CorrelationID: cid, Payload: fmt.Sprintf(`{"instruction":%q}`, step.Instruction),
