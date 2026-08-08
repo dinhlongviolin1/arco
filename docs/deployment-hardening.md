@@ -103,6 +103,12 @@ socket** (trusted via the `0700` dir). For **any network / cross-VM** intake:
 
 - Set `ARCO_INTAKE_SECRET` (≥16 bytes; keep it out of the repo and out of
   worker env). arco refuses to start with `tcp_addr` set but no secret.
+- **Preferred under systemd: `LoadCredential=` (T2.3).** arco reads its own
+  secrets from `$CREDENTIALS_DIRECTORY/<name>` files (`intake_secret`,
+  `telegram_token`) before falling back per-key to the `ARCO_*` env var and
+  the TOML value, in that order — **file > env > TOML**. A credential file is
+  encrypted at rest by systemd and never appears in env or argv. See
+  `packaging/arco.service.example` for the `LoadCredential=` lines.
 - herdr / any cross-VM poster must send `X-Arco-Signature: sha256=<hmac>` over
   the exact request body.
 - **Not yet wired:** binding a TCP listener. When you add one, do **not** expose
@@ -358,12 +364,32 @@ spawn→autonomous-completion loop, but an operator should know them:
   the wrong workspace — only the *unattended* reaper is identity-strict; the operator
   path trusts explicit intent. **Operationally: `arco kill <id>` reclaims a worker's
   agent, and terminal + paused orphans self-clean on the next sweep.**
-- **Scoped creds pass via `herdr --env` argv (MED-5).** herdr's only env
-  mechanism is `workspace create --env KEY=VALUE`, so a pool's clavis token is
-  briefly visible in `/proc/<herdr-pid>/cmdline` during the create call. On a
-  single-user host this adds no attacker (same user already owns the token); on a
-  shared host, use `hidepid` and a tightly-scoped per-pool profile. A leak-free
-  path needs a herdr env-file/stdin mechanism (herdr change).
+- **Scoped creds pass via `herdr --env` argv (MED-5) — FIXED by file handoff
+  (T2.3).** *History:* herdr's only env mechanism is `workspace create --env
+  KEY=VALUE`, so a pool's clavis token used to ride the launch env and was
+  briefly visible in `/proc/<herdr-pid>/cmdline` during the create call; the
+  suggested mitigations were `hidepid` on shared hosts or a herdr
+  env-file/stdin mechanism. *Now:* the spawn path
+  (`Engine.provisionAndLaunch`) writes each resolved credential to its own
+  `0600` file (exact value bytes, one file per key) in a `0700`
+  `<per-worker-root>/creds/` dir — under the worker's PRIVATE root, OUTSIDE the
+  worktree, so the agent's repo tools can't see or commit it (same B6 placement
+  as `cfg/`) — and the launch env carries only the non-secret pointer
+  `CREDENTIALS_DIRECTORY=<dir>` (the systemd credential model). Nothing secret
+  touches herdr argv anymore; a cred-file write error fails the spawn
+  pre-launch with cleanup, and arco's own `CREDENTIALS_DIRECTORY` (if it runs
+  under systemd `LoadCredential=`, §5) is scrubbed from the inherited env
+  before the worker's own pointer is injected.
+  **Consumption contract (agent side):** the compiled Claude settings surface
+  (`internal/permcompile`) has no clean per-worker `apiKeyHelper` hook — the
+  settings are compiled before creds are resolved, the key set varies by
+  profile, and non-key entries (e.g. `ANTHROPIC_BASE_URL`) can't ride a key
+  helper anyway — so consumption is a documented contract, not a bolted-on
+  helper: the launched agent (or its wrapper/manifest) sources creds itself by
+  reading `$CREDENTIALS_DIRECTORY/<KEY>` for each file present (e.g.
+  `export ANTHROPIC_AUTH_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/ANTHROPIC_AUTH_TOKEN")`),
+  exactly as a systemd service consumes `LoadCredential=` files. The cred dir
+  is same-user `0700`/`0600`, so the worker process can read it; nothing else can.
 - **Inert config knobs.** `crash_loop_restarts`/`crash_loop_window` (a
   crash-loop breaker), a global `max_spawns` cap, and `stall_n` stall-detection
   are defined in config but **not yet enforced** (only per-VM/per-session caps +

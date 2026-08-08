@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 
@@ -246,17 +247,41 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 		return cleanup(err, "permcompile")
 	}
 	env := spawnenv.Scrub(os.Environ())
-	// Append the worker's SCOPED provider creds from its pool's clavis profile
-	// AFTER the scrub (the scrub stripped arco's OWN provider vars, P1; this adds
-	// back a pool-scoped set so the launched agent authenticates as that profile,
-	// not as arco). Fail the spawn on a resolve error rather than launch an
-	// unauthenticated worker. Inert when no profile / no Creds resolver.
+	// Hand the worker's SCOPED provider creds (from its pool's clavis profile)
+	// over as FILES, not env (MED-5): herdr's only env mechanism is `workspace
+	// create --env KEY=VALUE` argv, so anything in LaunchSpec.Env is briefly
+	// world-readable in /proc/<herdr-pid>/cmdline. Each resolved KEY=VALUE is
+	// written to credDir/KEY (0600, exact value bytes) in a 0700 dir under the
+	// per-worker root — OUTSIDE the worktree, so the agent's repo tools can't see
+	// or commit it (B6, same reason cfg lives there) — and the env carries only
+	// the non-secret pointer CREDENTIALS_DIRECTORY=<dir> (the systemd credential
+	// model; arco's OWN pointer was stripped by the scrub above). Fail the spawn
+	// on a resolve or write error rather than launch an unauthenticated worker.
+	// Inert when no profile / no Creds resolver / no creds resolved.
 	if credProfile != "" && e.Creds != nil {
 		cenv, cerr := e.Creds.EnvFor(ctx, credProfile)
 		if cerr != nil {
 			return cleanup(cerr, "credentials")
 		}
-		env = append(env, cenv...)
+		if len(cenv) > 0 {
+			credDir := filepath.Join(root, "creds")
+			if err := os.Mkdir(credDir, 0o700); err != nil {
+				return cleanup(err, "credentials")
+			}
+			for _, kv := range cenv {
+				k, v, ok := strings.Cut(kv, "=")
+				// The key becomes a file name: reject shapes that would escape
+				// credDir. The error never carries the entry itself — a malformed
+				// resolver entry could be all secret.
+				if !ok || k == "" || strings.ContainsAny(k, "/\x00") || k == "." || k == ".." {
+					return cleanup(fmt.Errorf("malformed credential entry from resolver (bad key)"), "credentials")
+				}
+				if err := os.WriteFile(filepath.Join(credDir, k), []byte(v), 0o600); err != nil {
+					return cleanup(err, "credentials")
+				}
+			}
+			env = append(env, "CREDENTIALS_DIRECTORY="+credDir)
+		}
 	}
 	spec := core.LaunchSpec{
 		Name: workspace, Kind: "claude", Workdir: wt,

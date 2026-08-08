@@ -296,9 +296,18 @@ func TestSpawn_InjectsPoolClavisCreds(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Equal(t, "deepseek-1", fc.profile, "resolved the pool's clavis_profile")
+	// New T2.3 contract (MED-5): secrets arrive as files under the pointed-at
+	// credentials dir; the launch env carries ONLY the non-secret pointer.
 	joined := strings.Join(fake.Launched()[0].Env, " ")
-	require.Contains(t, joined, "ANTHROPIC_AUTH_TOKEN=scoped-tok", "scoped creds injected")
-	require.Contains(t, joined, "ANTHROPIC_BASE_URL=https://ds")
+	require.NotContains(t, joined, "scoped-tok", "secret value must not ride the launch env/argv")
+	require.Contains(t, joined, "CREDENTIALS_DIRECTORY=", "pointer to the cred dir injected")
+	credDir := filepath.Join(e.ConfigDir, res.WorkerID, "creds")
+	tok, err := os.ReadFile(filepath.Join(credDir, "ANTHROPIC_AUTH_TOKEN"))
+	require.NoError(t, err)
+	require.Equal(t, "scoped-tok", string(tok), "scoped creds handed off as files")
+	url, err := os.ReadFile(filepath.Join(credDir, "ANTHROPIC_BASE_URL"))
+	require.NoError(t, err)
+	require.Equal(t, "https://ds", string(url))
 }
 
 // A pool with NO clavis_profile injects nothing (worker launches credential-less).
@@ -316,7 +325,9 @@ func TestSpawn_NoProfileNoCredInjection(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Empty(t, fc.profile, "EnvFor not called when the pool sets no profile")
-	require.NotContains(t, strings.Join(fake.Launched()[0].Env, " "), "scoped-tok")
+	joined := strings.Join(fake.Launched()[0].Env, " ")
+	require.NotContains(t, joined, "scoped-tok")
+	require.NotContains(t, joined, "CREDENTIALS_DIRECTORY=", "no creds → no pointer var")
 }
 
 // A credential-resolve error fails the spawn (worker not launched unauthenticated)

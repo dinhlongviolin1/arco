@@ -1,0 +1,44 @@
+# Example systemd unit for the arco daemon (T2.3 — systemd-creds for arco's
+# own secrets). Copy to /etc/systemd/system/arco.service and adjust paths.
+#
+# Credential precedence in arco's config loader (per key, independent):
+#   $CREDENTIALS_DIRECTORY/<name> file  >  ARCO_* env var  >  TOML value
+# i.e. a LoadCredential= file always wins over a stale env var; a missing
+# credential file falls back to env/TOML for that key only, so partial
+# LoadCredential= setups are fine.
+#
+# Supported credential names (must match exactly):
+#   intake_secret   -> intake HMAC secret (cfg.IntakeSecret / ARCO_INTAKE_SECRET)
+#   telegram_token  -> Telegram bot token (cfg.Telegram.Token / [telegram] token)
+
+[Unit]
+Description=arco — coding-agent supervisor daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated non-root user (docs/deployment-hardening.md §1).
+User=arco
+Group=arco
+
+# LoadCredential=<name>:<source> — systemd exposes each as
+# $CREDENTIALS_DIRECTORY/<name>, readable only by this service (never in
+# env/argv, encrypted at rest with LoadCredentialEncrypted=). The source files
+# should be root-owned 0600.
+LoadCredential=intake_secret:/etc/arco/intake_secret
+LoadCredential=telegram_token:/etc/arco/telegram_token
+# For secrets encrypted with `systemd-creds encrypt` use instead:
+#LoadCredentialEncrypted=intake_secret:/etc/arco/intake_secret.cred
+
+ExecStart=/usr/local/bin/arco daemon --config /etc/arco/arco.toml
+Restart=on-failure
+RestartSec=5
+
+# Standard hardening (adjust to taste; arco needs its state dir + herdr).
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

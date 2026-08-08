@@ -41,6 +41,10 @@ var secretNames = map[string]bool{
 	"PGPASSWORD": true, "MYSQL_PWD": true,
 	"DATABASE_URL": true, "REDIS_URL": true, "MONGODB_URI": true, "MONGO_URL": true,
 	"AMQP_URL": true, "CELERY_BROKER_URL": true, "SENTRY_DSN": true, "KUBECONFIG": true,
+	// arco's OWN systemd-creds pointer (LoadCredential= files: intake secret,
+	// telegram token). A worker must never inherit a path to arco's credentials;
+	// the spawn path injects the worker's own CREDENTIALS_DIRECTORY after the scrub.
+	"CREDENTIALS_DIRECTORY": true,
 }
 
 // IsSecretVar reports whether an environment variable NAME should be stripped.

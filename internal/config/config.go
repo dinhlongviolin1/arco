@@ -6,9 +6,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -143,6 +146,9 @@ func Load(path string) (Config, error) {
 		}
 	}
 	applyEnv(&cfg)
+	if err := applyCredentialsDir(&cfg); err != nil {
+		return Config{}, err
+	}
 	// A CHEAP default must survive an empty brain_model in the TOML.
 	if cfg.BrainModel == "" {
 		cfg.BrainModel = "haiku"
@@ -173,6 +179,41 @@ func rejectRemovedKnobs(undecoded []toml.Key) error {
 		if len(k) == 1 && removedKnobs[k[0]] {
 			return fmt.Errorf("config: key %q was removed; delete it from your config", k[0])
 		}
+	}
+	return nil
+}
+
+// credentialFiles maps a $CREDENTIALS_DIRECTORY file name (the LoadCredential=
+// credential name) to the config field it overrides — one line per credential.
+func credentialFiles(cfg *Config) map[string]*string {
+	return map[string]*string{
+		"intake_secret":  &cfg.IntakeSecret,
+		"telegram_token": &cfg.Telegram.Token,
+	}
+}
+
+// applyCredentialsDir overlays secrets from $CREDENTIALS_DIRECTORY (the systemd
+// LoadCredential= model: one file per credential, encrypted at rest, never in
+// env/argv). Runs AFTER applyEnv so files beat env beats TOML — an operator who
+// wired LoadCredential= must never be silently overridden by a stale env var.
+// A missing file falls back per-key (partial LoadCredential= setups are normal);
+// any other read error fails Load loudly.
+func applyCredentialsDir(cfg *Config) error {
+	dir := os.Getenv("CREDENTIALS_DIRECTORY")
+	if dir == "" {
+		return nil
+	}
+	for name, dst := range credentialFiles(cfg) {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("config: credential %s: %w", name, err)
+		}
+		// systemd-creds files usually end in one trailing newline; it is not part
+		// of the secret.
+		*dst = strings.TrimRight(string(b), "\n")
 	}
 	return nil
 }
