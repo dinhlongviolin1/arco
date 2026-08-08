@@ -273,6 +273,15 @@ func knSeedRunningWithBrainIntent(t *testing.T, path string, clk *knClock, withP
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Len(t, fake1.Prompts(), 1, "phase 1: the pre-crash daemon delivered the initial task")
 
+	// The session runs in auto: the redrive under test re-executes an ACTING
+	// step (run_again), which only prompts in auto — in assist (the default,
+	// D9/T1.5) it would degrade to an escalation and this matrix row is about
+	// receipt at-most-once semantics, not the mode gate. The mode is persisted,
+	// so the restarted daemon sees it too.
+	require.NoError(t, s1.WithTx(context.Background(), func(tx core.Tx) error {
+		return tx.SetSessionMode(res.SessionID, core.ModeAuto, "operator")
+	}))
+
 	cid := ulid.Make().String()
 	require.NoError(t, s1.WithTx(context.Background(), func(tx core.Tx) error {
 		// brainClassify's intent receipt (brain_apply.go).
