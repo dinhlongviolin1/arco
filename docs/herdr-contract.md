@@ -48,6 +48,18 @@ exist.)
 - `terminalHerdrStatus = {done}` (was `{done,gone,exited,dead}`).
 - Map `workspace_id`→`AgentObs.Workspace`, `terminal_id`→`AgentObs.BootID`.
 
+## arco ships a herdr plugin
+
+`plugin/arco-status/` is a thin plugin (manifest + one shell script) that puts
+the fleet snapshot in the herdr UI. Link it with
+`herdr plugin link $(pwd)/plugin/arco-status`; its single action, `status`,
+runs `arco status --json` (resolved via PATH) and passes stdout through, so
+`herdr plugin action invoke status --plugin arco-status` and `herdr plugin log`
+show the raw `StatusResp`. Manifest schema (herdr 0.7.5): `herdr-plugin.toml`
+with required `id`/`name`/`version`/`min_herdr_version`, optional `platforms`,
+and `[[actions]]` entries of `id`/`title`/`command` where `command` is an argv
+**array** whose `"./"`-relative argv[0] resolves against the plugin root.
+
 ## Integration items still open (before `use_local_vm` is the default)
 
 1. **Worker↔agent correlation.** herdr identifies agents by

@@ -1,0 +1,19 @@
+# herdr plugin manifest — schema verified against herdr 0.7.5.
+#
+# id, name, version and min_herdr_version are all required: `herdr plugin link`
+# refuses the directory if any is missing. `platforms` is optional but silences
+# the "platform support unknown" warning at link time.
+id = "arco-status"
+name = "arco fleet status"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+platforms = ["linux", "macos"]
+
+# `command` is an argv ARRAY (a plain string is a parse error), and a "./"
+# relative argv[0] resolves against the plugin root, so the plugin stays
+# relocatable. herdr captures the action's stdout/stderr/exit code in
+# `herdr plugin log`.
+[[actions]]
+id = "status"
+title = "arco fleet status"
+command = ["./arco-status.sh"]
