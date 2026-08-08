@@ -34,13 +34,24 @@ type Probe struct {
 	SocketDirOK   bool        // whether SocketDir was stat-able
 	TCPAddr       string      // configured network intake address ("" = socket only)
 	IntakeSecret  string      // configured HMAC intake secret
+
+	SandboxEnabled bool   // whether [sandbox] enabled is set (opt-in srt wrapping)
+	SrtPath        string // resolved path to the srt sandbox runtime, "" if not found
 }
 
 // Gather collects the real Probe from the OS + the given config values.
-func Gather(stateDir, socketDir, tcpAddr, intakeSecret string) Probe {
-	p := Probe{Euid: os.Geteuid(), StateDir: stateDir, SocketDir: socketDir, TCPAddr: tcpAddr, IntakeSecret: intakeSecret}
+func Gather(stateDir, socketDir, tcpAddr, intakeSecret string, sandboxEnabled bool) Probe {
+	p := Probe{
+		Euid: os.Geteuid(), StateDir: stateDir, SocketDir: socketDir,
+		TCPAddr: tcpAddr, IntakeSecret: intakeSecret, SandboxEnabled: sandboxEnabled,
+	}
 	if path, err := exec.LookPath("git"); err == nil {
 		p.GitPath = path
+	}
+	// Resolved unconditionally (exactly like git): the check below decides whether
+	// its absence matters, so the report always shows what the box actually has.
+	if path, err := exec.LookPath("srt"); err == nil {
+		p.SrtPath = path
 	}
 	if fi, err := os.Stat(stateDir); err == nil {
 		p.StateDirMode, p.StateDirOK = fi.Mode(), true
@@ -125,6 +136,17 @@ func Evaluate(p Probe) Report {
 	r.Checks = append(r.Checks, Check{
 		Name: "tcp_intake_signed", Critical: true, Pass: signed,
 		Detail: fmt.Sprintf("tcp_addr is set but intake_secret is missing or shorter than %d bytes — network intake must be HMAC-signed with a strong secret", minIntakeSecretLen),
+	})
+
+	// sandbox_srt_present (CRITICAL, only when opted in): the sandbox is off by
+	// default, so an operator who never enables it owes nothing. But once
+	// [sandbox] enabled is set, arco has PROMISED confinement — booting without
+	// the srt binary would run every worker unsandboxed while the config says
+	// otherwise, which is strictly worse than refusing to start. Disabled ⇒ passes
+	// regardless of srt (zero install burden for the default posture).
+	r.Checks = append(r.Checks, Check{
+		Name: "sandbox_srt_present", Critical: true, Pass: !p.SandboxEnabled || p.SrtPath != "",
+		Detail: "sandbox.enabled is set but the srt binary was not found on PATH — refusing to boot workers that would be silently unsandboxed",
 	})
 
 	return r
