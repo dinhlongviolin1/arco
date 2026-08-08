@@ -166,6 +166,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	metrics := api.NewMetrics(store)
 	srv.EnableMetrics(metrics)
 	eng.Metrics = metrics
+	// Verification leg 1 (rev7/T3.1), opt-in: poll completed_candidate workers'
+	// GitHub check-runs during the sweep. The real runner shells out to gh
+	// inside the worker's worktree (gh resolves owner/repo from its remote).
+	if cfg.CICheckRuns {
+		eng.CI = reconcile.CICfg{Enabled: true, Runner: reconcile.NewGHRunner("gh")}
+	}
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {

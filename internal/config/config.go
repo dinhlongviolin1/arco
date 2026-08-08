@@ -75,6 +75,12 @@ type Config struct {
 	// the local unix socket. Set via ARCO_INTAKE_SECRET (never commit it).
 	IntakeSecret string `toml:"intake_secret"`
 
+	// CICheckRuns opts in to verification leg 1 (rev7/T3.1): the sweep polls a
+	// completed_candidate worker's GitHub check-runs via gh (inside its
+	// worktree) and records the outcome as ledger evidence. Off by default —
+	// shelling out to gh from the daemon is opt-in.
+	CICheckRuns bool `toml:"ci_check_runs"`
+
 	// Pinned operability defaults (build-guide-rev6 §C).
 	MaxBrainCalls         int           `toml:"max_brain_calls"`
 	SweepInterval         time.Duration `toml:"sweep_interval"`

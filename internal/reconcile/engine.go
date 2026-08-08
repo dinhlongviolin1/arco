@@ -156,6 +156,13 @@ type Engine struct {
 	// every call goes through the nil-safe helpers below.
 	Metrics Metrics
 
+	// CI gates verification leg 1 (rev7/T3.1): the sweep polls a
+	// completed_candidate worker's GitHub check-runs and records the outcome as
+	// ledger evidence (verification_artifact / confirm escalation). CI success
+	// is evidence for the human, never verification — Verify stays the only
+	// path to completed_verified. Zero value = disabled.
+	CI CICfg
+
 	// SpawnUID is the UID the daemon spawns workers under (its own UID, when the
 	// local herdr launches them), recorded on the worker row at spawn so the UDS
 	// intake can bind incoming events to it via SO_PEERCRED (a same-box HMAC

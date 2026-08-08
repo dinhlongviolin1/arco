@@ -223,6 +223,11 @@ use_local_vm = true      # real herdr LocalVMClient (else Fake)
 herdr_bin    = "herdr"
 default_pool = "p1"      # every repo-spawn leases from this pool
 lease_ttl    = "1h"
+# Optional (rev7/T3.1): poll a completed_candidate's GitHub check-runs via gh
+# (must be installed + authenticated as the daemon user); green CI → a
+# verification_artifact evidence event, red → a confirm escalation. The human
+# diff-gate (`arco verify`) remains the only path to completed_verified.
+ci_check_runs = false
 ```
 `chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
 

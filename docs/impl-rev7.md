@@ -47,6 +47,8 @@ Conventions:
 | T3.6 | D9 completion: human-activity back-off — focus/scroll/Done→Idle events (from T2.1) arco didn't cause start an activity timer that demotes `auto`→`assist` for the session; never call `pane.focus` in auto. | internal/fusion, reconcile | self-caused-event exclusion test; timer demote/restore tests |
 | T3.7 | herdr plugin: thin manifest+script exposing `arco status --json` in herdr UI. | new plugin/ dir | script smoke test |
 
+T3.1 shipped as `internal/reconcile/civerify.go` (not verify.go — the human diff-gate stays untouched): config gate `ci_check_runs` (default off) has the sweep poll `gh api .../check-runs` inside the candidate's worktree; green → one ledger-deduped `verification_artifact` per (worker, head SHA), idempotent across restarts; red → one pending `confirm` escalation; pending/zero-runs/gh-error → retry next sweep. CI success is evidence only — the worker stays `completed_candidate`.
+
 ## M4 — Close-out
 
 | ID | Task |
