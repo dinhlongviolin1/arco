@@ -130,6 +130,11 @@ func (c *Client) Sessions(ctx context.Context) (api.SessionsResp, error) {
 	return r, err
 }
 
+// SetSessionMode sets a session's D9 supervision mode (auto|assist|manual).
+func (c *Client) SetSessionMode(ctx context.Context, session, mode string) error {
+	return c.do(ctx, http.MethodPost, "/v1/sessions/"+session+"/mode", api.ModeReq{Mode: mode}, nil)
+}
+
 // Status fetches the one-call fleet snapshot (workers by state, sessions by
 // status, pending escalations with age, pool lease usage).
 func (c *Client) Status(ctx context.Context) (api.StatusResp, error) {

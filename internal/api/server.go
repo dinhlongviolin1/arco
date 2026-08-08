@@ -43,6 +43,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /healthz", s.health)
 	s.mux.HandleFunc("GET /v1/workers", s.listWorkers)
 	s.mux.HandleFunc("GET /v1/sessions", s.listSessions)
+	s.mux.HandleFunc("POST /v1/sessions/{id}/mode", s.setSessionMode)
 	s.mux.HandleFunc("GET /v1/status", s.status)
 	s.mux.HandleFunc("POST /v1/dispatch", s.dispatch)
 	s.mux.HandleFunc("GET /v1/pools", s.listPools)
@@ -108,6 +109,11 @@ type SessionDTO struct {
 }
 type SessionsResp struct {
 	Sessions []SessionDTO `json:"sessions"`
+}
+
+// ModeReq sets a session's D9 supervision mode (auto|assist|manual).
+type ModeReq struct {
+	Mode string `json:"mode"`
 }
 
 // StatusResp is the one-call fleet snapshot (rev7/T1.2): workers by state,
@@ -294,6 +300,33 @@ func (s *Server) listSessions(w http.ResponseWriter, _ *http.Request) {
 		out.Sessions = append(out.Sessions, SessionDTO{ID: x.ID, Slug: x.Slug, Status: string(x.Status), Goal: x.Goal})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// setSessionMode flips a session's D9 supervision mode on operator request:
+// 400 on an unknown mode (validated before any write), 404 on an unknown
+// session. Accepts a session id or slug, like dispatch --session.
+func (s *Server) setSessionMode(w http.ResponseWriter, r *http.Request) {
+	var req ModeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	m, err := core.ParseSupervisionMode(req.Mode)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
+		sess, err := tx.ResolveSession(r.PathValue("id"))
+		if err != nil {
+			return err
+		}
+		return tx.SetSessionMode(sess.ID, m, "operator")
+	}); err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
 }
 
 // status aggregates the one-call fleet snapshot from the reader: workers by

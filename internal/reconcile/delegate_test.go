@@ -102,6 +102,7 @@ func TestDelegate_TerminalParentRejected(t *testing.T) {
 func TestBrain_DispatchDelegatesChild(t *testing.T) {
 	e, s, _ := brainEngine(t, `{"kind":"dispatch","instruction":"handle the sub-part"}`, nil)
 	parent := dispatchRunning(t, e)
+	setMode(t, s, parent, core.ModeAuto) // acting steps only execute in auto (D9)
 	pSession := mustWorker(t, s, parent).OwnerSession
 
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(parent)))
@@ -126,6 +127,7 @@ func TestBrain_DispatchDeniedRecordsError(t *testing.T) {
 	e, s, _ := brainEngine(t, `{"kind":"dispatch","instruction":"sub"}`, nil)
 	e.MaxChildren = 1 // parent alone already fills the session
 	parent := dispatchRunning(t, e)
+	setMode(t, s, parent, core.ModeAuto) // acting steps only execute in auto (D9)
 
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(parent)))
 	e.Exec.Wait()

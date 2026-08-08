@@ -295,7 +295,7 @@ func (e *Engine) reapEscalations(ctx context.Context) int {
 		})
 		// POST-COMMIT: one warn card per escalation the operator never answered.
 		if txErr == nil && expired > 0 {
-			e.notifyCard(notify.Card{
+			e.notifyCard(esc.SessionID, notify.Card{
 				Level: notify.LevelWarn,
 				Title: "arco: escalation expired — " + esc.WorkerID,
 				Body:  fmt.Sprintf("worker: %s\nquestion: %s", esc.WorkerID, esc.Action),
@@ -399,6 +399,12 @@ func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agen
 		}
 		obs, alive := lookup(w)
 		if !alive {
+			continue
+		}
+		// D9 gate: in a session whose mode forbids autonomous reclaim (manual —
+		// arco must not touch the world), leave the agent running. The worker
+		// stays listed; it is reaped if the operator flips the mode later.
+		if !e.sessionMode(w.OwnerSession).Allows(core.ActReapAgent) {
 			continue
 		}
 		// Positive-identity gate (see doc): reap only when we can confirm the live
@@ -506,7 +512,7 @@ func (e *Engine) finalize(ctx context.Context, w core.Worker, target core.Worker
 	// POST-COMMIT: a worker finalized `lost` (missed too many sweeps with no HEAD
 	// progress) is worth paging about; completed_candidate is not (it made progress).
 	if err == nil && transitioned && target == core.WorkerLost {
-		e.notifyCard(notify.Card{
+		e.notifyCard(w.OwnerSession, notify.Card{
 			Level: notify.LevelWarn,
 			Title: "arco: worker lost — " + w.ID,
 			Body:  fmt.Sprintf("worker: %s\nagent missing for %d consecutive sweeps", w.ID, e.MissThreshold),
@@ -538,8 +544,8 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 		return false, err
 	}
 	var blocked bool
-	var opened bool   // the stall question was NEWLY opened (no dedup) → notify
-	var action, task string
+	var opened bool // the stall question was NEWLY opened (no dedup) → notify
+	var action, task, sess string
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		cur, err := tx.GetWorker(w.ID)
 		if err != nil {
@@ -581,7 +587,7 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 		}
 		blocked = true
 		if len(pend) == 0 {
-			opened, task = true, cur.Task
+			opened, task, sess = true, cur.Task, cur.OwnerSession
 		}
 		return tx.ResetWorkerStall(w.ID) // same tx: a later unblock starts fresh
 	})
@@ -590,7 +596,7 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 	}
 	// POST-COMMIT: push the decision card for a newly-opened stall question.
 	if opened {
-		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
 			WorkerID: w.ID,
 			TaskTail: taskTail(task),
 			Question: action,
@@ -672,7 +678,7 @@ func (e *Engine) Recover(ctx context.Context) error {
 		}
 		// POST-COMMIT: a launch that never came up (parked failed at boot) surfaces.
 		if transitioned && target == core.WorkerFailed {
-			e.notifyCard(notify.Card{
+			e.notifyCard(w.OwnerSession, notify.Card{
 				Level: notify.LevelWarn,
 				Title: "arco: worker failed — " + w.ID,
 				Body:  fmt.Sprintf("worker: %s\n%s", w.ID, reason),

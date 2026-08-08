@@ -260,7 +260,7 @@ func (e *Engine) launchAndFinalize(ctx context.Context, workerID, workspace, ses
 		})
 	})
 	if err == nil && finalState == core.WorkerFailed {
-		e.notifyCard(notify.Card{
+		e.notifyCard(sessionID, notify.Card{
 			Level: notify.LevelWarn,
 			Title: "arco: worker failed — " + workerID,
 			Body:  fmt.Sprintf("worker: %s\nlaunch failed: %v", workerID, launchErr),
@@ -283,8 +283,8 @@ type EventInput struct {
 // Deterministic (no brain call); ambiguity is left for a later brain pass.
 func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	var ambiguous bool
-	var openedEsc bool   // a question escalation was NEWLY opened in the tx (no dedup)
-	var task string      // the opened worker's task, for the decision card
+	var openedEsc bool    // a question escalation was NEWLY opened in the tx (no dedup)
+	var task, sess string // the opened worker's task + session, for the decision card
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(in.WorkerID)
 		if err != nil {
@@ -340,7 +340,7 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 				return err
 			}
 			if len(pend) == 0 {
-				openedEsc, task = true, w.Task
+				openedEsc, task, sess = true, w.Task, w.OwnerSession
 			}
 			return nil
 		}
@@ -358,7 +358,7 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	}
 	// POST-COMMIT: push the decision card for a newly-opened escalation.
 	if openedEsc {
-		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
 			WorkerID: in.WorkerID,
 			TaskTail: taskTail(task),
 			Question: "worker is awaiting input",

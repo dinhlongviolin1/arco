@@ -13,7 +13,7 @@ const workerCols = `id,title,vm,workspace,worktree,base_commit,head_commit,progr
 
 const sessionCols = `id,slug,title,goal,status,kind,parent_session,rev,perm_rev,mem_rev,permissions,` +
 	`context_summary,context_rev,facts,progress,repo,default_vm,pinned,notify_level,tg_topic_id,` +
-	`tg_status_msg_id,stall_count,last_activity_at,created_at,closed_at`
+	`tg_status_msg_id,stall_count,last_activity_at,created_at,closed_at,supervision_mode`
 
 const eventCols = `id,source,source_event_id,source_event_hash,worker_id,session_id,kind,actor,` +
 	`causation_event_id,correlation_id,payload,occurred_at,recorded_at`
@@ -56,6 +56,7 @@ func scanSession(sc scanner) (core.Session, error) {
 		&s.ID, &slug, &s.Title, &s.Goal, &s.Status, &s.Kind, &parent, &s.Rev, &s.PermRev, &s.MemRev,
 		&s.Permissions, &s.ContextSummary, &s.ContextRev, &s.Facts, &s.Progress, &s.Repo, &s.DefaultVM,
 		&pinned, &s.NotifyLevel, &topic, &statusMsg, &s.StallCount, &s.LastActivityAt, &s.CreatedAt, &closed,
+		&s.SupervisionMode,
 	)
 	if err != nil {
 		return core.Session{}, err

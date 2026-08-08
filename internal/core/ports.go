@@ -157,6 +157,10 @@ type Tx interface {
 	// CreatePool inserts a provider pool (operator config; `arco pool create`).
 	CreatePool(p ProviderPool) error
 	SetSessionStatus(id string, to SessionStatus, expectedRev int64, e Event) error
+	// SetSessionMode sets a session's D9 supervision mode: validates the mode
+	// (reject unknown BEFORE writing), bumps the session rev, and appends a
+	// `mode_change` event attributed to actor with the old+new mode.
+	SetSessionMode(id string, m SupervisionMode, actor string) error
 	AttachWorker(sessionID, workerID string) error
 
 	Grant(sessionID, capability, grantedBy string, e Event) (newPermRev int64, err error)

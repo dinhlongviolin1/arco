@@ -154,6 +154,27 @@ judgment call is the operator's (this is deliberately not automated).`,
 	}
 }
 
+// newModeCmd sets a session's D9 supervision mode — how much autonomy arco has
+// over that session's workers. Operator actions are never gated by the mode.
+func newModeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mode <session> <auto|assist|manual>",
+		Short: "set a session's supervision mode (manual: observe only; assist: notify+draft; auto: brain acts)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			if err := c.SetSessionMode(context.Background(), args[0], args[1]); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "session %s supervision mode set to %s\n", args[0], args[1])
+			return nil
+		},
+	}
+}
+
 func newWorkersCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "workers",

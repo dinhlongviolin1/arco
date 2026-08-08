@@ -32,6 +32,12 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	if w.OwnerSession == core.PoolSessionID {
 		return
 	}
+	// D9 gate: in a session whose mode forbids brain drafting (manual), arco
+	// never invokes the brain — return BEFORE any brain_intent is recorded, so
+	// the ledger carries no trace of a call that must not happen.
+	if !e.sessionMode(w.OwnerSession).Allows(core.ActBrainDraft) {
+		return
+	}
 	// cid correlates this classification: the brain_intent carries it, and so does
 	// whichever un-recallable side effect the decision fires (prompt_intent for
 	// run_again, brain_dispatch for dispatch — the only two decisions that leave
@@ -192,6 +198,21 @@ func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.
 	// run_again/dispatch prompt the worker — a side effect done BEFORE the tx so
 	// a tx never holds while shelling out.
 	switch step.Kind {
+	case "run_again", "dispatch":
+		// D9 gate: a brain ACTING step (prompt the agent / spawn a child) only
+		// executes when the worker's session mode allows autonomous action. In
+		// assist/manual it DEGRADES to a question escalation carrying the step's
+		// instruction as the draft answer, so the operator can one-tap approve —
+		// arco surfaces the decision, a human executes it. The degraded path
+		// resolves the classification exactly like a brain-opened question does
+		// today (the worker leaves running + the caller marks the cid resolved),
+		// so a crash-recovery redrive can't re-run the step.
+		if !e.workerMode(workerID).Allows(core.ActBrainAct) {
+			e.openFromBrain(ctx, workerID, "question", core.ClassAmbiguous, core.TierMedium, step, step.Instruction)
+			return
+		}
+	}
+	switch step.Kind {
 	case "run_again":
 		// Re-read + record prompt_intent (stamped with cid) under the write lock
 		// RIGHT before the prompt, and skip if the worker has since moved (a
@@ -228,9 +249,9 @@ func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.
 	case "final_output":
 		e.transitionFromBrain(ctx, workerID, core.WorkerCompletedCandidate, step)
 	case "question":
-		e.openFromBrain(ctx, workerID, "question", core.ClassAmbiguous, core.TierMedium, step)
+		e.openFromBrain(ctx, workerID, "question", core.ClassAmbiguous, core.TierMedium, step, step.Reason)
 	case "confirm":
-		e.openFromBrain(ctx, workerID, "confirm", core.ClassDanger, core.TierHighBlast, step)
+		e.openFromBrain(ctx, workerID, "confirm", core.ClassDanger, core.TierHighBlast, step, step.Reason)
 	case "handoff":
 		// The worker hands ownership back to arco → release it to the pool (PASS-3
 		// ownership transfer). It stays running, unowned, until claimed or
@@ -312,13 +333,17 @@ func (e *Engine) recordDecision(ctx context.Context, workerID string, step core.
 	})
 }
 
-func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac core.ActionClass, tier core.Tier, step core.StepResult) {
+// openFromBrain opens a question/confirm escalation for a brain step. draft is
+// the advisory DraftAnswer stored on the escalation: the brain's reasoning for
+// its own question/confirm steps, or the step INSTRUCTION when a D9-degraded
+// acting step rides as a one-tap-approvable draft.
+func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac core.ActionClass, tier core.Tier, step core.StepResult, draft string) {
 	waiting := core.WorkerWaitingForUser
 	if kind == "confirm" {
 		waiting = core.WorkerWaitingConfirmation
 	}
-	var opened bool       // the escalation was NEWLY opened in the tx (no dedup)
-	var escID, task string // its id + the worker's task, for the decision card
+	var opened bool              // the escalation was NEWLY opened in the tx (no dedup)
+	var escID, task, sess string // its id + the worker's task/session, for the decision card
 	_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -354,13 +379,13 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 		}
 		escID, err = tx.OpenEscalation(core.Escalation{
 			WorkerID: workerID, SessionID: w.OwnerSession, Kind: kind, ActionClass: ac, Tier: tier,
-			QuestionClass: "clarify", Action: step.Instruction, DraftAnswer: step.Reason, BrainRationale: step.Reason,
+			QuestionClass: "clarify", Action: step.Instruction, DraftAnswer: draft, BrainRationale: step.Reason,
 		})
 		if err != nil {
 			return err
 		}
 		if len(pend) == 0 {
-			opened, task = true, w.Task
+			opened, task, sess = true, w.Task, w.OwnerSession
 		}
 		return nil
 	})
@@ -373,7 +398,7 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 	if err != nil {
 		return
 	}
-	e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+	e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
 		WorkerID:   workerID,
 		TaskTail:   taskTail(task),
 		Question:   esc.Action,

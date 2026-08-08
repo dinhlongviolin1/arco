@@ -145,31 +145,34 @@ type Worker struct {
 // Session is the first-class unit of work + conversation; sessions form a
 // single-parent tree (ParentSession, "" = root).
 type Session struct {
-	ID             string
-	Slug           string
-	Title          string
-	Goal           string
-	Status         SessionStatus
-	Kind           SessionKind
-	ParentSession  string
-	Rev            int64
-	PermRev        int64
-	MemRev         int64
-	Permissions    string // DERIVED cache of the grant rows
-	ContextSummary string
-	ContextRev     int64
-	Facts          string
-	Progress       string
-	Repo           string
-	DefaultVM      string
-	Pinned         bool
-	NotifyLevel    string
-	TGTopicID      *int64
-	TGStatusMsgID  *int64
-	StallCount     int
-	LastActivityAt string
-	CreatedAt      string
-	ClosedAt       string
+	ID     string
+	Slug   string
+	Title  string
+	Goal   string
+	Status SessionStatus
+	Kind   SessionKind
+	// SupervisionMode is the D9 autonomy dial (auto|assist|manual; see mode.go).
+	// "" on write means the default (assist).
+	SupervisionMode SupervisionMode
+	ParentSession   string
+	Rev             int64
+	PermRev         int64
+	MemRev          int64
+	Permissions     string // DERIVED cache of the grant rows
+	ContextSummary  string
+	ContextRev      int64
+	Facts           string
+	Progress        string
+	Repo            string
+	DefaultVM       string
+	Pinned          bool
+	NotifyLevel     string
+	TGTopicID       *int64
+	TGStatusMsgID   *int64
+	StallCount      int
+	LastActivityAt  string
+	CreatedAt       string
+	ClosedAt        string
 }
 
 // Event is one row of the immutable, append-only, two-clock event log.
