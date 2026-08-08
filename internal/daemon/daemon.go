@@ -43,10 +43,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 
 	// Security preflight (PASS-3): refuse to start in an unsafe posture — running
-	// as root, no git, a world-readable state dir, or network intake without a
-	// signing secret. arco enforces its half; the operator owns OS-user setup /
-	// branch protection.
-	pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), filepath.Dir(cfg.Socket), cfg.TCPAddr, cfg.IntakeSecret))
+	// as root, no git, a world-readable state dir, network intake without a
+	// signing secret, or an enabled [sandbox] with no srt binary. arco enforces
+	// its half; the operator owns OS-user setup / branch protection.
+	pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), filepath.Dir(cfg.Socket), cfg.TCPAddr, cfg.IntakeSecret, cfg.Sandbox.Enabled))
 	if !pf.OK() {
 		return fmt.Errorf("daemon: preflight failed: %v", pf.Failures())
 	}

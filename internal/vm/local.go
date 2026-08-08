@@ -384,6 +384,18 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	// accepts but `agent start` rejects (invalid_agent_name — live-verified on
 	// herdr 0.7.5). Lowercase it: the ULID stays unique, and arco correlates the
 	// worker by the returned pane_id (AgentRef), never by this agent name.
+	// SANDBOX (T2.2) — NOT wired here, and it cannot be: herdr owns the command.
+	// `agent start` takes only <NAME> --kind <KIND> --pane <ID> [--timeout MS]
+	// [-- <AGENT_ARG>…] (herdr 0.7.5 `agent start --help`; API AgentStartParams =
+	// {name, kind, pane_id, args, timeout_ms} in `herdr api schema --json`). There
+	// is NO command/exec override: --kind is a closed enum of known agent kinds
+	// whose canonical executable herdr resolves itself, and the trailing `--` args
+	// are ARGUMENTS TO THAT executable — so prefixing them with `srt …` would just
+	// hand the agent a bogus argument, not sandbox it.
+	// vm.SandboxWrap is therefore exported and tested but unused on this path; the
+	// srt rollout is operator work: register a custom herdr agent_manifest whose
+	// command is srt-wrapped and start workers under that kind. See
+	// docs/herdr-contract.md ("Sandbox (srt) — open item").
 	start := []string{"agent", "start", herdrAgentName(spec.Name), "--kind", kind, "--pane", paneID}
 	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
 		start = append(append(start, "--"), spec.Args...)
