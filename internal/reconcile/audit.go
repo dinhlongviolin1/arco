@@ -26,8 +26,8 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 	detail = truncate(detail, eventPayloadCap)
 	payload, _ := json.Marshal(map[string]string{"capability": capability, "detail": detail})
 
-	var opened bool // the danger confirm was opened in the tx (not a redelivery)
-	var task string // the worker's task, for the decision card
+	var opened bool       // the danger confirm was opened in the tx (not a redelivery)
+	var task, sess string // the worker's task + session, for the decision card
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -77,7 +77,7 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 		}); err != nil {
 			return err
 		}
-		opened, task = true, w.Task
+		opened, task, sess = true, w.Task, w.OwnerSession
 		return nil
 	})
 	if err != nil {
@@ -85,7 +85,7 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 	}
 	// POST-COMMIT: push the danger-confirm decision card.
 	if opened {
-		e.notifyCard(notify.FormatEscalation(notify.EscalationCard{
+		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
 			WorkerID: workerID,
 			TaskTail: taskTail(task),
 			Question: "worker attempted a deny-listed capability",

@@ -84,6 +84,7 @@ func TestSweep_DoesNotRedriveCompletedDispatch(t *testing.T) {
 	// A real classification that decides to dispatch → Delegate creates a child +
 	// a parent-scoped brain_dispatch(cid) atomically.
 	parent := dispatchRunning(t, e)
+	setMode(t, s, parent, core.ModeAuto) // acting steps only execute in auto (D9)
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(parent)))
 	e.Exec.Wait()
 	require.Equal(t, int32(1), calls.Load(), "brain classified once")
@@ -132,6 +133,7 @@ func TestSweep_DoesNotRedriveProcessedNonSideEffect(t *testing.T) {
 		}}
 
 	parent := dispatchRunning(t, e)
+	setMode(t, s, parent, core.ModeAuto) // acting steps only execute in auto (D9)
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(parent)))
 	e.Exec.Wait()
 	require.Equal(t, int32(1), calls.Load(), "classified once")

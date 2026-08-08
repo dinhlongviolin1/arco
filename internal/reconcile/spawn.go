@@ -173,7 +173,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	}
 	// POST-COMMIT: a spawn that parked failed (provision/compile/launch) surfaces.
 	if finalState == core.WorkerFailed {
-		e.notifyCard(notify.Card{
+		e.notifyCard(sessionID, notify.Card{
 			Level: notify.LevelWarn,
 			Title: "arco: worker failed — " + workerID,
 			Body:  fmt.Sprintf("worker: %s\nspawn failed: %v", workerID, perr),

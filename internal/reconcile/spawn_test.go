@@ -246,6 +246,7 @@ func TestSpawn_ThenRunAgain_TargetsPane(t *testing.T) {
 	repo, _ := localRepo(t)
 	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
 	require.NoError(t, err)
+	setMode(t, s, res.WorkerID, core.ModeAuto) // acting steps only execute in auto (D9)
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.NotEmpty(t, w.AgentRef)
 	e.Exec.Wait() // let the async initial delivery land first

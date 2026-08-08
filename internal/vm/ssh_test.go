@@ -19,28 +19,28 @@ func shCommand(script string) *exec.Cmd { return exec.Command("sh", "-c", script
 // a REAL shell, the remote command layer is injection-safe.
 var evilTokens = []string{
 	"plain",
-	"hello world",          // space
-	"it's",                 // single quote
-	`a"b`,                  // double quote
-	"a;b", "a|b", "a&b",   // separators
+	"hello world",       // space
+	"it's",              // single quote
+	`a"b`,               // double quote
+	"a;b", "a|b", "a&b", // separators
 	"a&&b||c",              // lists
 	"$(rm -rf /)",          // command substitution
 	"`rm -rf /`",           // backtick substitution
 	"a\nb",                 // newline
 	"a\tb",                 // tab
 	"*", "?", "[abc]", "~", // glob + tilde
-	"$HOME", "${PATH}",     // variable expansion
-	`\`, `\\`,              // backslashes
-	"-rf", "--evil",        // flag-shaped
-	"",                     // empty
-	"'", "'''", `'\''`,     // quote gymnastics
-	"a'b'c\"d\"e",          // mixed quotes
-	"\x01\x02",             // control chars
-	"$'x'",                 // bash ANSI-C quoting (literal under POSIX sh)
-	"a>b", "a<b",           // redirection
-	"  x  ",                // leading/trailing spaces
-	"日本語",                // unicode
-	"a!(b)",                // history-expansion char (non-interactive sh: literal)
+	"$HOME", "${PATH}", // variable expansion
+	`\`, `\\`, // backslashes
+	"-rf", "--evil", // flag-shaped
+	"",                 // empty
+	"'", "'''", `'\''`, // quote gymnastics
+	"a'b'c\"d\"e", // mixed quotes
+	"\x01\x02",    // control chars
+	"$'x'",        // bash ANSI-C quoting (literal under POSIX sh)
+	"a>b", "a<b",  // redirection
+	"  x  ", // leading/trailing spaces
+	"日本語",   // unicode
+	"a!(b)", // history-expansion char (non-interactive sh: literal)
 }
 
 // runThroughShell executes `printf '%s\0' <tokens...>` through a real /bin/sh with
