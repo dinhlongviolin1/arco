@@ -273,6 +273,7 @@ type AgentObs struct {
 	Workspace    string
 	BootID       string
 	PIDStartTime string
+	State        string // backend agent status (herdr: idle|working|blocked|done|unknown)
 	Alive        bool
 }
 

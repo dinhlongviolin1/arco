@@ -61,6 +61,11 @@ type Config struct {
 	BrainModel    string `toml:"brain_model"`
 	HerdrBin      string `toml:"herdr_bin"`
 	UseLocalVM    bool   `toml:"use_local_vm"` // opt in to the real herdr LocalVMClient (else Fake)
+	// HerdrSocket is the herdr NDJSON socket the events.subscribe push
+	// subscriber dials (rev7 D1). herdr exports the path to its panes as
+	// $HERDR_SOCKET_PATH (e.g. ~/.config/herdr/herdr.sock). Empty (the
+	// default) = push disabled; the polling sweep stays the only signal source.
+	HerdrSocket string `toml:"herdr_socket"`
 	// IntakeSecret is the shared secret for HMAC-signed event intake (security
 	// precondition P4: cross-VM intake must be source-bound + signed). Required
 	// whenever TCPAddr is set (network-exposed intake); empty is allowed only for
@@ -193,6 +198,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_HERDR_BIN"); v != "" {
 		cfg.HerdrBin = v
+	}
+	if v := os.Getenv("ARCO_HERDR_SOCKET"); v != "" {
+		cfg.HerdrSocket = v
 	}
 	if v := os.Getenv("ARCO_INTAKE_SECRET"); v != "" {
 		cfg.IntakeSecret = v
