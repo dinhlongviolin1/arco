@@ -211,6 +211,7 @@ func (e *Engine) deliverInitialTask(ctx context.Context, workerID, sessionID, ta
 		})
 		return e2
 	})
+	e.NoteSelfPaneOp(target) // the focus/scroll echo of this prompt is arco's, not a human's (D9 back-off)
 	if err := e.VM.PromptReady(ctx, target, promptIntentText(task)); err != nil {
 		e.errorEvent(ctx, workerID, "initial task delivery failed: "+err.Error())
 	}

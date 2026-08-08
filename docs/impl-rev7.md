@@ -47,6 +47,19 @@ Conventions:
 | T3.6 | D9 completion: human-activity back-off — focus/scroll/Done→Idle events (from T2.1) arco didn't cause start an activity timer that demotes `auto`→`assist` for the session; never call `pane.focus` in auto. | internal/fusion, reconcile | self-caused-event exclusion test; timer demote/restore tests |
 | T3.7 | herdr plugin: thin manifest+script exposing `arco status --json` in herdr UI. | new plugin/ dir | script smoke test |
 
+T3.6 shipped as `internal/reconcile/activity.go`: the daemon feeds every herdr
+pane activity event (focus/scroll, T2.1) to `Engine.ApplyHumanActivity`, which
+resolves the worker by `AgentRef` and drops its session `auto`→`assist` with
+actor `activity-backoff` (assist/manual are operator statements — never
+touched; an unknown pane is a silent no-op). Every arco path that touches a pane
+calls `NoteSelfPaneOp` first, so the echo herdr pushes for arco's own prompt is
+excluded for `self_op_window` (5s). `Sweep` restores `auto` after
+`activity_restore_after` (20m) of quiet, and ONLY for sessions the back-off
+itself demoted — an operator's assist stands. That demotion set is in-memory: a
+daemon restart leaves those sessions in `assist`, which fails toward less
+autonomy. **Invariant:** arco never calls a pane-focus op (in `auto` least of
+all), so a focus event always means a human is present.
+
 T3.1 shipped as `internal/reconcile/civerify.go` (not verify.go — the human diff-gate stays untouched): config gate `ci_check_runs` (default off) has the sweep poll `gh api .../check-runs` inside the candidate's worktree; green → one ledger-deduped `verification_artifact` per (worker, head SHA), idempotent across restarts; red → one pending `confirm` escalation; pending/zero-runs/gh-error → retry next sweep. CI success is evidence only — the worker stays `completed_candidate`.
 
 ## M4 — Close-out

@@ -74,6 +74,7 @@ func (e *Engine) RedeliverInitialTask(ctx context.Context, workerID string) erro
 		return err
 	}
 	target := promptTarget(w)
+	e.NoteSelfPaneOp(target) // arco-caused pane activity — excluded from the D9 back-off
 	if err := e.VM.PromptReady(ctx, target, promptIntentText(w.Task)); err != nil {
 		e.errorEvent(ctx, workerID, "redeliver failed: "+err.Error())
 		return err

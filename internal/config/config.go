@@ -99,6 +99,13 @@ type Config struct {
 	PerSessionBrainRate   int           `toml:"per_session_brain_rate"`
 	PoolTTL               time.Duration `toml:"pool_ttl"`
 	LeaseTTL              time.Duration `toml:"lease_ttl"`
+	// D9 human-activity back-off (T3.6). SelfOpWindow is how long after arco
+	// touched a pane the activity herdr pushes for it is treated as arco's own
+	// echo; ActivityRestoreAfter is the quiet period before the sweep returns a
+	// session the back-off demoted to auto (long on purpose — a restore under the
+	// operator's hands is the surprise D9 exists to prevent).
+	SelfOpWindow         time.Duration `toml:"self_op_window"`
+	ActivityRestoreAfter time.Duration `toml:"activity_restore_after"`
 
 	Telegram Telegram `toml:"telegram"`
 	Web      Web      `toml:"web"`
@@ -131,6 +138,8 @@ func Defaults() Config {
 		PerSessionBrainRate:   6,
 		PoolTTL:               24 * time.Hour,
 		LeaseTTL:              15 * time.Minute,
+		SelfOpWindow:          5 * time.Second,
+		ActivityRestoreAfter:  20 * time.Minute,
 
 		Notify: Notify{MinLevel: "info"}, // empty URLs → disabled; everything passes the filter
 	}
