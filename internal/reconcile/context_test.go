@@ -18,8 +18,8 @@ func TestAssembleContext_ByteStableAndComplete(t *testing.T) {
 		{ID: 3, Kind: "dispatch_done", Payload: "{}"},
 		{ID: 7, Kind: "state_change", Payload: `{"target":"running"}`},
 	}
-	a := assembleContext(w, s, events)
-	b := assembleContext(w, s, events)
+	a := assembleContext(w, s, events, "", "")
+	b := assembleContext(w, s, events, "", "")
 	require.Equal(t, a, b, "same inputs → identical bytes (byte-stable for prompt_hash)")
 
 	require.Contains(t, a, "Worker W1 state=running")
@@ -35,7 +35,7 @@ func TestAssembleContext_ByteStableAndComplete(t *testing.T) {
 func TestAssembleContext_ChildShowsLineageAndTruncates(t *testing.T) {
 	w := core.Worker{ID: "C1", State: core.WorkerRunning, Task: "sub", DelegationDepth: 2, ParentWorkerID: "P1"}
 	big := strings.Repeat("x", eventPayloadCap+50)
-	a := assembleContext(w, core.Session{}, []core.Event{{ID: 1, Kind: "note", Payload: big}})
+	a := assembleContext(w, core.Session{}, []core.Event{{ID: 1, Kind: "note", Payload: big}}, "", "")
 	require.Contains(t, a, "depth=2 parent=P1")
 	require.Contains(t, a, "…(truncated)")
 	require.NotContains(t, a, big, "oversized payload is truncated, not embedded whole")
@@ -43,7 +43,7 @@ func TestAssembleContext_ChildShowsLineageAndTruncates(t *testing.T) {
 
 func TestAssembleContext_MinimalWhenEmpty(t *testing.T) {
 	// no goal, no events → still a valid, deterministic prompt (no panic, no stray lines)
-	a := assembleContext(core.Worker{ID: "W", State: core.WorkerStarting}, core.Session{}, nil)
+	a := assembleContext(core.Worker{ID: "W", State: core.WorkerStarting}, core.Session{}, nil, "", "")
 	require.Contains(t, a, "Worker W state=starting")
 	require.NotContains(t, a, "Session goal:")
 	require.NotContains(t, a, "Recent events")
@@ -55,7 +55,7 @@ func TestAssembleContext_MinimalWhenEmpty(t *testing.T) {
 func TestAssembleContext_CapsFieldsAndRuneSafe(t *testing.T) {
 	huge := strings.Repeat("é", fieldCap) // 2-byte runes; a byte-slice at fieldCap would split one
 	w := core.Worker{ID: "W", State: core.WorkerRunning, Task: huge}
-	a := assembleContext(w, core.Session{Goal: huge}, nil)
+	a := assembleContext(w, core.Session{Goal: huge}, nil, "", "")
 	require.Contains(t, a, "…(truncated)")
 	require.Less(t, len(a), 2*len(huge), "oversized task+goal are capped, not embedded whole twice")
 	require.True(t, utf8.ValidString(a), "truncation must not split a rune → prompt stays valid UTF-8")
