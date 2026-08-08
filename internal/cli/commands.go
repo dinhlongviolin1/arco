@@ -433,7 +433,7 @@ func newHookCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&ev.WorkerRef, "worker", "", "worker id or workspace")
+	f.StringVar(&ev.WorkerRef, "worker", "", "worker id (workspace names are refused)")
 	f.StringVar(&ev.HerdrState, "state", "", "herdr state: working|idle|done|blocked")
 	f.BoolVar(&ev.Alive, "alive", true, "process alive")
 	f.StringVar(&ev.ObservedHead, "head", "", "observed git HEAD")

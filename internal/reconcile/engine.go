@@ -163,6 +163,13 @@ type Engine struct {
 	// path to completed_verified. Zero value = disabled.
 	CI CICfg
 
+	// IntakeMaster is the intake HMAC master secret (cfg.IntakeSecret, set by
+	// the daemon). When non-empty, Spawn writes each worker's DERIVED key
+	// (intakekey.Derive(master, workerID)) to <worker-root>/creds/intake_key
+	// (T3.4) — the master itself never reaches a worker, in env, argv, or file.
+	// "" = unsigned mode, no key file.
+	IntakeMaster string
+
 	// SpawnUID is the UID the daemon spawns workers under (its own UID, when the
 	// local herdr launches them), recorded on the worker row at spawn so the UDS
 	// intake can bind incoming events to it via SO_PEERCRED (a same-box HMAC

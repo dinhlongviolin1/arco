@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dinhlongviolin1/arco/internal/intakekey"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/vm"
@@ -67,7 +68,8 @@ func TestAPI_SignedIntakeRequired(t *testing.T) {
 	require.Equal(t, http.StatusOK, post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d))
 
 	body, _ := json.Marshal(EventReq{WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true})
-	mac := hmac.New(sha256.New, []byte("topsecret"))
+	// Since T3.4 the wire key is the WORKER's derived key, never the master.
+	mac := hmac.New(sha256.New, []byte(intakekey.Derive("topsecret", d.WorkerID)))
 	mac.Write(body)
 	goodSig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 

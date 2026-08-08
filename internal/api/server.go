@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/intakekey"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 )
 
@@ -144,7 +145,7 @@ type EventReq struct {
 	Source        string `json:"source"`
 	SourceEventID string `json:"source_event_id"`
 	Hash          string `json:"source_event_hash"`
-	WorkerRef     string `json:"worker_ref"` // worker id or workspace
+	WorkerRef     string `json:"worker_ref"` // worker id (workspace names are refused, T3.4)
 	HerdrState    string `json:"herdr_state"`
 	Alive         bool   `json:"alive"`
 	ObservedHead  string `json:"observed_head"`
@@ -448,26 +449,54 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusRequestEntityTooLarge, err)
 		return
 	}
-	// Signed intake (P4): when a shared secret is configured, every event must
-	// carry a valid HMAC-SHA256 over the raw body — this source-binds cross-VM /
-	// network intake so an unauthenticated poster can't inject worker events.
-	if s.intakeSecret != "" && !verifyIntakeSig(s.intakeSecret, body, r.Header.Get("X-Arco-Signature")) {
-		writeErr(w, http.StatusUnauthorized, errors.New("api: missing or invalid X-Arco-Signature"))
-		return
-	}
 	var req EventReq
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	workerID, ok, err := s.resolveWorker(req.WorkerRef)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+	// Resolve the worker by ID ONLY (T3.4): the old workspace-name fallback was
+	// a guessable spoof path (arco_<id> convention) and is removed for intake.
+	// Resolution comes BEFORE signature verification because the expected key is
+	// the WORKER's derived key, not the master.
+	var wk core.Worker
+	found := false
+	if req.WorkerRef != "" {
+		w2, err := s.store.Reader().GetWorker(req.WorkerRef)
+		if err != nil && !errors.Is(err, core.ErrNotFound) {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		wk, found = w2, err == nil
 	}
-	if !ok {
-		// Unknown worker: record a note (deduped on the delivery id so herdr
-		// retries don't flood events) and ack 202 (never fail the hook).
+	if !found {
+		ws, wsFound, err := s.workerByWorkspace(req.WorkerRef)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if wsFound {
+			// A ref that is a workspace NAME (not a worker id) is refused in BOTH
+			// signed and unsigned modes and never applied as a signal. Audited like
+			// the peer-cred denial below (deduped on the delivery id); the 403 must
+			// not depend on the ledger write succeeding.
+			_ = s.store.WithTx(r.Context(), func(tx core.Tx) error {
+				_, _, _, e := tx.AppendEvent(core.Event{
+					Kind: "intake_denied", WorkerID: ws.ID, SessionID: ws.OwnerSession,
+					Source: srcOrDefault(req.Source), SourceEventID: req.SourceEventID, SourceEventHash: req.Hash,
+					Payload: fmt.Sprintf(`{"reason":"workspace_ref","ref":%q}`, req.WorkerRef),
+				})
+				return e
+			})
+			writeErr(w, http.StatusForbidden, errors.New("api: workspace-name worker_ref is not accepted; use the worker id"))
+			return
+		}
+		if s.intakeSecret != "" {
+			// No worker → no derivable key → the delivery cannot be authenticated.
+			writeErr(w, http.StatusUnauthorized, errors.New("api: missing or invalid X-Arco-Signature"))
+			return
+		}
+		// Unsigned mode, truly unknown ref: record a note (deduped on the delivery
+		// id so herdr retries don't flood events) and ack 202 (never fail the hook).
 		_ = s.store.WithTx(r.Context(), func(tx core.Tx) error {
 			_, _, _, e := tx.AppendEvent(core.Event{Kind: "note", Source: srcOrDefault(req.Source),
 				SourceEventID: req.SourceEventID, SourceEventHash: req.Hash,
@@ -477,18 +506,22 @@ func (s *Server) intake(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, EventResp{Note: "unknown worker_ref"})
 		return
 	}
+	// Signed intake (P4, per-worker since T3.4): when a master secret is
+	// configured, every event must carry a valid HMAC-SHA256 over the raw body
+	// under THIS worker's derived key — the raw master and other workers' keys
+	// never authenticate a delivery.
+	if s.intakeSecret != "" && !verifyIntakeSig(intakekey.Derive(s.intakeSecret, wk.ID), body, r.Header.Get("X-Arco-Signature")) {
+		writeErr(w, http.StatusUnauthorized, errors.New("api: missing or invalid X-Arco-Signature"))
+		return
+	}
+	workerID := wk.ID
 
 	// SO_PEERCRED gate (rev7/T1.6): a worker recorded under a spawn-time UID
-	// only accepts events from that UID — the HMAC secret alone can't forge
+	// only accepts events from that UID — an intake key alone can't forge
 	// events for another UID's worker from the same box. A mismatch is audited
 	// (deduped on the delivery id like every intake write) and answered 403; the
 	// event is NEVER applied as a liveness/state signal. No peer UID on the ctx
 	// (TCP/httptest) or no recorded UID → ungated, exactly as before.
-	wk, err := s.store.Reader().GetWorker(workerID)
-	if err != nil {
-		writeErr(w, errStatus(err), err)
-		return
-	}
 	if wk.IntakeUID != nil {
 		if peerUID, ok := peerUIDFrom(r.Context()); ok && peerUID != *wk.IntakeUID {
 			// 403 even if the audit write fails: the denial decision must not
@@ -665,26 +698,23 @@ func parseScope(s string) core.Scope {
 	return core.ScopeOnce
 }
 
-// resolveWorker accepts a worker id or a workspace name.
-func (s *Server) resolveWorker(ref string) (string, bool, error) {
+// workerByWorkspace reports the worker whose workspace label matches ref, if
+// any. Used ONLY to refuse (403 + audit) intake refs that name a workspace —
+// workspace names are guessable and no longer resolve a worker (T3.4).
+func (s *Server) workerByWorkspace(ref string) (core.Worker, bool, error) {
 	if ref == "" {
-		return "", false, nil
-	}
-	if w, err := s.store.Reader().GetWorker(ref); err == nil {
-		return w.ID, true, nil
-	} else if !errors.Is(err, core.ErrNotFound) {
-		return "", false, err
+		return core.Worker{}, false, nil
 	}
 	ws, err := s.store.Reader().ListWorkers(core.WorkerFilter{})
 	if err != nil {
-		return "", false, err
+		return core.Worker{}, false, err
 	}
 	for _, w := range ws {
 		if w.Workspace == ref {
-			return w.ID, true, nil
+			return w, true, nil
 		}
 	}
-	return "", false, nil
+	return core.Worker{}, false, nil
 }
 
 func srcOrDefault(s string) string {
