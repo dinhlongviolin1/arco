@@ -202,6 +202,11 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		// LOW-5). A still-missing worker simply re-accrues from zero next sweep.
 		e.resetMiss(w.ID)
 	}
+	// Verification leg 1 (rev7/T3.1): poll CI check-runs for completed_candidate
+	// workers, after the liveness loop (a candidate's agent is expectedly gone —
+	// finalize already declines it above, so candidates are always still live-
+	// listed here). Best-effort evidence gathering; never a sweep error.
+	e.pollCICheckRuns(ctx, all)
 	return res, nil
 }
 
