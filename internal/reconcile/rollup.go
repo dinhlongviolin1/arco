@@ -95,6 +95,7 @@ func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
 		prompt, _ = e.Redact.Scrub(prompt)
 	}
 	res := brain.Invoke(ctx, brain.Config{Profile: e.Brain.Profile, Model: e.Brain.Model}, prompt, e.Brain.Runner)
+	e.meterBrainCall(approxTokens(prompt, res.Raw))
 	if res.Billing || res.Malformed || res.Err != nil {
 		// A bad rollup call is advisory noise — record it, don't park the parent
 		// (the parent isn't blocked on the rollup; it's a periodic review).

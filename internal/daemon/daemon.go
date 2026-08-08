@@ -159,6 +159,13 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// TCP listener is added (opus review, MED latent gap).
 	srv := api.New(store, eng)
 	srv.SetIntakeSecret(cfg.IntakeSecret)
+	// Observability (rev7/T2.5): GET /metrics on the same socket-served mux.
+	// The fleet gauges read the ledger at scrape time; the runtime instruments
+	// are fed from here (sweep duration) and from the engine seam below (brain
+	// calls/tokens, notify failures).
+	metrics := api.NewMetrics(store)
+	srv.EnableMetrics(metrics)
+	eng.Metrics = metrics
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
@@ -200,7 +207,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			case <-sweepCtx.Done():
 				return
 			case <-ticker.C:
+				start := time.Now()
 				_, _ = eng.Sweep(sweepCtx)
+				metrics.SweepDone(time.Since(start))
 			}
 		}
 	}()
