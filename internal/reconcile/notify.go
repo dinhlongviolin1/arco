@@ -26,6 +26,7 @@ func (e *Engine) notifyCard(sessionID string, c notify.Card) {
 	}
 	go func() {
 		if err := e.Notify.Send(e.bg(), c); err != nil {
+			e.meterNotifyFailure()
 			log.Printf("arco: notify: send failed: %v", err)
 		}
 	}()

@@ -31,6 +31,36 @@ type BrainCfg struct {
 	Runner  brain.Runner // injected; nil → clavis DefaultRunner
 }
 
+// Metrics is what the engine reports to an observability sink. Deliberately
+// tiny and value-only: never a prompt, a task, or anything an operator could
+// not safely publish on a scrape endpoint.
+type Metrics interface {
+	// BrainCall records one brain invocation with its approximate token cost.
+	BrainCall(tokens int)
+	// NotifyFailure records one failed decision-card push.
+	NotifyFailure()
+}
+
+// meterBrainCall / meterNotifyFailure are the nil-safe call sites for the
+// optional Metrics seam — instrumentation must never be a nil-deref hazard on
+// a path that supervises real workers.
+func (e *Engine) meterBrainCall(tokens int) {
+	if e.Metrics != nil {
+		e.Metrics.BrainCall(tokens)
+	}
+}
+
+func (e *Engine) meterNotifyFailure() {
+	if e.Metrics != nil {
+		e.Metrics.NotifyFailure()
+	}
+}
+
+// approxTokens estimates a brain call's token cost from its prompt and raw
+// response. clavis is a plain-text CLI with no usage surface, so ~4 bytes per
+// token is the best available signal; see the arco_brain_tokens_total HELP.
+func approxTokens(prompt, raw string) int { return (len(prompt) + len(raw)) / 4 }
+
 // Engine holds the dependencies the supervise loop needs.
 type Engine struct {
 	Store core.Store
@@ -118,6 +148,13 @@ type Engine struct {
 	// profile (injected post-scrub at launch). nil → workers launch credential-less
 	// (the Fake/headless path). Set by the daemon when use_local_vm.
 	Creds core.AgentCredentials
+
+	// Metrics is an OPTIONAL instrumentation seam (rev7/T2.5). It is an
+	// interface, not a concrete type, so this package stays free of any
+	// prometheus import — the daemon hands in *api.Metrics, which satisfies it.
+	// nil (every existing test, and any embedder that doesn't care) = no-op:
+	// every call goes through the nil-safe helpers below.
+	Metrics Metrics
 
 	// SpawnUID is the UID the daemon spawns workers under (its own UID, when the
 	// local herdr launches them), recorded on the worker row at spawn so the UDS

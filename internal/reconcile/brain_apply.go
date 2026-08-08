@@ -105,6 +105,7 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	}
 	res := brain.Invoke(ctx, brain.Config{Profile: e.Brain.Profile, Model: e.Brain.Model},
 		prompt, e.Brain.Runner)
+	e.meterBrainCall(approxTokens(prompt, res.Raw))
 
 	switch {
 	case res.Billing:
