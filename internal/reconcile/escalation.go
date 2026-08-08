@@ -19,12 +19,12 @@ func (e *Engine) AnswerQuestion(ctx context.Context, id, text string, scope core
 	// failure here means the tx below fails too — no card on a failed answer.
 	esc, escErr := e.Store.Reader().GetEscalation(id)
 	if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
-		return tx.AnswerQuestion(id, text, scope, core.Event{Kind: "question_esc", Payload: `{"decided_by":"human"}`})
+		return tx.AnswerQuestion(id, text, scope, core.Event{Kind: "question_esc", Actor: "operator", Payload: `{"decided_by":"human"}`})
 	}); err != nil {
 		return err
 	}
 	if escErr == nil {
-		e.notifyCard(notify.Card{
+		e.notifyCard(esc.SessionID, notify.Card{
 			Level: notify.LevelInfo,
 			Title: "arco: escalation answered — " + esc.WorkerID,
 			Body:  fmt.Sprintf("worker: %s\nanswer: %s", esc.WorkerID, text),
@@ -42,7 +42,7 @@ func (e *Engine) DecideConfirm(ctx context.Context, id string, yes bool, scope c
 	// failure here means the tx below fails too — no card on a failed decision.
 	esc, escErr := e.Store.Reader().GetEscalation(id)
 	if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
-		return tx.DecideConfirm(id, yes, scope, core.Event{Kind: "confirm_dec", Payload: `{"decided_by":"human"}`})
+		return tx.DecideConfirm(id, yes, scope, core.Event{Kind: "confirm_dec", Actor: "operator", Payload: `{"decided_by":"human"}`})
 	}); err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (e *Engine) DecideConfirm(ctx context.Context, id string, yes bool, scope c
 		if yes {
 			decision = "approved"
 		}
-		e.notifyCard(notify.Card{
+		e.notifyCard(esc.SessionID, notify.Card{
 			Level: notify.LevelInfo,
 			Title: "arco: escalation answered — " + esc.WorkerID,
 			Body:  fmt.Sprintf("worker: %s\ndecision: %s", esc.WorkerID, decision),

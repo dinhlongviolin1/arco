@@ -58,6 +58,7 @@ func TestBrain_Question_OpensEscalation(t *testing.T) {
 func TestBrain_RunAgain_PromptsWorker(t *testing.T) {
 	e, s, fake := brainEngine(t, `{"kind":"run_again","instruction":"keep going"}`, nil)
 	id := dispatchRunning(t, e)
+	setMode(t, s, id, core.ModeAuto) // acting steps only execute in auto (D9)
 	require.NoError(t, e.ApplyEvent(context.Background(), ambiguousEvent(id)))
 	e.Exec.Wait()
 	w, _ := s.Reader().GetWorker(id)

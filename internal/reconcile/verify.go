@@ -29,12 +29,13 @@ func (e *Engine) Verify(ctx context.Context, workerID string, expectedRev int64,
 	if actor == "" {
 		actor = "human"
 	}
-	var base, head string
+	var base, head, sess string
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
 		}
+		sess = w.OwnerSession
 		if w.State != core.WorkerCompletedCandidate {
 			return fmt.Errorf("%w: verify requires completed_candidate, got %s", core.ErrIllegalTransition, w.State)
 		}
@@ -53,7 +54,7 @@ func (e *Engine) Verify(ctx context.Context, workerID string, expectedRev int64,
 		return err
 	}
 	// POST-COMMIT: the diff gate passed — a blessed worker is worth an info card.
-	e.notifyCard(notify.Card{
+	e.notifyCard(sess, notify.Card{
 		Level: notify.LevelInfo,
 		Title: "arco: worker verified — " + workerID,
 		Body:  fmt.Sprintf("worker: %s\nverified by %s (base %s → head %s)", workerID, actor, base, head),

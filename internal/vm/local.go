@@ -135,7 +135,7 @@ func (r sshRunner) command(ctx context.Context, name string, args ...string) *ex
 }
 
 // shellQuote renders s as a single POSIX-shell token: wrap in single quotes and
-// escape any embedded single quote as '\''. Inside single quotes every other
+// escape any embedded single quote as '\”. Inside single quotes every other
 // metacharacter (space, ; | & $ ` " \ newline, glob) is literal, so the remote
 // login shell ssh runs the command through cannot be broken out of. This is the
 // only generally-safe way to pass an untrusted argument to `ssh host cmd`.

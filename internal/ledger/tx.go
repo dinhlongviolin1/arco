@@ -277,6 +277,9 @@ func (t *txn) CreateSession(s core.Session) error {
 	if s.NotifyLevel == "" {
 		s.NotifyLevel = "important"
 	}
+	if s.SupervisionMode == "" {
+		s.SupervisionMode = core.ModeAssist // D9 default: notify + draft, never auto-act
+	}
 	// Scrub free-text session fields at rest (mirror CreateWorker's Task scrub).
 	// Goal is now surfaced into the brain prompt via context assembly, so a secret
 	// in the dispatch task must not persist unscrubbed here (qwen review).
@@ -294,13 +297,37 @@ func (t *txn) CreateSession(s core.Session) error {
 	_, err := t.q.ExecContext(context.Background(),
 		`INSERT INTO sessions (id,slug,title,goal,status,kind,parent_session,rev,perm_rev,mem_rev,permissions,
 		 context_summary,context_rev,facts,progress,repo,default_vm,pinned,notify_level,tg_topic_id,
-		 tg_status_msg_id,stall_count,last_activity_at,created_at,closed_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 tg_status_msg_id,stall_count,last_activity_at,created_at,closed_at,supervision_mode)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.ID, nullStr(s.Slug), s.Title, s.Goal, string(s.Status), string(s.Kind), nullStr(s.ParentSession),
 		s.Rev, s.PermRev, s.MemRev, s.Permissions, s.ContextSummary, s.ContextRev, s.Facts, s.Progress,
 		s.Repo, s.DefaultVM, pinned, s.NotifyLevel, s.TGTopicID, s.TGStatusMsgID, s.StallCount,
-		s.LastActivityAt, s.CreatedAt, nullStr(s.ClosedAt))
+		s.LastActivityAt, s.CreatedAt, nullStr(s.ClosedAt), string(s.SupervisionMode))
 	return err
+}
+
+// SetSessionMode sets a session's D9 supervision mode: validate BEFORE writing
+// (an unknown mode never reaches the UPDATE), bump the session rev (same
+// convention as SetSessionStatus), and append a `mode_change` event attributed
+// to actor naming the old + new mode — every mode flip is auditable.
+func (t *txn) SetSessionMode(id string, m core.SupervisionMode, actor string) error {
+	mode, err := core.ParseSupervisionMode(string(m))
+	if err != nil {
+		return err
+	}
+	cur, err := t.GetSession(id)
+	if err != nil {
+		return err
+	}
+	if _, err := t.q.ExecContext(context.Background(),
+		`UPDATE sessions SET supervision_mode=?, rev=rev+1, last_activity_at=? WHERE id=?`,
+		string(mode), t.now(), id); err != nil {
+		return err
+	}
+	return t.appendChecked(core.Event{
+		Kind: "mode_change", SessionID: id, Actor: actor,
+		Payload: fmt.Sprintf(`{"old":%q,"new":%q}`, cur.SupervisionMode, mode),
+	})
 }
 
 func (t *txn) SetSessionStatus(id string, to core.SessionStatus, expectedRev int64, e core.Event) error {
