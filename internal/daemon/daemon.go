@@ -19,6 +19,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/memory"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
@@ -104,6 +105,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.DefaultVM = cfg.DefaultVM
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
+	// Manual memory (USER.md + MEMORY.md) rooted next to the ledger, so the brain
+	// prompt and any hand-editing of those files see the SAME tree (T2.4).
+	eng.Memory = memory.New(filepath.Join(filepath.Dir(cfg.DBPath), "memory"))
 	eng.GitBin = "git"
 	eng.DefaultPool = cfg.DefaultPool
 	eng.LeaseTTL = cfg.LeaseTTL
