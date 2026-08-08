@@ -37,6 +37,18 @@ type Notify struct {
 	MinLevel string   `toml:"min_level"`
 }
 
+// Sandbox is the optional srt (anthropic-experimental/sandbox-runtime) wrapper
+// config, OFF by default: opting in prefixes a worker's command with `srt` so an
+// agent escape stays confined. PolicyPath is srt's settings file; empty means
+// srt's own default policy (~/.srt-settings.json), so enabled-without-policy is
+// a legal config — Load must not invent a requirement the sandbox doesn't have.
+// Enabling it makes the srt binary a HARD boot requirement (preflight
+// sandbox_srt_present): a silently-unsandboxed worker is worse than no boot.
+type Sandbox struct {
+	Enabled    bool   `toml:"enabled"`
+	PolicyPath string `toml:"policy_path"`
+}
+
 // Config is the fully-resolved daemon configuration. All durations are real
 // time.Duration values; the pinned operability defaults come from
 // build-guide-rev6 §C and are overridable via TOML or ARCO_* env vars.
@@ -77,6 +89,7 @@ type Config struct {
 	Telegram Telegram `toml:"telegram"`
 	Web      Web      `toml:"web"`
 	Notify   Notify   `toml:"notify"`
+	Sandbox  Sandbox  `toml:"sandbox"`
 }
 
 // Defaults returns a Config populated with the pinned build-guide defaults.
@@ -186,5 +199,13 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_LOCAL_VM"); v == "1" || v == "true" {
 		cfg.UseLocalVM = true
+	}
+	// Opt-in only (same one-way shape as ARCO_LOCAL_VM): the env can turn the
+	// sandbox ON, never off — no env typo can silently un-cage a configured fleet.
+	if v := os.Getenv("ARCO_SANDBOX"); v == "1" || v == "true" {
+		cfg.Sandbox.Enabled = true
+	}
+	if v := os.Getenv("ARCO_SANDBOX_POLICY"); v != "" {
+		cfg.Sandbox.PolicyPath = v
 	}
 }

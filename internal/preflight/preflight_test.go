@@ -62,7 +62,7 @@ func TestEvaluate_WideStateDirIsWarningNotFatal(t *testing.T) {
 func TestGather_DaemonStyleStateDirIsPrivate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
-	p := Gather(dir, dir, "", "")
+	p := Gather(dir, dir, "", "", false)
 	require.True(t, p.StateDirOK)
 	require.Equal(t, os.FileMode(0o700), p.StateDirMode.Perm(),
 		"MkdirAll(0700) state dir mode (if this isn't 0700, umask widened it)")
