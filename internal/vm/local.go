@@ -194,7 +194,7 @@ func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error)
 		// identity, so it carries the PID-reuse guard (AgentObs.BootID slot).
 		obs = append(obs, core.AgentObs{
 			Ref: a.PaneID, Workspace: a.WorkspaceID, BootID: a.TerminalID,
-			Alive: !terminalHerdrStatus[a.AgentStatus],
+			State: a.AgentStatus, Alive: !terminalHerdrStatus[a.AgentStatus],
 		})
 	}
 	return obs, nil

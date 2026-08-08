@@ -18,6 +18,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/api"
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/herdrsock"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
@@ -199,6 +200,43 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			}
 		}
 	}()
+
+	// herdr events.subscribe push subscriber (rev7 D1): a SECOND signal source
+	// feeding the same fusion path by AgentRef — the polling sweep above stays
+	// untouched as the authoritative fallback. Off by default (herdr_socket "").
+	// It joins the sweep's ctx+WaitGroup so shutdown drains it before store.Close.
+	if cfg.HerdrSocket != "" {
+		hc := &herdrsock.Client{
+			SocketPath: cfg.HerdrSocket,
+			OnAgentStatus: func(ev herdrsock.AgentStatusEvent) {
+				if err := eng.ApplyHerdrStatus(sweepCtx, ev.PaneID, ev.Status); err != nil {
+					log.Printf("arco: herdr push: %v", err)
+				}
+			},
+			OnResync: func(obs []core.AgentObs) {
+				// Re-seed fusion from the snapshot — push may have missed
+				// transitions while the socket was down. Ref-less entries can't
+				// correlate to a worker; skip them.
+				for _, o := range obs {
+					if o.Ref == "" {
+						continue
+					}
+					if err := eng.ApplyHerdrStatus(sweepCtx, o.Ref, o.State); err != nil {
+						log.Printf("arco: herdr resync: %v", err)
+					}
+				}
+			},
+			OnActivity: func(herdrsock.ActivityEvent) {
+				// T3.6: the human-activity back-off timer consumes these; dropped for now.
+			},
+			Logf: log.Printf,
+		}
+		sweepWG.Add(1)
+		go func() {
+			defer sweepWG.Done()
+			_ = hc.Run(sweepCtx) // returns promptly on sweepCancel (shutdown)
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
