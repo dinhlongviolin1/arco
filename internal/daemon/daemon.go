@@ -20,6 +20,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/herdrsock"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
+	"github.com/dinhlongviolin1/arco/internal/memory"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
@@ -44,10 +45,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 
 	// Security preflight (PASS-3): refuse to start in an unsafe posture — running
-	// as root, no git, a world-readable state dir, or network intake without a
-	// signing secret. arco enforces its half; the operator owns OS-user setup /
-	// branch protection.
-	pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), filepath.Dir(cfg.Socket), cfg.TCPAddr, cfg.IntakeSecret))
+	// as root, no git, a world-readable state dir, network intake without a
+	// signing secret, or an enabled [sandbox] with no srt binary. arco enforces
+	// its half; the operator owns OS-user setup / branch protection.
+	pf := preflight.Evaluate(preflight.Gather(filepath.Dir(cfg.DBPath), filepath.Dir(cfg.Socket), cfg.TCPAddr, cfg.IntakeSecret, cfg.Sandbox.Enabled))
 	if !pf.OK() {
 		return fmt.Errorf("daemon: preflight failed: %v", pf.Failures())
 	}
@@ -105,6 +106,9 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.DefaultVM = cfg.DefaultVM
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
+	// Manual memory (USER.md + MEMORY.md) rooted next to the ledger, so the brain
+	// prompt and any hand-editing of those files see the SAME tree (T2.4).
+	eng.Memory = memory.New(filepath.Join(filepath.Dir(cfg.DBPath), "memory"))
 	eng.GitBin = "git"
 	eng.DefaultPool = cfg.DefaultPool
 	eng.LeaseTTL = cfg.LeaseTTL

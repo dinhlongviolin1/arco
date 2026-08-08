@@ -93,7 +93,13 @@ func (e *Engine) brainClassify(ctx context.Context, workerID string) {
 	// thinner prompt, never a failed classification.
 	sess, _ := e.Store.Reader().GetSession(w.OwnerSession)
 	tail, _ := e.Store.Reader().RecentWorkerEvents(w.ID, contextEventTail)
-	prompt := assembleContext(w, sess, tail)
+	// Always-hot memory tiers (USER.md + MEMORY.md), best-effort: no store
+	// configured or a missing dir just yields empty strings and a thinner prompt.
+	userMD, indexMD := "", ""
+	if e.Memory != nil {
+		userMD, indexMD = e.Memory.LoadUserMemory()
+	}
+	prompt := assembleContext(w, sess, tail, userMD, indexMD)
 	if e.Redact != nil { // scrub BEFORE the prompt leaves for a third-party LLM
 		prompt, _ = e.Redact.Scrub(prompt)
 	}
@@ -140,37 +146,123 @@ func (e *Engine) markBrainResolved(ctx context.Context, workerID, cid string) {
 }
 
 const (
-	contextEventTail = 20   // how many recent events feed the decision prompt
+	// contextEventTail is how many recent events are FETCHED for the decision
+	// prompt. It is deliberately generous: contextBudget — not this count — is
+	// what bounds the prompt now, and the assembler fills the tail newest-first
+	// with whatever the budget affords (T2.4).
+	contextEventTail = 200
 	eventPayloadCap  = 200  // per-event payload truncation (bounds prompt size)
-	fieldCap         = 2000 // per free-text field (task/goal) cap (bounds prompt size)
+	fieldCap         = 2000 // per free-text field (task/goal/facts/summary) cap
+	memoryCap        = 1500 // per always-hot memory tier (USER.md / MEMORY.md) cap
+
+	// contextBudget is the hard ceiling on len(prompt) in bytes. Every input the
+	// brain sees is durable operator/ledger prose that can grow without bound
+	// (a session's Facts, a hand-written USER.md, a 200-event tail), so the
+	// assembler TRIMS to this budget rather than letting the prompt — and the
+	// per-call token bill — drift with whatever happens to be on disk.
+	contextBudget = 16384
+	// eventFloor is the slice of the budget reserved for the event tail: prose
+	// is capped so that AT LEAST this many bytes always remain for events, which
+	// are the highest-signal input (a stuck worker's most recent events say more
+	// than any amount of static context).
+	eventFloor = 4096
+
+	truncMarker = "…(truncated)"
+
+	// stepInstruction is the trailer that tells the brain what to emit. It is
+	// never trimmed — a prompt without it is a wasted call.
+	stepInstruction = "Decide the next step and reply with a JSON StepResult " +
+		`{"kind":"run_again|dispatch|handoff|final_output|question|confirm","instruction":"...","reason":"..."}.`
+
+	// maxProse bounds the whole pre-events region. The fixed per-section caps
+	// below already sum well under it; this is the backstop for the one input
+	// whose ENCODED size isn't statically bounded by its cap (a %q-quoted task
+	// full of escapes), so the budget holds no matter what the ledger holds.
+	// truncMarker+1 covers what the backstop truncate itself may append.
+	maxProse = contextBudget - len(stepInstruction) - eventFloor - len(truncMarker) - 1
+
+	eventsHeader = "Recent events (oldest→newest):\n"
 )
 
+// Compile-time proof that the fixed per-section caps (plus slack for the section
+// labels and the worker header's id/state/lineage) fit inside maxProse: if they
+// ever stop fitting, this constant goes negative and fails to compile as a uint
+// rather than silently starting to truncate the memory tier at runtime.
+const _ = uint(maxProse - (4*(fieldCap+len(truncMarker)) + 2*(memoryCap+len(truncMarker)) + 512))
+
 // assembleContext builds the side-effect-free decision prompt from the worker,
-// its owning session, and a chronological event tail. It is BYTE-STABLE: given
-// the same inputs it produces identical bytes (no clock reads, no map iteration,
-// events already ordered by id) so prompt_hash telemetry is deterministic over
-// the post-Scrub bytes (rev-4.1 #5). Payloads are already write-time scrubbed
-// (B4); e.Redact re-scrubs the whole prompt as belt-and-suspenders before it
-// leaves for the third-party LLM.
-func assembleContext(w core.Worker, s core.Session, events []core.Event) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Worker %s state=%s task=%q", w.ID, w.State, truncate(w.Task, fieldCap))
+// its owning session (goal + durable Facts/ContextSummary), the always-hot
+// memory tiers (userMD = USER.md, indexMD = MEMORY.md — passed in, so this stays
+// pure and does no I/O), and a chronological event tail. It is BYTE-STABLE:
+// given the same inputs it produces identical bytes (no clock reads, no map
+// iteration, events already ordered by id) so prompt_hash telemetry is
+// deterministic over the post-Scrub bytes (rev-4.1 #5). Payloads are already
+// write-time scrubbed (B4); e.Redact re-scrubs the whole prompt — memory files
+// included — as belt-and-suspenders before it leaves for the third-party LLM.
+//
+// The result is at most contextBudget bytes: each prose section has a fixed cap,
+// then events fill the remainder NEWEST-first (dropping the oldest that don't
+// fit) and are emitted oldest→newest.
+func assembleContext(w core.Worker, s core.Session, events []core.Event, userMD, indexMD string) string {
+	var p strings.Builder
+	fmt.Fprintf(&p, "Worker %s state=%s task=%q", w.ID, w.State, truncate(w.Task, fieldCap))
 	if w.DelegationDepth > 0 {
-		fmt.Fprintf(&b, " depth=%d parent=%s", w.DelegationDepth, w.ParentWorkerID)
+		fmt.Fprintf(&p, " depth=%d parent=%s", w.DelegationDepth, w.ParentWorkerID)
 	}
-	b.WriteByte('\n')
+	p.WriteByte('\n')
 	if s.Goal != "" {
-		fmt.Fprintf(&b, "Session goal: %s\n", truncate(s.Goal, fieldCap))
+		fmt.Fprintf(&p, "Session goal: %s\n", truncate(s.Goal, fieldCap))
 	}
-	if len(events) > 0 {
-		b.WriteString("Recent events (oldest→newest):\n")
-		for _, ev := range events {
-			fmt.Fprintf(&b, "  [%d] %s %s\n", ev.ID, ev.Kind, truncate(ev.Payload, eventPayloadCap))
+	// Durable session context the ledger has always carried but the prompt never
+	// showed, then the operator-authored memory tiers.
+	block(&p, "Session facts:", s.Facts, fieldCap)
+	block(&p, "Context summary:", s.ContextSummary, fieldCap)
+	block(&p, "User memory:", userMD, memoryCap)
+	block(&p, "Memory index:", indexMD, memoryCap)
+	prose := p.String()
+	if len(prose) > maxProse { // backstop; keeps the event floor intact
+		prose = truncate(prose, maxProse)
+	}
+	if !strings.HasSuffix(prose, "\n") {
+		prose += "\n"
+	}
+
+	var b strings.Builder
+	b.WriteString(prose)
+	// Whatever the prose left, minus the untrimmable trailer, is the event tail's.
+	if room := contextBudget - len(prose) - len(stepInstruction) - len(eventsHeader); room > 0 {
+		lines := make([]string, len(events))
+		first := len(events) // index of the oldest event that fits
+		for i := len(events) - 1; i >= 0; i-- {
+			ln := fmt.Sprintf("  [%d] %s %s\n", events[i].ID, events[i].Kind, truncate(events[i].Payload, eventPayloadCap))
+			if len(ln) > room {
+				break // older events are dropped wholesale; the newest survive
+			}
+			room -= len(ln)
+			lines[i], first = ln, i
+		}
+		if first < len(events) {
+			b.WriteString(eventsHeader)
+			for _, ln := range lines[first:] {
+				b.WriteString(ln)
+			}
 		}
 	}
-	b.WriteString("Decide the next step and reply with a JSON StepResult " +
-		`{"kind":"run_again|dispatch|handoff|final_output|question|confirm","instruction":"...","reason":"..."}.`)
+	b.WriteString(stepInstruction)
 	return b.String()
+}
+
+// block writes a "<label>\n<capped body>\n" section, or nothing at all when the
+// body is blank — an empty Facts/USER.md must not leave a dangling header.
+func block(b *strings.Builder, label, body string, limit int) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return
+	}
+	b.WriteString(label)
+	b.WriteByte('\n')
+	b.WriteString(truncate(body, limit))
+	b.WriteByte('\n')
 }
 
 // truncate bounds a payload to ~n bytes with an explicit marker (byte-stable).
@@ -183,7 +275,7 @@ func truncate(s string, n int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + "…(truncated)"
+	return s[:cut] + truncMarker
 }
 
 // applyStep reconciles a StepResult in a fresh tx (re-validating rev). Every

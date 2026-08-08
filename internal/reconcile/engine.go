@@ -17,6 +17,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/fusion"
+	"github.com/dinhlongviolin1/arco/internal/memory"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
@@ -43,6 +44,14 @@ type Engine struct {
 	// Redact scrubs the brain prompt before it leaves for a third-party LLM (the
 	// biggest exfil surface, build-guide B4). nil → no scrub.
 	Redact core.Scrubber
+
+	// Memory is the manual-memory store whose always-hot tier-1/2 (USER.md +
+	// MEMORY.md) is folded into the brain decision prompt (T2.4). Reads are
+	// best-effort: nil, or a dir that doesn't exist, simply contributes nothing —
+	// it can never fail a classification. The loaded text flows through Redact
+	// with the rest of the prompt (memory is operator-authored and may hold
+	// secrets).
+	Memory *memory.Store
 
 	// Notify receives push decision cards (escalation opened/answered/expired,
 	// worker lost/failed/verified). nil = disabled. Emits are POST-COMMIT and

@@ -86,3 +86,32 @@ exist.)
    the gate). A provider lease at spawn is still TODO (no pool selection policy).
 3. **`send-keys` key token.** Confirm `C-c` (Ctrl-C) is accepted for the
    best-effort `Kill`, or use the documented canonical key names.
+4. **Sandbox (`srt`) — arco cannot wrap the launch argv; the rollout is a herdr
+   agent manifest.** T2.2 landed the opt-in sandbox config (`[sandbox] enabled,
+   policy_path` + `ARCO_SANDBOX`/`ARCO_SANDBOX_POLICY`), the boot gate
+   (preflight `sandbox_srt_present`: CRITICAL when enabled, so a config that
+   promises confinement can never boot without the binary), and the pure argv
+   transformer `vm.SandboxWrap(enabled, srtBin, policyPath, argv)` →
+   `srt [--settings <path>] <argv…>`. What it did **not** do is prefix
+   `LocalVMClient.Launch`'s command, because herdr owns that command:
+   `agent start <NAME> --kind <KIND> --pane <ID> [--timeout <MS>]
+   [-- <AGENT_ARG>…]` (confirmed on herdr 0.7.5 via `agent start --help`, and
+   `AgentStartParams = {name, kind, pane_id, args, timeout_ms}` in
+   `herdr api schema --json`). `--kind` is a **closed enum** of supported agent
+   kinds (`pi, claude, codex, gemini, cursor, …`) whose canonical executable
+   herdr resolves and launches itself; the trailing `--` args are ARGUMENTS TO
+   THAT executable, not a command line. There is no per-start command/exec
+   override, so an `srt` prefix on that argv would be passed to the agent as a
+   flag instead of caging it — and it would break `agent start`'s detection
+   contract ("success means the expected agent was detected in the pane").
+   **Rollout path (operator work, not arco code):** herdr resolves agent kinds
+   from **agent manifests** (`agent_manifest_status` / `agent_manifest_reload`
+   in the API; `AgentManifestInfo` reports `source`, `source_kind` and
+   `local_override_shadowing_remote`, i.e. a local manifest may shadow the
+   bundled one). Define a manifest whose command is srt-wrapped — e.g. a
+   `claude` override running `srt --settings <policy> claude …` — reload it, and
+   point arco's worker `kind` at it. `SandboxWrap` stays the single place that
+   knows srt's argv shape, ready for the day a start-time command override (or a
+   manifest-generation step) exists; the guideline tests pin its properties, not
+   srt's flag spelling. Second-layer isolation (`systemd-run --user` transient
+   units, plan-rev7 D2) is likewise out of this seam's reach for the same reason.
