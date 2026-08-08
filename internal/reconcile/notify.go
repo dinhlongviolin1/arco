@@ -10,13 +10,17 @@ import (
 // notifyCard delivers one decision card POST-COMMIT, best-effort. A nil
 // sender (notifications unconfigured) drops the card; a send error is logged
 // and swallowed — a notification outage must never fail a reconcile path.
+// Async: a push is network I/O (shoutrrr HTTP), so it must never block a sweep
+// tick or an API response path (same reasoning as deliverDecision).
 func (e *Engine) notifyCard(c notify.Card) {
 	if e.Notify == nil {
 		return
 	}
-	if err := e.Notify.Send(e.bg(), c); err != nil {
-		log.Printf("arco: notify: send failed: %v", err)
-	}
+	go func() {
+		if err := e.Notify.Send(e.bg(), c); err != nil {
+			log.Printf("arco: notify: send failed: %v", err)
+		}
+	}()
 }
 
 // taskTail is the tail of a worker task for decision cards: the last 120
