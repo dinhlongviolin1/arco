@@ -25,7 +25,7 @@ These are implemented and tested — listed so you don't re-do them:
 | Repo-config quarantine | `internal/quarantine` | Renames aside repo-shipped `.claude`/`.mcp.json`/`.gitattributes`/`.gitmodules`/`.lfsconfig`, disables repo hooks + fsmonitor. |
 | Compiled worker permissions | `internal/permcompile` | `settings.json` + PreToolUse hook staged **outside** the worktree; high-blast caps never granted. |
 | Managed deny layer (content) | `permcompile.ManagedSettings` | Deny-only policy artifact for the managed path (see §3). |
-| Signed intake | `api` + `ARCO_INTAKE_SECRET` | HMAC-SHA256 on `POST /v1/events`; fails closed if TCP is set without a secret. |
+| Signed intake | `api` + `ARCO_INTAKE_SECRET` | HMAC-SHA256 on `POST /v1/events` with **per-worker HKDF-derived keys** (T3.4) — the master never rides the wire; fails closed if TCP is set without a secret. |
 
 ---
 
@@ -109,8 +109,25 @@ socket** (trusted via the `0700` dir). For **any network / cross-VM** intake:
   the TOML value, in that order — **file > env > TOML**. A credential file is
   encrypted at rest by systemd and never appears in env or argv. See
   `packaging/arco.service.example` for the `LoadCredential=` lines.
+- **Per-worker keys (T3.4):** the master never authenticates a delivery. Each
+  worker signs with its own derived key
+  `hex(HKDF-SHA256(secret=master, salt=nil, info="arco/intake/v1|"+workerID, L=32))`
+  (`internal/intakekey.Derive`). Spawn hands the derived key to the worker as
+  the `$CREDENTIALS_DIRECTORY/intake_key` cred file (`0600`, the T2.3 file
+  model — never env/argv); the `arco hook` bridge signs with that file when
+  present, else derives from the configured master. The raw master (or another
+  worker's key) on the wire → 401, so one compromised worker cannot forge
+  events for the fleet.
+- `worker_ref` must be the worker **id**. Workspace-name refs (the guessable
+  `arco_<id>` convention) no longer resolve a worker — they are refused with
+  403 and audited (`intake_denied`, deduped on the delivery id), in signed and
+  unsigned modes alike.
 - herdr / any cross-VM poster must send `X-Arco-Signature: sha256=<hmac>` over
-  the exact request body.
+  the exact request body, keyed with that worker's derived key.
+- **Rotation:** rotate the master and every derived worker key rotates with it.
+  A worker receives its key only at spawn, so in-flight workers keep signing
+  with the stale key and will 401 — **respawn workers after rotating the
+  master**.
 - **Not yet wired:** binding a TCP listener. When you add one, do **not** expose
   the raw mux — `dispatch`/`verify`/`escalations{answer,confirm}` are
   unauthenticated (socket-trust). Serve only `/v1/events` (+ read-only GETs) over

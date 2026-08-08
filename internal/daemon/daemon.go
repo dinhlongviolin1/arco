@@ -159,6 +159,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	// TCP listener is added (opus review, MED latent gap).
 	srv := api.New(store, eng)
 	srv.SetIntakeSecret(cfg.IntakeSecret)
+	// Spawn hands each worker its DERIVED intake key as a cred file (T3.4); the
+	// intake above verifies against the same derivation. The master never
+	// reaches a worker.
+	eng.IntakeMaster = cfg.IntakeSecret
 	// Observability (rev7/T2.5): GET /metrics on the same socket-served mux.
 	// The fleet gauges read the ledger at scrape time; the runtime instruments
 	// are fed from here (sweep duration) and from the engine seam below (brain

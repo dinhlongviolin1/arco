@@ -10,6 +10,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/intakekey"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/permcompile"
 	"github.com/dinhlongviolin1/arco/internal/quarantine"
@@ -258,14 +259,15 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 	// model; arco's OWN pointer was stripped by the scrub above). Fail the spawn
 	// on a resolve or write error rather than launch an unauthenticated worker.
 	// Inert when no profile / no Creds resolver / no creds resolved.
+	credDir := filepath.Join(root, "creds")
+	haveCredFiles := false
 	if credProfile != "" && e.Creds != nil {
 		cenv, cerr := e.Creds.EnvFor(ctx, credProfile)
 		if cerr != nil {
 			return cleanup(cerr, "credentials")
 		}
 		if len(cenv) > 0 {
-			credDir := filepath.Join(root, "creds")
-			if err := os.Mkdir(credDir, 0o700); err != nil {
+			if err := os.MkdirAll(credDir, 0o700); err != nil {
 				return cleanup(err, "credentials")
 			}
 			for _, kv := range cenv {
@@ -280,8 +282,26 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, workspace, repo, base, 
 					return cleanup(err, "credentials")
 				}
 			}
-			env = append(env, "CREDENTIALS_DIRECTORY="+credDir)
+			haveCredFiles = true
 		}
+	}
+	// Per-worker intake key (T3.4): the worker signs its /v1/events deliveries
+	// with a key DERIVED from the intake master — handed over as a cred file
+	// like the pool creds above (never env/argv), even when the pool resolves
+	// no creds. A write error fails the spawn pre-launch: an unkeyed worker
+	// could never authenticate a delivery.
+	if e.IntakeMaster != "" {
+		if err := os.MkdirAll(credDir, 0o700); err != nil {
+			return cleanup(err, "intake key")
+		}
+		if err := os.WriteFile(filepath.Join(credDir, "intake_key"),
+			[]byte(intakekey.Derive(e.IntakeMaster, workerID)), 0o600); err != nil {
+			return cleanup(err, "intake key")
+		}
+		haveCredFiles = true
+	}
+	if haveCredFiles {
+		env = append(env, "CREDENTIALS_DIRECTORY="+credDir)
 	}
 	spec := core.LaunchSpec{
 		Name: workspace, Kind: "claude", Workdir: wt,

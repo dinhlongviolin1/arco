@@ -14,14 +14,19 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/dinhlongviolin1/arco/internal/api"
+	"github.com/dinhlongviolin1/arco/internal/intakekey"
 )
 
 // Client talks to the daemon at a unix socket path.
 type Client struct {
 	hc           *http.Client
-	intakeSecret string // when set, HMAC-signs POST /v1/events (P4)
+	intakeSecret string // master; derives the per-worker signing key (T3.4)
+	intakeKey    string // the worker's own key (from its cred file); wins over derivation
 }
 
 // New returns a Client dialing the given unix socket.
@@ -38,7 +43,41 @@ func New(socket string) *Client {
 // SetIntakeSecret makes the client HMAC-sign POST /v1/events. Set from
 // cfg.IntakeSecret so the local `arco hook` bridge keeps working once a shared
 // intake secret is configured (else the server's P4 gate 401s the local hook).
+// Since T3.4 the wire key is DERIVED per worker from this master.
 func (c *Client) SetIntakeSecret(s string) { c.intakeSecret = s }
+
+// SetIntakeKey installs the worker's OWN intake key (the spawn-time
+// creds-dir file, see IntakeKeyFromEnv) to sign POST /v1/events verbatim.
+// This is how spawned workers sign: they hold their key, never the master.
+func (c *Client) SetIntakeKey(k string) { c.intakeKey = k }
+
+// IntakeKeyFromEnv reads the per-worker intake key a spawned worker was handed
+// at $CREDENTIALS_DIRECTORY/intake_key; "" when the pointer or file is absent
+// (not a spawned worker's hook environment).
+func IntakeKeyFromEnv() string {
+	dir := os.Getenv("CREDENTIALS_DIRECTORY")
+	if dir == "" {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "intake_key"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// intakeSigningKey picks the key for a /v1/events body: the worker's own key
+// file when present, else derived from the master + the event's worker ref
+// (T3.4 — the raw master never authenticates on the wire).
+func (c *Client) intakeSigningKey(in any) string {
+	if c.intakeKey != "" {
+		return c.intakeKey
+	}
+	if ev, ok := in.(api.EventReq); ok {
+		return intakekey.Derive(c.intakeSecret, ev.WorkerRef)
+	}
+	return ""
+}
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body io.Reader
@@ -60,10 +99,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	// Sign the intake body so the server's P4 HMAC gate accepts a locally-posted
 	// event (the hook bridge) once a shared secret is configured. Only /v1/events
 	// is verified server-side; signing it over the EXACT marshaled bytes.
-	if c.intakeSecret != "" && path == "/v1/events" && raw != nil {
-		mac := hmac.New(sha256.New, []byte(c.intakeSecret))
-		mac.Write(raw)
-		req.Header.Set("X-Arco-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+	if path == "/v1/events" && raw != nil {
+		if key := c.intakeSigningKey(in); key != "" {
+			mac := hmac.New(sha256.New, []byte(key))
+			mac.Write(raw)
+			req.Header.Set("X-Arco-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		}
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {

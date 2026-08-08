@@ -80,7 +80,10 @@ func newClient() (*client.Client, error) {
 		return nil, err
 	}
 	c := client.New(cfg.Socket)
-	c.SetIntakeSecret(cfg.IntakeSecret) // sign /v1/events so the local hook works under P4
+	// Sign /v1/events with the worker's own key file when this is a spawned
+	// worker's hook environment, else derive from the configured master (T3.4).
+	c.SetIntakeKey(client.IntakeKeyFromEnv())
+	c.SetIntakeSecret(cfg.IntakeSecret)
 	return c, nil
 }
 

@@ -99,13 +99,21 @@ func TestSignedIntake_LocalHookWorksUnderP4(t *testing.T) {
 		return err == nil && h.Status == "ok"
 	}, 5*time.Second, 20*time.Millisecond)
 
-	// signed → accepted (202 for unknown worker_ref; the point is it's NOT 401)
-	_, err := signed.PostEvent(context.Background(), api.EventReq{WorkerRef: "unknown", SourceEventID: "e1"})
+	// The client derives the worker's key from the master (T3.4), so the signed
+	// local hook is accepted for a real worker.
+	d, err := signed.Dispatch(context.Background(), api.DispatchReq{Task: "x", New: true})
+	require.NoError(t, err)
+	_, err = signed.PostEvent(context.Background(), api.EventReq{WorkerRef: d.WorkerID, SourceEventID: "e1"})
 	require.NoError(t, err, "a signed local event is accepted under P4")
+
+	// Unknown worker_ref in signed mode → 401 (no worker, no derivable key; T3.4).
+	_, err = signed.PostEvent(context.Background(), api.EventReq{WorkerRef: "unknown", SourceEventID: "e2"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "401")
 
 	// unsigned client → 401
 	unsigned := client.New(cfg.Socket)
-	_, err = unsigned.PostEvent(context.Background(), api.EventReq{WorkerRef: "unknown", SourceEventID: "e2"})
+	_, err = unsigned.PostEvent(context.Background(), api.EventReq{WorkerRef: d.WorkerID, SourceEventID: "e3"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "401", "an unsigned event is rejected under P4")
 
