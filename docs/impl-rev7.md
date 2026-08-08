@@ -60,6 +60,21 @@ daemon restart leaves those sessions in `assist`, which fails toward less
 autonomy. **Invariant:** arco never calls a pane-focus op (in `auto` least of
 all), so a focus event always means a human is present.
 
+T3.2 shipped as `internal/mergeq`: config gate `merge_queue` (default off, with
+optional `merge_queue_test_cmd`) has the sweep ticker drain a ledger-backed FIFO
+queue, strictly one item per `ProcessNext`. Items are EVENT-SOURCED
+(`mergeq_enqueued`/`mergeq_merged`/`mergeq_kicked` events reconstructed via
+`EventsSince` — no new migration), so a restarted daemon resumes exactly where
+it left off. Integration happens in a scratch clone of the worktree's `origin`
+(the worker's own worktree is never touched): clone → merge the head fetched
+from the worktree → optional test gate → push main. A landed merge appends ONE
+`verification_artifact` (deduped on `mergeq:<worker>:<head>`, like T3.1);
+conflict/red-gate/denied-push kick the item back with one pending `confirm`
+escalation carrying the git error — a non-bare target refusing its checked-out
+branch is a kickback, never a crash (see deployment-hardening §11). Merging is
+evidence only: the worker stays `completed_candidate`. CLI: `arco queue
+<worker>` / `arco queue list` over `POST|GET /v1/queue` (503 when disabled).
+
 T3.1 shipped as `internal/reconcile/civerify.go` (not verify.go — the human diff-gate stays untouched): config gate `ci_check_runs` (default off) has the sweep poll `gh api .../check-runs` inside the candidate's worktree; green → one ledger-deduped `verification_artifact` per (worker, head SHA), idempotent across restarts; red → one pending `confirm` escalation; pending/zero-runs/gh-error → retry next sweep. CI success is evidence only — the worker stays `completed_candidate`.
 
 ## M4 — Close-out

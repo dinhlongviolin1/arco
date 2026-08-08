@@ -21,6 +21,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/herdrsock"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
 	"github.com/dinhlongviolin1/arco/internal/memory"
+	"github.com/dinhlongviolin1/arco/internal/mergeq"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
@@ -178,6 +179,14 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if cfg.CICheckRuns {
 		eng.CI = reconcile.CICfg{Enabled: true, Runner: reconcile.NewGHRunner("gh")}
 	}
+	// Verification leg 2 (rev7/T3.2), opt-in: the in-daemon merge queue. Items
+	// are enqueued via POST /v1/queue and processed serially from the sweep
+	// ticker below — no per-item goroutines; serialized integration is the point.
+	var mq *mergeq.Queue
+	if cfg.MergeQueue {
+		mq = mergeq.New(store, mergeq.Config{TestCmd: cfg.MergeQueueTestCmd})
+		srv.EnableMergeQueue(mq)
+	}
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
@@ -222,6 +231,19 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 				start := time.Now()
 				_, _ = eng.Sweep(sweepCtx)
 				metrics.SweepDone(time.Since(start))
+				// Drain the merge queue strictly one item at a time on the sweep
+				// cadence (rev7/T3.2) — an error leaves the item pending for the
+				// next tick rather than looping hot.
+				for mq != nil {
+					ok, err := mq.ProcessNext(sweepCtx)
+					if err != nil {
+						log.Printf("arco: mergeq: %v", err)
+						break
+					}
+					if !ok {
+						break
+					}
+				}
 			}
 		}
 	}()

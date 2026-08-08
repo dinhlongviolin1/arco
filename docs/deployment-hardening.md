@@ -251,6 +251,17 @@ lease_ttl    = "1h"
 # verification_artifact evidence event, red → a confirm escalation. The human
 # diff-gate (`arco verify`) remains the only path to completed_verified.
 ci_check_runs = false
+# Optional (rev7/T3.2): in-daemon merge queue — `arco queue <worker>` enqueues a
+# candidate head; the sweep serially clones the target, merges, runs the test
+# gate, and pushes main. A landed merge is EVIDENCE (verification_artifact);
+# conflicts/red tests/denied pushes kick back as a confirm escalation.
+# NOTE: the queue pushes to the worktree's `origin`. A NON-BARE target repo
+# with main checked out denies that push by default (receive.denyCurrentBranch)
+# — arco surfaces it as a kickback with the git error, never a half-merged
+# state. Point workers at a bare repo or a real remote, or set the target's
+# receive.denyCurrentBranch policy deliberately.
+merge_queue = false
+# merge_queue_test_cmd = ["go", "test", "./..."]   # optional gate, run in the integration clone
 # Optional (rev7/T3.6): D9 human-activity back-off tuning. Defaults shown.
 self_op_window          = "5s"    # activity this soon after arco touched a pane is arco's own echo
 activity_restore_after  = "20m"   # quiet period before an activity-demoted session returns to auto
