@@ -81,6 +81,15 @@ type Config struct {
 	// shelling out to gh from the daemon is opt-in.
 	CICheckRuns bool `toml:"ci_check_runs"`
 
+	// MergeQueue opts in to verification leg 2 (rev7/T3.2): the in-daemon merge
+	// queue that serially integrates enqueued candidate heads into their target
+	// repo's main (clone → merge → optional test gate → push), driven from the
+	// sweep cadence. Off by default — pushing to operator repos is opt-in.
+	// MergeQueueTestCmd is the optional test gate (argv), run in the integration
+	// workspace; a non-zero exit kicks the item back.
+	MergeQueue        bool     `toml:"merge_queue"`
+	MergeQueueTestCmd []string `toml:"merge_queue_test_cmd"`
+
 	// Pinned operability defaults (build-guide-rev6 §C).
 	MaxBrainCalls         int           `toml:"max_brain_calls"`
 	SweepInterval         time.Duration `toml:"sweep_interval"`

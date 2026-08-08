@@ -412,6 +412,50 @@ func newConfirmCmd() *cobra.Command {
 	return cmd
 }
 
+// newQueueCmd enqueues a completed_candidate worker's head onto the merge
+// queue (rev7/T3.2); `arco queue list` shows the queue in FIFO order. The
+// daemon processes items serially on its sweep cadence.
+func newQueueCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "queue <worker-id>",
+		Short: "enqueue a worker's head for serialized merge into its repo's main (merge_queue = true)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.EnqueueMerge(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "queued %s\n", res.ID)
+			return nil
+		},
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "list merge-queue items in FIFO order",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.QueueItems(context.Background())
+			if err != nil {
+				return err
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tWORKER\tREPO\tHEAD\tSTATUS")
+			for _, it := range res.Items {
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", it.ID, it.Worker, it.Repo, it.Head, it.Status)
+			}
+			return tw.Flush()
+		},
+	})
+	return cmd
+}
+
 // newHookCmd posts a herdr-style state change to the daemon. This is what the
 // herdr plugin-hook shells out to (the PASS-2 intake bridge).
 func newHookCmd() *cobra.Command {

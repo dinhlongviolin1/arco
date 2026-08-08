@@ -199,6 +199,20 @@ func (c *Client) Diff(ctx context.Context, workerID string) (api.DiffResp, error
 	return r, err
 }
 
+// EnqueueMerge puts a worker's head on the merge queue (rev7/T3.2).
+func (c *Client) EnqueueMerge(ctx context.Context, workerID string) (api.QueueEnqueueResp, error) {
+	var r api.QueueEnqueueResp
+	err := c.do(ctx, http.MethodPost, "/v1/queue", api.QueueReq{Worker: workerID}, &r)
+	return r, err
+}
+
+// QueueItems lists the merge queue in FIFO order.
+func (c *Client) QueueItems(ctx context.Context) (api.QueueResp, error) {
+	var r api.QueueResp
+	err := c.do(ctx, http.MethodGet, "/v1/queue", nil, &r)
+	return r, err
+}
+
 // Escalations lists escalations (status defaults to pending server-side).
 func (c *Client) Escalations(ctx context.Context) (api.EscalationsResp, error) {
 	var r api.EscalationsResp

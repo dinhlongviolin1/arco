@@ -18,6 +18,7 @@ import (
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/intakekey"
+	"github.com/dinhlongviolin1/arco/internal/mergeq"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 )
 
@@ -31,7 +32,12 @@ type Server struct {
 	eng          *reconcile.Engine
 	mux          *http.ServeMux
 	intakeSecret string // HMAC key for signed intake (P4); "" = unauthenticated (socket-only)
+	mq           *mergeq.Queue
 }
+
+// EnableMergeQueue installs the merge queue behind /v1/queue (rev7/T3.2).
+// Unset (merge_queue = false), those routes answer 503.
+func (s *Server) EnableMergeQueue(q *mergeq.Queue) { s.mq = q }
 
 // SetIntakeSecret installs the shared secret for HMAC-signed event intake
 // (security precondition P4). Set once at startup; when set, every POST
@@ -54,6 +60,8 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("POST /v1/workers/{id}/verify", s.verify)
 	s.mux.HandleFunc("POST /v1/workers/{id}/kill", s.killWorker)
 	s.mux.HandleFunc("POST /v1/workers/{id}/redeliver", s.redeliver)
+	s.mux.HandleFunc("POST /v1/queue", s.queueEnqueue)
+	s.mux.HandleFunc("GET /v1/queue", s.queueList)
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
@@ -210,6 +218,24 @@ type DiffResp struct {
 type VerifyReq struct {
 	ExpectedRev int64  `json:"expected_rev"`
 	Actor       string `json:"actor"`
+}
+
+// QueueReq enqueues a worker's head onto the merge queue (rev7/T3.2).
+type QueueReq struct {
+	Worker string `json:"worker"`
+}
+type QueueEnqueueResp struct {
+	ID string `json:"id"`
+}
+type QueueItemDTO struct {
+	ID     string `json:"id"`
+	Worker string `json:"worker"`
+	Repo   string `json:"repo"`
+	Head   string `json:"head"`
+	Status string `json:"status"`
+}
+type QueueResp struct {
+	Items []QueueItemDTO `json:"items"`
 }
 
 // ---- handlers --------------------------------------------------------------
@@ -633,6 +659,49 @@ func (s *Server) redeliver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, DecisionResp{OK: true})
+}
+
+// queueEnqueue puts a worker on the merge queue; processing itself happens on
+// the daemon's sweep cadence, never inline in the request.
+func (s *Server) queueEnqueue(w http.ResponseWriter, r *http.Request) {
+	if s.mq == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("merge queue disabled (set merge_queue = true)"))
+		return
+	}
+	var req QueueReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Worker == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("worker required"))
+		return
+	}
+	id, err := s.mq.Enqueue(r.Context(), req.Worker)
+	if err != nil {
+		writeErr(w, errStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, QueueEnqueueResp{ID: id})
+}
+
+func (s *Server) queueList(w http.ResponseWriter, r *http.Request) {
+	if s.mq == nil {
+		writeErr(w, http.StatusServiceUnavailable, errors.New("merge queue disabled (set merge_queue = true)"))
+		return
+	}
+	items, err := s.mq.Items(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := QueueResp{Items: []QueueItemDTO{}}
+	for _, it := range items {
+		out.Items = append(out.Items, QueueItemDTO{
+			ID: it.ID, Worker: it.WorkerID, Repo: it.Repo, Head: it.Head, Status: it.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listEscalations(w http.ResponseWriter, r *http.Request) {
