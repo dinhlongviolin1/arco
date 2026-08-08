@@ -132,7 +132,7 @@ func TestActivity_DeliverInitialTaskMarksSelfOp(t *testing.T) {
 	setAgentRef(t, s, id, "wA:x6")
 	setMode(t, s, id, core.ModeAuto)
 
-	e.deliverInitialTask(context.Background(), id, sessionOf(t, s, id), "wA:x6", "task")
+	e.deliverInitialTask(context.Background(), e.VM, id, sessionOf(t, s, id), "wA:x6", "task")
 	require.NoError(t, e.ApplyHumanActivity(context.Background(), "wA:x6"))
 	require.Equal(t, core.ModeAuto, workerMode2(t, s, id))
 }

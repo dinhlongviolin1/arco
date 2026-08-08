@@ -129,6 +129,14 @@ type Engine struct {
 	DefaultVM       string
 	MaxWorkersPerVM int
 
+	// VMs is the named-VM registry (rev7/T3.3), built by the daemon from the
+	// configured fleet ([[vms]] → vm.NewRemote per host). nil = routing OFF:
+	// today's single-client behavior, VM names stay pure labels. Non-nil =
+	// routing ON: every op that acts on a specific worker resolves through
+	// vmFor — its entry, or e.VM for "" — and a named VM with no entry is
+	// ErrUnknownVM, never a silent fallback to the local client.
+	VMs map[string]core.VMClient
+
 	// RollupInterval coalesces supersession rollups: at most one rollup brain call
 	// per session per interval when its children complete (0 = rollup disabled).
 	RollupInterval time.Duration
@@ -229,12 +237,18 @@ type DispatchResult struct {
 // dispatch_done + transition to running. A crash between intent and done leaves a
 // recoverable worker with no dispatch_done (boot recovery re-drives — later pass).
 func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSession bool) (DispatchResult, error) {
+	// Resolve the assigned VM's client BEFORE any durable write or launch: with
+	// routing on, an unresolvable VM refuses the dispatch outright (T3.3).
+	vmc, err := e.vmFor(e.DefaultVM)
+	if err != nil {
+		return DispatchResult{}, err
+	}
 	workerID := ulid.Make().String()
 	workspace := "arco_" + workerID
 	var sessionID string
 
 	// Phase 1: durable intent + worker row (before any external side effect).
-	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
 		if newSession {
 			sessionID = ulid.Make().String()
 			if err := tx.CreateSession(core.Session{
@@ -277,7 +291,7 @@ func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSessi
 	}
 
 	// Phases 2+3: launch the agent + durable result/state.
-	finalState, err := e.launchAndFinalize(ctx, workerID, workspace, sessionID, task)
+	finalState, err := e.launchAndFinalize(ctx, vmc, workerID, workspace, sessionID, task)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -305,15 +319,16 @@ func (e *Engine) admitVM(tx core.Tx, vm string) error {
 }
 
 // launchAndFinalize performs the external launch (phase 2) then the durable
-// dispatch_done transition (phase 3) shared by Dispatch and Delegate. A launch
+// dispatch_done transition (phase 3) shared by Dispatch and Delegate, on the
+// worker's assigned VM client (vmc, resolved by the caller pre-intent). A launch
 // error is resolved by liveness (the agent may have spawned before the error
 // surfaced) rather than blindly marking failed over a live process.
-func (e *Engine) launchAndFinalize(ctx context.Context, workerID, workspace, sessionID, task string) (core.WorkerState, error) {
-	launchErr := e.VM.Prompt(ctx, workspace, task)
+func (e *Engine) launchAndFinalize(ctx context.Context, vmc core.VMClient, workerID, workspace, sessionID, task string) (core.WorkerState, error) {
+	launchErr := vmc.Prompt(ctx, workspace, task)
 	finalState := core.WorkerRunning
 	if launchErr != nil {
 		finalState = core.WorkerFailed
-		if agents, aerr := e.VM.ListAgents(ctx); aerr == nil {
+		if agents, aerr := vmc.ListAgents(ctx); aerr == nil {
 			for _, a := range agents {
 				if a.Alive && a.Workspace == workspace {
 					finalState = core.WorkerRunning
@@ -469,7 +484,7 @@ func isWaiting(s core.WorkerState) bool {
 // This is the operator's way to terminate a runaway/wedged worker + reclaim its
 // agent (capstone audit MED-3).
 func (e *Engine) KillWorker(ctx context.Context, workerID string) error {
-	var ref string
+	var ref, vmName string
 	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
@@ -481,7 +496,7 @@ func (e *Engine) KillWorker(ctx context.Context, workerID string) error {
 		if !core.LegalWorkerTransition(w.State, core.WorkerKilled) {
 			return fmt.Errorf("%w: cannot kill from %s", core.ErrIllegalTransition, w.State)
 		}
-		ref = w.AgentRef
+		ref, vmName = w.AgentRef, w.VM
 		if _, err := tx.ExpirePendingForWorker(workerID); err != nil {
 			return err
 		}
@@ -494,7 +509,13 @@ func (e *Engine) KillWorker(ctx context.Context, workerID string) error {
 		return err
 	}
 	if ref != "" {
-		_ = e.VM.Kill(ctx, ref) // best-effort: stop the agent + reclaim its pane
+		// Best-effort: stop the agent + reclaim its pane, ON THE WORKER'S VM —
+		// pane ids are per-host, so another VM's client must never see this ref.
+		// An unresolvable VM leaves nothing to stop with (the ledger kill stands;
+		// the agent, if any, awaits the fleet being fixed + the orphan reaper).
+		if vmc, verr := e.vmFor(vmName); verr == nil {
+			_ = vmc.Kill(ctx, ref)
+		}
 	}
 	return nil
 }

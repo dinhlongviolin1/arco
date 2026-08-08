@@ -99,113 +99,119 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 			}
 		}
 	}
-	var live []core.Worker
-	worktrees := map[string]bool{}
-	for _, w := range all {
-		// Skip workers whose agent should no longer be running (agentReclaimable):
-		// their agent is intentionally reclaimed (below), so its absence is EXPECTED,
-		// not a liveness death — including them would finalize a paused worker to
-		// `lost` and defeat the pause.
-		if agentReclaimable(w, pendingEsc) {
+	if len(all) == 0 {
+		return res, nil // no workers at all → skip the herdr agent-list calls entirely
+	}
+	// Group the workers by the VM that owns their agent (T3.3): pane ids are
+	// per-host, so each worker is correlated ONLY against ITS OWN VM's ListAgents
+	// (a same-ref agent on a different VM is someone else's), and GitHeads runs
+	// once per VM over that VM's worktrees. With no registry there is exactly one
+	// group on e.VM — today's single-client behavior unchanged.
+	for _, g := range e.sweepGroups(all, pendingEsc) {
+		if g.client == nil {
+			continue // registry gap (unknown VM): unobservable — never finalize on it
+		}
+		// One agent list per VM serves both the orphan reaper (terminal workers)
+		// and the liveness loop, fetched whenever the VM has ANY worker — reaping
+		// an orphan must run even when every worker is terminal. A ListAgents
+		// error keeps today's transient-noise posture, PER VM: this sweep observes
+		// nothing for THIS VM's workers (no misses, no finalize) — one host's
+		// dropped ssh must not mass-finalize its fleet. Routing off = one group,
+		// so the error is the whole sweep's, exactly as before.
+		agents, err := g.client.ListAgents(ctx)
+		if err != nil {
+			if e.VMs == nil {
+				return res, err
+			}
 			continue
 		}
-		live = append(live, w)
-		worktrees[headKey(w)] = true
-	}
-	if len(all) == 0 {
-		return res, nil // no workers at all → skip the herdr agent-list call entirely
-	}
+		// Stop agents still alive on a worker whose agent should no longer run —
+		// TERMINAL (the kill crash-orphan, or a worker finalized lost/failed with a
+		// lingering pane) OR PAUSED-without-a-pending-escalation (auto-kill-on-pause:
+		// a worker paused by pool-TTL / escalation-timeout has only an idle agent
+		// burning quota; its worktree is preserved). Identity-strict, so it never
+		// closes a stranger's recycled pane. Runs before the liveness loop and even
+		// when the VM has no live workers.
+		res.AgentsReaped += e.reapOrphanedAgents(ctx, g.client, g.all, agents, pendingEsc)
 
-	// One agent list serves both the orphan reaper (terminal workers) and the
-	// liveness loop (live workers), so fetch it whenever ANY worker exists —
-	// reaping an orphan must run even when every worker is terminal.
-	agents, err := e.VM.ListAgents(ctx)
-	if err != nil {
-		return res, err
-	}
-	// Stop agents still alive on a worker whose agent should no longer run —
-	// TERMINAL (the kill crash-orphan, or a worker finalized lost/failed with a
-	// lingering pane) OR PAUSED-without-a-pending-escalation (auto-kill-on-pause: a
-	// worker paused by pool-TTL / escalation-timeout has only an idle agent burning
-	// quota; its worktree is preserved). Identity-strict, so it never closes a
-	// stranger's recycled pane. Runs before the liveness loop and even when
-	// len(live)==0.
-	res.AgentsReaped = e.reapOrphanedAgents(ctx, all, agents, pendingEsc)
-
-	if len(live) == 0 {
-		return res, nil
-	}
-	lookupAlive := aliveLookup(agents)
-	var wts []string
-	for wt := range worktrees {
-		wts = append(wts, wt)
-	}
-	heads := map[string]string{}
-	if len(wts) > 0 {
-		if heads, err = e.VM.GitHeads(ctx, wts); err != nil {
-			return res, err
+		if len(g.live) == 0 {
+			continue
 		}
-	}
-
-	for _, w := range live {
-		res.Observed++
-		obs, alive := lookupAlive(w)
-		// identity check: if we recorded a boot/pid-start, it must match (guards PID reuse).
-		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
-			alive = false
+		lookupAlive := aliveLookup(agents)
+		var wts []string
+		for wt := range g.worktrees {
+			wts = append(wts, wt)
 		}
-		headNow := heads[headKey(w)]
-		headChanged := headNow != "" && headNow != w.HeadCommit
-
-		if alive {
-			e.resetMiss(w.ID)
-			// Identity is established ONCE, at launch (BindLaunch). Observation only
-			// CONFIRMS it, never ESTABLISHES a new one: if launch-capture missed
-			// (w.BootID==""), we must NOT stamp the observed agent's terminal_id onto
-			// the row, because a stranger on a recycled pane would then be recorded as
-			// this worker's identity and later give the DESTRUCTIVE orphan reaper a
-			// false positive match (opus+qwen review — the empty-at-birth poisoning
-			// window). Such a worker stays unidentifiable and the reaper declines it —
-			// a non-destructive miss, the same trade made throughout MED-3.
-			obsBootID := ""
-			if w.BootID != "" {
-				obsBootID = obs.BootID
+		heads := map[string]string{}
+		if len(wts) > 0 {
+			if heads, err = g.client.GitHeads(ctx, wts); err != nil {
+				if e.VMs == nil {
+					return res, err
+				}
+				continue // same per-VM posture: no heads → observe nothing this sweep
 			}
-			_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
-				return tx.ObserveWorker(w.ID, core.WorkerObservation{
-					HeadCommit: headNow, BootID: obsBootID, PIDStartTime: obs.PIDStartTime,
+		}
+
+		for _, w := range g.live {
+			res.Observed++
+			obs, alive := lookupAlive(w)
+			// identity check: if we recorded a boot/pid-start, it must match (guards PID reuse).
+			if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {
+				alive = false
+			}
+			headNow := heads[headKey(w)]
+			headChanged := headNow != "" && headNow != w.HeadCommit
+
+			if alive {
+				e.resetMiss(w.ID)
+				// Identity is established ONCE, at launch (BindLaunch). Observation only
+				// CONFIRMS it, never ESTABLISHES a new one: if launch-capture missed
+				// (w.BootID==""), we must NOT stamp the observed agent's terminal_id onto
+				// the row, because a stranger on a recycled pane would then be recorded as
+				// this worker's identity and later give the DESTRUCTIVE orphan reaper a
+				// false positive match (opus+qwen review — the empty-at-birth poisoning
+				// window). Such a worker stays unidentifiable and the reaper declines it —
+				// a non-destructive miss, the same trade made throughout MED-3.
+				obsBootID := ""
+				if w.BootID != "" {
+					obsBootID = obs.BootID
+				}
+				_ = e.Store.WithTx(ctx, func(tx core.Tx) error {
+					return tx.ObserveWorker(w.ID, core.WorkerObservation{
+						HeadCommit: headNow, BootID: obsBootID, PIDStartTime: obs.PIDStartTime,
+					})
 				})
-			})
-			blocked, err := e.checkStall(ctx, w, headNow)
+				blocked, err := e.checkStall(ctx, w, headNow)
+				if err != nil {
+					return res, err
+				}
+				if blocked {
+					res.Transitions++
+				}
+				continue
+			}
+
+			if e.bumpMiss(w.ID) < e.MissThreshold {
+				continue // suspect_missing; give push/next sweep a chance
+			}
+			target := core.WorkerLost
+			if headChanged {
+				target = core.WorkerCompletedCandidate
+			}
+			changed, err := e.finalize(ctx, w, target, headNow)
 			if err != nil {
 				return res, err
 			}
-			if blocked {
+			if changed {
 				res.Transitions++
 			}
-			continue
+			// Reset the miss counter whether or not we finalized: if we did, it's moot;
+			// if we couldn't (e.g. a completed_candidate — no legal edge to lost — whose
+			// agent is expectedly gone, or a rev race), NOT resetting would re-bump every
+			// sweep and grow the in-memory misses map without bound (whole-system audit
+			// LOW-5). A still-missing worker simply re-accrues from zero next sweep.
+			e.resetMiss(w.ID)
 		}
-
-		if e.bumpMiss(w.ID) < e.MissThreshold {
-			continue // suspect_missing; give push/next sweep a chance
-		}
-		target := core.WorkerLost
-		if headChanged {
-			target = core.WorkerCompletedCandidate
-		}
-		changed, err := e.finalize(ctx, w, target, headNow)
-		if err != nil {
-			return res, err
-		}
-		if changed {
-			res.Transitions++
-		}
-		// Reset the miss counter whether or not we finalized: if we did, it's moot;
-		// if we couldn't (e.g. a completed_candidate — no legal edge to lost — whose
-		// agent is expectedly gone, or a rev race), NOT resetting would re-bump every
-		// sweep and grow the in-memory misses map without bound (whole-system audit
-		// LOW-5). A still-missing worker simply re-accrues from zero next sweep.
-		e.resetMiss(w.ID)
 	}
 	// Verification leg 1 (rev7/T3.1): poll CI check-runs for completed_candidate
 	// workers, after the liveness loop (a candidate's agent is expectedly gone —
@@ -400,7 +406,9 @@ func agentReclaimable(w core.Worker, pendingEsc map[string]bool) bool {
 // has no recorded terminal_id (persisted only on the liveness alive-path, not at
 // launch) → it is left for manual cleanup: a rare, NON-destructive miss is the
 // right trade against a destructive false-close (docs §12).
-func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agents []core.AgentObs, pendingEsc map[string]bool) int {
+// vmc is the client of the VM the given workers/agents belong to — a kill must
+// land on the host whose pane it is (T3.3).
+func (e *Engine) reapOrphanedAgents(ctx context.Context, vmc core.VMClient, all []core.Worker, agents []core.AgentObs, pendingEsc map[string]bool) int {
 	lookup := aliveLookup(agents)
 	n := 0
 	for _, w := range all {
@@ -432,7 +440,7 @@ func (e *Engine) reapOrphanedAgents(ctx context.Context, all []core.Worker, agen
 		if ref == "" {
 			continue
 		}
-		if err := e.VM.Kill(ctx, ref); err == nil {
+		if err := vmc.Kill(ctx, ref); err == nil {
 			n++
 		}
 	}
@@ -648,13 +656,41 @@ func (e *Engine) Recover(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	agents, err := e.VM.ListAgents(ctx)
-	if err != nil {
-		return err
+	// Per-VM liveness lookups (T3.3): each starting worker is resolved against
+	// ITS OWN VM's agent list, fetched once per VM. nil lookup = that VM is
+	// unobservable this boot (registry gap, or — routing on — a ListAgents
+	// error): leave its workers `starting` for a later sweep rather than parking
+	// a possibly-live agent's worker failed on transport noise. Routing off
+	// keeps today's posture — the single client's ListAgents error aborts.
+	lookups := map[string]func(core.Worker) (core.AgentObs, bool){}
+	lookupFor := func(vmName string) (func(core.Worker) (core.AgentObs, bool), error) {
+		key := ""
+		if e.VMs != nil {
+			key = vmName
+		}
+		if lu, ok := lookups[key]; ok {
+			return lu, nil
+		}
+		var lu func(core.Worker) (core.AgentObs, bool)
+		if c, cerr := e.vmFor(key); cerr == nil {
+			if agents, aerr := c.ListAgents(ctx); aerr == nil {
+				lu = aliveLookup(agents)
+			} else if e.VMs == nil {
+				return nil, aerr
+			}
+		}
+		lookups[key] = lu
+		return lu, nil
 	}
-	lookupAlive := aliveLookup(agents)
 	var firstErr error
 	for _, w := range starting {
+		lookupAlive, lerr := lookupFor(w.VM)
+		if lerr != nil {
+			return lerr
+		}
+		if lookupAlive == nil {
+			continue // unobservable VM: resolved by a later sweep, never a blind park
+		}
 		obs, alive := lookupAlive(w)
 		// same PID-reuse identity guard as Sweep: don't adopt a recycled workspace.
 		if alive && w.BootID != "" && obs.BootID != "" && obs.BootID != w.BootID {

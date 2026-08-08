@@ -8,14 +8,18 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
-// WorkerDiff returns the base→head diff for a worker (via the VMClient). It is a
-// read; it does not change state.
+// WorkerDiff returns the base→head diff for a worker (via ITS VM's client). It
+// is a read; it does not change state.
 func (e *Engine) WorkerDiff(ctx context.Context, workerID string) (core.Diff, error) {
 	w, err := e.Store.Reader().GetWorker(workerID)
 	if err != nil {
 		return core.Diff{}, err
 	}
-	return e.VM.Diff(ctx, w.Worktree, w.BaseCommit, w.HeadCommit)
+	vmc, err := e.vmFor(w.VM)
+	if err != nil {
+		return core.Diff{}, err
+	}
+	return vmc.Diff(ctx, w.Worktree, w.BaseCommit, w.HeadCommit)
 }
 
 // Verify is the diff-gate: it moves a worker completed_candidate →

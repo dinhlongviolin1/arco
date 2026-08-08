@@ -89,11 +89,18 @@ func (e *Engine) deliverDecision(escID, text string) {
 	if err != nil || w.State != core.WorkerRunning || w.OwnerSession == core.PoolSessionID {
 		return
 	}
+	// Same-pane delivery must go to the worker's OWN VM. An unresolvable VM is
+	// recorded like any other delivery failure (best-effort path).
+	vmc, verr := e.vmFor(w.VM)
+	if verr != nil {
+		e.errorEvent(e.bg(), w.ID, "escalation answer delivery failed: "+verr.Error())
+		return
+	}
 	target := promptTarget(w)
 	wid := w.ID
 	deliver := func() {
 		e.NoteSelfPaneOp(target) // arco-caused pane activity — excluded from the D9 back-off
-		if err := e.VM.PromptReady(e.bg(), target, promptIntentText(text)); err != nil {
+		if err := vmc.PromptReady(e.bg(), target, promptIntentText(text)); err != nil {
 			e.errorEvent(e.bg(), wid, "escalation answer delivery failed: "+err.Error())
 		}
 	}

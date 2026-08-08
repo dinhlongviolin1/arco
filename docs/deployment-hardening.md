@@ -221,11 +221,65 @@ Spike checklist:
   delivered byte-exact to the remote through the real login shell; and real remote
   git (`GitHeads` reading a repo created on the remote). All pass; remote
   scaffolding self-cleans.
-- **Still needed before live cross-VM:** the spawn path's worktree provisioning
-  runs on THIS host (needs a remote variant), a VM-routing/admission policy for
-  multiple hosts, the signed cross-host intake (§5) from remote workers' hooks, and
-  herdr installed + configured on the remote host. Until then `NewRemote` is a
-  cross-host-validated building block, deliberately not wired into the daemon.
+- **Landed (rev7/T3.3): per-worker VM ROUTING + fleet config over that layer.**
+  `[[vms]]` blocks (`name`/`host`/`herdr`/`socket`) define the fleet; the daemon
+  builds `Engine.VMs` — one `vm.NewRemote` client per entry — when `use_local_vm`
+  is on (Fake/headless stays single-client). Every op that acts on a specific
+  worker resolves through its VM: spawn/dispatch launch + initial prompt delivery,
+  sweep liveness (`ListAgents`) and `GitHeads` once per VM, the orphan-agent
+  reaper, kill, diff, redeliver, escalation-answer delivery, and brain `run_again`
+  prompts. Semantics pinned by the guideline tests: **no registry = routing off**
+  (VM names stay pure labels, pre-T3.3 behavior byte-for-byte); with a registry, a
+  named VM with NO entry **never** falls back to the local client — spawn/dispatch
+  refuse BEFORE anything durable or external, and the sweep treats those workers
+  as unobservable (never finalized on a registry gap). A worker is correlated ONLY
+  against ITS OWN VM's agent list: pane ids are per-host, so a same-ref agent on
+  another VM is someone else's. One host's `ListAgents`/`GitHeads` error keeps
+  today's transient-noise posture PER VM — that sweep observes nothing for that
+  host's workers (no miss accrual, no mass-finalize) while the rest of the fleet
+  sweeps normally. Startup validation: an empty/duplicate name, an empty or
+  `-`-prefixed host, or a `default_vm` with no entry FAILS daemon start (a typo'd
+  fleet must not half-start); reachability is then probed per VM (one `ListAgents`
+  each, 10s cap) and **logged, not fatal** — a host that is down at boot (reboot
+  ordering, network) is transient and self-heals into the same per-VM sweep
+  posture, whereas the definition errors above never self-heal. `DefaultVM` /
+  `MaxWorkersPerVM` admission is unchanged (it always keyed on the VM name).
+  `VMDef.Socket` is parsed and stored but **RESERVED**: the confirmed herdr 0.7.5
+  CLI takes no socket flag/env input (docs/herdr-contract.md — herdr *exports*
+  `$HERDR_SOCKET_PATH` to panes; it does not accept one), so arco invents no flag
+  and the knob waits for a herdr contract that does.
+- **PROVISIONING CONSTRAINT — read before pointing `default_vm` at a remote
+  host.** Remote worktree provisioning is NOT built (it remains a separate gap):
+  spawn's `worktree.Provision`, quarantine, permcompile, and the cred-file writes
+  (pool creds + the T3.4 intake key) all run on the DAEMON host, under the
+  daemon's `ConfigDir`. A remote-VM **repo spawn** is therefore only correct when
+  the worker root (`<state-dir>/workers`) lives on storage shared with that VM
+  (e.g. NFS mounted at the SAME path on both hosts) — otherwise the remote launch
+  gets `--cwd` pointing at a directory that does not exist there. Routing landed;
+  this constraint stands. (The prompt-path `Dispatch` has no worktree and does not
+  carry it.) Related: the herdrsock activity/status subscription (T2.1) is
+  LOCAL-ONLY — a local pane frame never correlates to a remote worker's per-host
+  ref — so remote workers' status arrives via the polling sweep and the signed
+  intake (T3.4).
+- **Still needed before live cross-VM:** remote worktree provisioning (or the
+  shared-storage deployment above), remote workers' hooks posting to the signed
+  cross-host intake over `tcp_addr` (§5), and herdr installed + configured on the
+  remote host. Routing, fleet config, admission, and the per-VM sweep posture are
+  done (T3.3).
+- **Live cross-host ROUTING smoke** (env-gated like the transport tests; run
+  whenever the fleet wiring changes):
+  1. `ARCO_TEST_SSH_HOST=<host> go test ./internal/vm/ -run Integration -v` — now
+     includes `TestIntegration_CrossVMRoutingDispatch`, which drives a real
+     Engine dispatch through the `VMs` registry to a real remote client and
+     proves the launch prompt lands on the remote host byte-exact while the
+     daemon-local client sees nothing.
+  2. Manual (real herdr on the remote): add `[[vms]] name="vm1" host=<host>` +
+     `default_vm = "vm1"` with `use_local_vm = true`; start the daemon (watch for
+     the per-VM preflight probe log); `arco dispatch` a prompt-path task; confirm
+     with `herdr agent list` ON THE REMOTE that the agent exists there and with
+     `arco status` that the worker stays `running` across sweeps; `arco kill` it
+     and confirm the remote pane closes. For a repo spawn, do the same only with
+     the worker root on shared storage (constraint above).
 - Beyond ~150 live workers or ~100 events/s sustained, move the ledger to
   Postgres + a queue (the `Store`/`Reader` ports were kept engine-agnostic for
   this).

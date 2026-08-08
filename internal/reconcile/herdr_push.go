@@ -28,6 +28,13 @@ func (e *Engine) ApplyHerdrStatus(ctx context.Context, paneID, status string) er
 		if w.AgentRef == "" || w.AgentRef != paneID {
 			continue
 		}
+		// The herdrsock subscription is LOCAL-ONLY (T3.3 scope): pane ids are
+		// per-host, so with routing on a local frame must never correlate to a
+		// worker living on a named remote VM — same-ref-different-VM is someone
+		// else's agent. Remote workers' status arrives via the signed intake.
+		if e.VMs != nil && w.VM != "" {
+			continue
+		}
 		return e.ApplyEvent(ctx, EventInput{
 			WorkerID: w.ID, HerdrState: status,
 			Alive: status != "done", // done is the only terminal agent_status
