@@ -170,6 +170,15 @@ type Engine struct {
 	// "" = unsigned mode, no key file.
 	IntakeMaster string
 
+	// SelfOpWindow is how long after arco touched a pane (NoteSelfPaneOp) the
+	// activity herdr pushes for that pane still counts as arco's own echo rather
+	// than human presence. 0 → defaultSelfOpWindow.
+	SelfOpWindow time.Duration
+	// ActivityRestoreAfter is the quiet period after which Sweep returns a session
+	// the human-activity back-off demoted to auto. 0 → defaultActivityRestoreAfter
+	// (long by design — never an instant restore).
+	ActivityRestoreAfter time.Duration
+
 	// SpawnUID is the UID the daemon spawns workers under (its own UID, when the
 	// local herdr launches them), recorded on the worker row at spawn so the UDS
 	// intake can bind incoming events to it via SO_PEERCRED (a same-box HMAC
@@ -187,6 +196,12 @@ type Engine struct {
 	// in-flight re-drive per worker closes it; cleared on completion (in-memory —
 	// after a crash the sweep correctly re-drives from the ledger).
 	redriving map[string]bool
+	// selfOps is paneID → when arco last touched that pane, and activityDemoted is
+	// sessionID → when the human-activity back-off last saw activity for a session
+	// IT demoted (D9, T3.6). Both are in-memory and written from the herdrsock read
+	// goroutine while Sweep reads them on the timer goroutine — hence e.mu.
+	selfOps         map[string]time.Time
+	activityDemoted map[string]time.Time
 }
 
 // New builds an Engine with default thresholds and an Exec (brain disabled).
@@ -195,7 +210,8 @@ type Engine struct {
 // it from config. MaxDepth's 0→2 default is applied in Delegate.
 func New(store core.Store, vm core.VMClient) *Engine {
 	return &Engine{Store: store, VM: vm, Exec: NewExec(4), MissThreshold: 3,
-		MaxChildren: 8, misses: map[string]int{}, redriving: map[string]bool{}}
+		MaxChildren: 8, misses: map[string]int{}, redriving: map[string]bool{},
+		selfOps: map[string]time.Time{}, activityDemoted: map[string]time.Time{}}
 }
 
 // DispatchResult reports what a dispatch created. State is the worker's state

@@ -315,6 +315,7 @@ func (e *Engine) applyStep(ctx context.Context, workerID, cid string, step core.
 		if !ok {
 			return
 		}
+		e.NoteSelfPaneOp(ws) // arco-caused pane activity — excluded from the D9 back-off
 		if err := e.VM.Prompt(ctx, ws, promptIntentText(step.Instruction)); err != nil {
 			// Delivery failed — do NOT record a normal running decision (the ledger
 			// would claim running while the worker was never prompted). Park it.

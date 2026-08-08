@@ -92,6 +92,7 @@ func (e *Engine) deliverDecision(escID, text string) {
 	target := promptTarget(w)
 	wid := w.ID
 	deliver := func() {
+		e.NoteSelfPaneOp(target) // arco-caused pane activity — excluded from the D9 back-off
 		if err := e.VM.PromptReady(e.bg(), target, promptIntentText(text)); err != nil {
 			e.errorEvent(e.bg(), wid, "escalation answer delivery failed: "+err.Error())
 		}

@@ -26,6 +26,12 @@ These are implemented and tested — listed so you don't re-do them:
 | Compiled worker permissions | `internal/permcompile` | `settings.json` + PreToolUse hook staged **outside** the worktree; high-blast caps never granted. |
 | Managed deny layer (content) | `permcompile.ManagedSettings` | Deny-only policy artifact for the managed path (see §3). |
 | Signed intake | `api` + `ARCO_INTAKE_SECRET` | HMAC-SHA256 on `POST /v1/events` with **per-worker HKDF-derived keys** (T3.4) — the master never rides the wire; fails closed if TCP is set without a secret. |
+| Human-activity back-off (D9) | `internal/reconcile/activity.go` | A human focusing/scrolling a worker's pane drops that session `auto`→`assist`; restored only after `activity_restore_after` of quiet, and only for demotions the back-off itself made. |
+
+**Focus invariant (D9):** arco never steals focus — `workspace create` passes
+`--no-focus` and no code path calls any pane/agent-focus op, in `auto` least of
+all, so a focus event is always evidence of a HUMAN being present and stays
+trustworthy as the back-off's input.
 
 ---
 
@@ -245,6 +251,9 @@ lease_ttl    = "1h"
 # verification_artifact evidence event, red → a confirm escalation. The human
 # diff-gate (`arco verify`) remains the only path to completed_verified.
 ci_check_runs = false
+# Optional (rev7/T3.6): D9 human-activity back-off tuning. Defaults shown.
+self_op_window          = "5s"    # activity this soon after arco touched a pane is arco's own echo
+activity_restore_after  = "20m"   # quiet period before an activity-demoted session returns to auto
 ```
 `chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
 

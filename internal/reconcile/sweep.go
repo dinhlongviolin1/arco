@@ -30,6 +30,7 @@ type SweepResult struct {
 	BrainRedrives       int // dangling brain_intents (crash-lost calls) re-submitted
 	EscalationsTimedOut int // pending escalations expired past EscalationTimeout (+ worker paused)
 	AgentsReaped        int // orphaned agents of TERMINAL workers stopped (quota reclaim)
+	ActivityRestored    int // sessions the human-activity back-off demoted, restored to auto after the quiet period
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -52,6 +53,10 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// worker liveness, so it also runs when there are no live workers. Workers
 	// finalized later in THIS sweep are reaped on the next one (eventual).
 	res.LeasesReaped, _ = e.reapLeases(ctx)
+	// Return sessions the human-activity back-off demoted to auto once their pane
+	// has been quiet long enough (D9/T3.6). Session-scoped, so it runs before any
+	// worker-shaped early return below.
+	res.ActivityRestored = e.restoreActivityBackoff(ctx)
 	// Pause workers that have sat unclaimed in the pool past the TTL.
 	if e.PoolTTL > 0 {
 		res.PooledPaused, _ = e.reapPooled(ctx)

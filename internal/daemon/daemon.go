@@ -103,6 +103,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.MaxChildren = cfg.MaxChildrenPerSession
 	eng.RollupInterval = cfg.RollupInterval
 	eng.EscalationTimeout = cfg.EscalationTimeout // sweep auto-pauses a worker whose escalation went unanswered
+	eng.SelfOpWindow = cfg.SelfOpWindow           // D9 back-off: how long a pane's activity still reads as arco's own echo
+	eng.ActivityRestoreAfter = cfg.ActivityRestoreAfter
 	eng.DefaultVM = cfg.DefaultVM
 	eng.MaxWorkersPerVM = cfg.MaxWorkersPerVM
 	eng.ConfigDir = filepath.Join(filepath.Dir(cfg.DBPath), "workers") // per-worker worktrees + configs (outside any worktree)
@@ -249,8 +251,16 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 					}
 				}
 			},
-			OnActivity: func(herdrsock.ActivityEvent) {
-				// T3.6: the human-activity back-off timer consumes these; dropped for now.
+			OnActivity: func(ev herdrsock.ActivityEvent) {
+				// D9 human-activity back-off (T3.6): a human on a worker's pane drops
+				// that session auto→assist. Workers are pane-scoped, so workspace/tab
+				// focus kinds (empty PaneID) carry no worker to back off from.
+				if ev.PaneID == "" {
+					return
+				}
+				if err := eng.ApplyHumanActivity(sweepCtx, ev.PaneID); err != nil {
+					log.Printf("arco: activity back-off: %v", err)
+				}
 			},
 			Logf: log.Printf,
 		}
