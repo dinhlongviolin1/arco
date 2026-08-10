@@ -315,9 +315,23 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, vmc core.VMClient, work
 	if haveCredFiles {
 		env = append(env, "CREDENTIALS_DIRECTORY="+credDir)
 	}
+	// Launch kind is configurable (herdr supervises any kind it knows), but the
+	// compiled permission surface above is claude-shaped: only a claude launch
+	// gets the permcompile args. A non-claude kind runs with e.AgentArgs alone —
+	// the cfg dir is still compiled (inert for it) so the audit trail of WHAT
+	// was granted survives regardless of kind.
+	kind := e.AgentKind
+	if kind == "" {
+		kind = "claude"
+	}
+	var args []string
+	if kind == "claude" {
+		args = permcompile.LaunchArgs(cfgDir, granted, cat)
+	}
+	args = append(args, e.AgentArgs...)
 	spec := core.LaunchSpec{
-		Name: workspace, Kind: "claude", Workdir: wt,
-		Args: permcompile.LaunchArgs(cfgDir, granted, cat),
+		Name: workspace, Kind: kind, Workdir: wt,
+		Args: args,
 		Env:  env,
 	}
 	ref, bootID, err = vmc.Launch(ctx, spec)

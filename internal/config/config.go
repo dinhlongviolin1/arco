@@ -103,6 +103,18 @@ type Config struct {
 	MergeQueue        bool     `toml:"merge_queue"`
 	MergeQueueTestCmd []string `toml:"merge_queue_test_cmd"`
 
+	// AgentKind is the herdr agent kind spawned workers launch as
+	// (`herdr agent start --kind <kind>`); default "claude". herdr's
+	// supervision API (list/prompt/wait/kill, pane liveness) is kind-agnostic,
+	// so any kind herdr knows (claude/codex/gemini/…) can be supervised.
+	// SAFETY: the compiled permission surface (permcompile settings/hooks/
+	// allow-deny) is CLAUDE-ONLY — a non-claude kind launches with AgentArgs
+	// alone and none of those guardrails; treat it as an unsandboxed tool.
+	// AgentArgs are extra CLI args appended to the agent invocation (after the
+	// compiled claude args when kind is claude; the whole argv otherwise).
+	AgentKind string   `toml:"agent_kind"`
+	AgentArgs []string `toml:"agent_args"`
+
 	// EarnOut* gate the autonomy earn-out (rev7/T3.5): a question_class needs at
 	// least EarnOutMinDecisions human decisions on drafted escalations with an
 	// agreement ratio ≥ EarnOutMinAgreement before the sweep may answer new
@@ -159,6 +171,7 @@ func Defaults() Config {
 		DBPath:        filepath.Join(base, "arco.db"),
 		Socket:        filepath.Join(base, "arco.sock"),
 		BrainModel:    "haiku", // cheap tier by default (NOT opus)
+		AgentKind:     "claude",
 		HerdrBin:      "herdr",
 		MaxBrainCalls: 4,
 		SweepInterval: 30 * time.Second,

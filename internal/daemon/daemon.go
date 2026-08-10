@@ -241,6 +241,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.VerificationLive = cfg.CICheckRuns || cfg.MergeQueue
 	eng.EarnOutMinDecisions = cfg.EarnOutMinDecisions
 	eng.EarnOutMinAgreement = cfg.EarnOutMinAgreement
+	eng.AgentKind = cfg.AgentKind
+	eng.AgentArgs = cfg.AgentArgs
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
