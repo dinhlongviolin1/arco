@@ -29,9 +29,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: set this repo secret to auto-publish the Scoop manifest.
-          # Absent → goreleaser skips it (release still succeeds).
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
 
       # Update the Homebrew tap (macOS + Linux formula) from the release
       # checksums. The step self-skips when HOMEBREW_TAP_TOKEN is unset (the
