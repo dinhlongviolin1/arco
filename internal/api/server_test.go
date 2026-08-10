@@ -110,7 +110,7 @@ func TestAPI_IntakeHashConflictIsRejectedNotApplied(t *testing.T) {
 	require.Equal(t, "running", d.State)
 
 	// first delivery: idle + HEAD advance → completed_candidate
-	ev := EventReq{Source: "herdr:vm0", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}
+	ev := EventReq{Source: "herdr:vm0", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc1234"}
 	require.Equal(t, http.StatusOK, post(t, ts, "/v1/events", ev, &EventResp{}))
 
 	// poisoned redelivery: SAME id, DIFFERENT hash + a state that would drive
@@ -146,7 +146,7 @@ func TestAPI_VerifyDiffGate(t *testing.T) {
 	require.Equal(t, http.StatusConflict, post(t, ts, "/v1/workers/"+d.WorkerID+"/verify", VerifyReq{ExpectedRev: 1}, &DecisionResp{}))
 
 	// drive to completed_candidate
-	post(t, ts, "/v1/events", EventReq{Source: "h", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}, &EventResp{})
+	post(t, ts, "/v1/events", EventReq{Source: "h", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc1234"}, &EventResp{})
 
 	// diff endpoint returns the rev to echo back
 	resp, err := http.Get(ts.URL + "/v1/workers/" + d.WorkerID + "/diff")
@@ -204,7 +204,7 @@ func TestAPI_IntakeDedup(t *testing.T) {
 	var d DispatchResp
 	post(t, ts, "/v1/dispatch", DispatchReq{Task: "x", New: true}, &d)
 
-	ev := EventReq{Source: "herdr:vm0", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc"}
+	ev := EventReq{Source: "herdr:vm0", SourceEventID: "e1", Hash: "h1", WorkerRef: d.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc1234"}
 	var r1, r2 EventResp
 	require.Equal(t, http.StatusOK, post(t, ts, "/v1/events", ev, &r1))
 	require.False(t, r1.Deduped)

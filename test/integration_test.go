@@ -41,7 +41,7 @@ func TestEndToEnd_DispatchHookComplete(t *testing.T) {
 	// herdr hook: worker went idle and advanced HEAD → completed_candidate
 	ev := api.EventReq{
 		Source: "herdr:vm0", SourceEventID: "evt-1", Hash: "h1",
-		WorkerRef: disp.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc123",
+		WorkerRef: disp.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc1230",
 	}
 	r, err := c.PostEvent(ctx, ev)
 	require.NoError(t, err)

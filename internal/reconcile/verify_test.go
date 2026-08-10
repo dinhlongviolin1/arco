@@ -21,7 +21,7 @@ func TestVerify_OnlyFromCompletedCandidate(t *testing.T) {
 
 	// drive to completed_candidate (idle + HEAD advanced)
 	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{
-		WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc",
+		WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "abc1234",
 	}))
 	w, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerCompletedCandidate, w.State)
@@ -44,14 +44,14 @@ func TestVerify_StaleRevRefused_NoVerifyOnAGuess(t *testing.T) {
 	require.NoError(t, err)
 
 	// candidate at H1
-	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "H1"}))
+	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "1111111"}))
 	reviewed, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerCompletedCandidate, reviewed.State)
 	oldRev := reviewed.Rev // the rev the "human" reviewed
 
 	// it re-runs and returns to candidate at a NEW head H2 (rev advances)
 	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{WorkerID: res.WorkerID, HerdrState: "working", Alive: true}))
-	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "H2"}))
+	require.NoError(t, e.ApplyEvent(context.Background(), EventInput{WorkerID: res.WorkerID, HerdrState: "idle", Alive: true, ObservedHead: "2222222"}))
 	now, _ := s.Reader().GetWorker(res.WorkerID)
 	require.Equal(t, core.WorkerCompletedCandidate, now.State)
 	require.NotEqual(t, oldRev, now.Rev)

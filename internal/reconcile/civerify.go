@@ -83,7 +83,11 @@ func (e *Engine) pollCICheckRuns(ctx context.Context, all []core.Worker) {
 	}
 	for _, w := range all {
 		// A candidate with no worktree or head has nothing addressable to poll.
-		if w.State != core.WorkerCompletedCandidate || w.Worktree == "" || w.HeadCommit == "" {
+		// head_commit is gated at the intake boundary, but it is interpolated into
+		// a `gh api` PATH here — validate again at this exec boundary so a stray
+		// `../` head can never traverse to another GitHub API endpoint under the
+		// daemon's gh credentials (defense in depth).
+		if w.State != core.WorkerCompletedCandidate || w.Worktree == "" || !core.LooksLikeRev(w.HeadCommit) {
 			continue
 		}
 		out, err := e.CI.Runner(ctx, w.Worktree,

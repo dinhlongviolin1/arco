@@ -611,19 +611,10 @@ func (l *LocalVMClient) cappedPatch(ctx context.Context, worktree, rng string) (
 	return string(b), false
 }
 
-// looksLikeRev reports whether s is a plausible git commit (hex, 7..64 chars) —
-// enough to reject option-injection without a full git check-ref-format.
-func looksLikeRev(s string) bool {
-	if len(s) < 7 || len(s) > 64 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
+// looksLikeRev reports whether s is a plausible git commit (hex, 7..64 chars).
+// Thin alias for core.LooksLikeRev — the shared gate every git/gh call site
+// uses for a commit id (kept local for the existing call sites' readability).
+func looksLikeRev(s string) bool { return core.LooksLikeRev(s) }
 
 // newCmd builds an exec.Cmd whose environment has arco's high-blast credentials
 // stripped (security precondition P1) — no subprocess arco launches (git, herdr,

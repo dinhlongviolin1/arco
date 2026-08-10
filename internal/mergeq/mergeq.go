@@ -23,6 +23,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/spawnenv"
 )
 
 // Item statuses. An item is written once (pending) and finalized once
@@ -161,8 +162,20 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 		return "workspace setup failed", err.Error()
 	}
 	defer os.RemoveAll(tmp)
+	// it.Head is worker-influenced (reconstructed from an intake observed_head).
+	// It is now gated at the intake boundary, but re-validate at the git-exec
+	// boundary too (defense in depth): a non-commit-shaped head must never reach
+	// `fetch`/`merge`, where `--upload-pack=<cmd>` would be code execution.
+	if !core.LooksLikeRev(it.Head) {
+		return "worker head is not a valid commit id", it.Head
+	}
 	ws := filepath.Join(tmp, "repo")
-	if _, out, err := q.git(ctx, tmp, "clone", "--quiet", it.Repo, ws); err != nil {
+	// `-c protocol.allow=user` + `protocol.ext.allow=never` block the `ext::`/
+	// remote-helper class of origin-URL command execution; the target repo is an
+	// operator-configured origin, but it is read from the worker-writable clone's
+	// .git/config, so it is not fully trusted.
+	proto := []string{"-c", "protocol.allow=user", "-c", "protocol.ext.allow=never"}
+	if _, out, err := q.git(ctx, tmp, append(append([]string{}, proto...), "clone", "--quiet", "--", it.Repo, ws)...); err != nil {
 		return "clone of the target repo failed", out
 	}
 	if _, out, err := q.git(ctx, ws, "checkout", "--quiet", "main"); err != nil {
@@ -170,8 +183,9 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 	}
 	// The head is fetched from the worker's worktree (plain path-to-path git),
 	// then merged — a clone taken before main moved integrates cleanly instead
-	// of failing a non-ff push.
-	if _, out, err := q.git(ctx, ws, "fetch", "--quiet", worktree, it.Head); err != nil {
+	// of failing a non-ff push. `--` ends options so a head can never be read as
+	// a flag; the head shape is already validated above.
+	if _, out, err := q.git(ctx, ws, append(append([]string{}, proto...), "fetch", "--quiet", "--", worktree, it.Head)...); err != nil {
 		return "fetch of the worker head failed", out
 	}
 	if _, out, err := q.git(ctx, ws, "merge", "--no-edit", "--quiet", it.Head); err != nil {
@@ -298,10 +312,17 @@ func (q *Queue) git(ctx context.Context, dir string, args ...string) (stdout, co
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	// Hardened env, matching worktree.Provision: the daemon's own environment is
+	// SCRUBBED (P1 — no arco/provider creds leak into a git subprocess that
+	// operates on attacker-influenced repos), and global/system gitconfig is
+	// neutered so a machine-level alias/pager/filter/url-insteadOf can't turn a
+	// merge into code execution. A pinned committer identity + no prompts round
+	// it out. (Per-command protocol/option guards live at the call sites.)
+	cmd.Env = append(spawnenv.Scrub(os.Environ()),
 		"GIT_AUTHOR_NAME=arco-mergeq", "GIT_AUTHOR_EMAIL=mergeq@arco.local",
 		"GIT_COMMITTER_NAME=arco-mergeq", "GIT_COMMITTER_EMAIL=mergeq@arco.local",
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 	)
 	var so, all strings.Builder
 	cmd.Stdout = io.MultiWriter(&so, &all)

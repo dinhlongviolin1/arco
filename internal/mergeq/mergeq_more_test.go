@@ -61,6 +61,32 @@ func TestMergeQ_DeniedPushKicksBackWithGitError(t *testing.T) {
 	require.Contains(t, escs[0].Detail, "push", "the escalation carries the git push error")
 }
 
+// Security regression: a worker-influenced head that is not a commit id must be
+// refused BEFORE it reaches `git fetch`/`merge`, where `--upload-pack=<cmd>`
+// would be command execution. The head is gated at intake too (defense in
+// depth); this pins the git-exec boundary.
+func TestMergeQ_MaliciousHeadRefusedBeforeGit(t *testing.T) {
+	s := openStore(t)
+	origin, base := newNonBareOrigin(t)
+	wt, _ := workerClone(t, origin, "feature.txt", "feature\n")
+	wid := seedCandidate(t, s, wt, "--upload-pack=touch /tmp/arco-pwn", base)
+	ctx := context.Background()
+
+	q := mergeq.New(s, mergeq.Config{})
+	_, err := q.Enqueue(ctx, wid)
+	require.NoError(t, err)
+
+	ok, err := q.ProcessNext(ctx)
+	require.NoError(t, err, "a bad head is a kickback outcome, not an error")
+	require.True(t, ok)
+
+	items, err := q.Items(ctx)
+	require.NoError(t, err)
+	require.Equal(t, mergeq.StatusKicked, items[0].Status, "an invalid head kicks back")
+	require.Equal(t, base, strings.TrimSpace(git(t, origin, "rev-parse", "main")), "origin main untouched")
+	require.Equal(t, 0, countMergeArtifacts(t, s, wid))
+}
+
 // A green TestCmd runs in the integration workspace (the merged tree is
 // visible to it) and the merge lands.
 func TestMergeQ_GreenTestsRunInWorkspaceAndMerge(t *testing.T) {

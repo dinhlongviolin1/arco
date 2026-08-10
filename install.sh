@@ -59,11 +59,20 @@ trap 'rm -rf "$tmp"' EXIT
 info "Downloading arco $version ($os/$arch)…"
 curl -fsSL "$url" -o "$tmp/$archive" || err "download failed: $url"
 
-# Verify checksum if the release ships one.
+# Verify checksum if the release ships one AND sha256sum is available. A present
+# checksums.txt with a MISMATCH is fatal — only a genuinely absent file or a
+# missing sha256sum tool is allowed to skip (never a failed compare).
 if curl -fsSL "https://github.com/$REPO/releases/download/$version/checksums.txt" -o "$tmp/checksums.txt" 2>/dev/null; then
   if command -v sha256sum >/dev/null 2>&1; then
-    ( cd "$tmp" && grep " $archive\$" checksums.txt | sha256sum -c - >/dev/null 2>&1 ) \
-      && info "Checksum verified." || info "Checksum not verified (skipping)."
+    line=$(grep " $archive\$" "$tmp/checksums.txt" || true)
+    if [ -z "$line" ]; then
+      err "checksums.txt has no entry for $archive — refusing to install"
+    fi
+    ( cd "$tmp" && printf '%s\n' "$line" | sha256sum -c - >/dev/null 2>&1 ) \
+      || err "checksum verification FAILED for $archive — refusing to install"
+    info "Checksum verified."
+  else
+    info "sha256sum not found — skipping checksum verification."
   fi
 fi
 

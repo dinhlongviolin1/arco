@@ -51,6 +51,16 @@ func (e *Engine) sweepGroups(all []core.Worker, pendingEsc map[string]bool) map[
 			groups[key] = g
 		}
 		g.all = append(g.all, w)
+		// A `starting` worker is mid-spawn: its provisioning (clone → quarantine →
+		// compile → launch → BindLaunch) runs in the daemon's own goroutine and has
+		// no agent ref yet, so liveness-tracking it would bump misses and finalize
+		// it `lost` after MissThreshold sweeps for nothing worse than a slow clone —
+		// then a resurrecting phase-3 CAS + a released pool lease double-book the
+		// worker. Steady-state liveness never owns `starting`; boot Recover resolves
+		// the only legitimate leftover (a crash mid-spawn).
+		if w.State == core.WorkerStarting {
+			continue
+		}
 		// Workers whose agent should no longer be running (agentReclaimable) are
 		// reaper-only: their agent is intentionally reclaimed, so its absence is
 		// EXPECTED, not a liveness death — liveness-tracking them would finalize a
