@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # needed to create the GitHub release
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: set this repo secret to auto-publish the Scoop manifest.
+          # Absent → goreleaser skips it (release still succeeds).
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+
+      # Update the Homebrew tap (macOS + Linux formula) from the release
+      # checksums. The step self-skips when HOMEBREW_TAP_TOKEN is unset (the
+      # `secrets` context is NOT allowed in a step `if`, so we gate inside the
+      # shell), so the release never fails on a missing secret.
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping tap update."
+            exit 0
+          fi
+          ver="${GITHUB_REF_NAME#v}"
+          # Give the release a moment so checksums.txt is fetchable.
+          for i in $(seq 1 10); do
+            curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/v${ver}/checksums.txt" -o /tmp/sums.txt && break
+            sleep 5
+          done
+          sh scripts/gen-formula.sh "$ver" /tmp/sums.txt > /tmp/arco.rb
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/dinhlongviolin1/homebrew-tap.git" /tmp/tap
+          mkdir -p /tmp/tap/Formula
+          cp /tmp/arco.rb /tmp/tap/Formula/arco.rb
+          cd /tmp/tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add Formula/arco.rb
+            git commit -m "arco ${ver}"
+            git push
+          fi

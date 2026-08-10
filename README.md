@@ -6,19 +6,74 @@
 
 **Command your worker agents the way a bow commands the strings** — a self-hosted daemon that
 supervises a fleet of coding-agent workers across your machines, decides what to do when they
-finish or block, and is driven from the CLI (with optional Telegram and Web dashboards).
+finish or block, and is driven from the CLI plus phone-first ntfy decision cards
+(`/metrics` and a herdr status plugin as side doors — no web dashboard by design).
 
 > `clavis` launches workers · `herdr` herds them on each machine · **`arco` commands the whole ensemble.**
 > (*arco* is the violin instruction to play *with the bow* — how a player draws sound and control from the strings; `clavis` is Latin for "key".)
 
 ---
 
-## ⚠️ Status: pre-alpha (design phase)
+## ⚠️ Status: alpha (rev-7 complete)
 
-This repository currently holds the **design and implementation plan**, not yet a running
-daemon. The architecture has been through five independent review rounds (consolidated into the
-rev-6 build guide); the build starts at **PASS-0** in [`docs/build-guide-rev6.md`](docs/build-guide-rev6.md).
-**Do not point it at production credentials or repositories** — see [SECURITY.md](SECURITY.md).
+The daemon, CLI, and supervision loop are implemented and test-covered (rev-7 close-out:
+[`docs/rev7-review.md`](docs/rev7-review.md)); the single-VM spawn/supervise/kill loop is
+live-verified ([`docs/deployment-hardening.md`](docs/deployment-hardening.md) §11). Known
+open items — most notably the worker cred-consumption contract — are tracked in the rev-7
+review package and hardening §12. **Do not point it at production credentials or
+repositories yet** — see [SECURITY.md](SECURITY.md).
+
+## Install
+
+One static binary (pure-Go SQLite — no libc, no runtime deps), released the same way as
+`clavis`: goreleaser on every `v*` tag, `checksums.txt` alongside.
+
+### Quick install (Linux / macOS)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dinhlongviolin1/arco/main/install.sh | sh
+```
+
+Or via Homebrew (macOS + Linuxbrew, once the tap is published):
+
+```sh
+brew install dinhlongviolin1/tap/arco
+```
+
+### Other ways
+
+```sh
+go install github.com/dinhlongviolin1/arco/cmd/arco@latest   # from source
+```
+
+Or grab `arco_<os>_<arch>.tar.gz` from the
+[releases page](https://github.com/dinhlongviolin1/arco/releases) and verify it against
+`checksums.txt`. Pin a version with `ARCO_VERSION=v0.1.0`, choose the target dir with
+`ARCO_INSTALL_DIR=~/.local/bin`.
+
+### Running it (incl. LXC / Proxmox)
+
+arco is one process + one SQLite file — it runs anywhere a shell does. In a container it
+wants: `git`, `herdr` (running, for real workers), `clavis` (for inference — below), and a
+`0700` state dir (`~/.arco`). Follow [`docs/deployment-hardening.md`](docs/deployment-hardening.md)
+§11 for the config + pool + dispatch procedure and §5 for the hardened systemd unit
+(`LoadCredential=` for the intake/ntfy secrets). Fake mode (`use_local_vm = false`, the
+default) needs nothing but the binary — useful for poking the API/CLI in a bare container.
+
+### Inference
+
+arco itself talks to **no** LLM API directly and needs no `ANTHROPIC_*` env. Both
+inference surfaces go through `clavis` profiles (your provider keys live in `~/.clavis`,
+one named profile per provider/model account):
+
+- **Brain** (the short-lived decision LLM): set `brain_profile = "<clavis profile>"` +
+  `brain_model` (default `haiku`, deliberately cheap) in `config.toml`. Empty profile =
+  brain disabled; arco still supervises, escalating every question to you.
+- **Workers** (spawned coding agents): `arco pool create <id> --profile <clavis profile>`;
+  each worker leases from the pool and gets that profile's scoped creds as `0600` files
+  under its private root, pointed to by `CREDENTIALS_DIRECTORY` (never argv/env — MED-5).
+  NB: the agent-side consumption of those files is a documented contract (hardening §12) —
+  see open question #0 in the rev-7 review before expecting autonomous completion.
 
 ## What it is
 
