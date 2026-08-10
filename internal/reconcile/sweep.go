@@ -31,6 +31,7 @@ type SweepResult struct {
 	EscalationsTimedOut int // pending escalations expired past EscalationTimeout (+ worker paused)
 	AgentsReaped        int // orphaned agents of TERMINAL workers stopped (quota reclaim)
 	ActivityRestored    int // sessions the human-activity back-off demoted, restored to auto after the quiet period
+	AutoAnswered        int // pending drafted questions resolved by the earn-out promotion (T3.5)
 }
 
 // Sweep is the authoritative periodic repair (build-guide PASS-2 / Task 7).
@@ -67,6 +68,12 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	if e.EscalationTimeout > 0 {
 		res.EscalationsTimedOut = e.reapEscalations(ctx)
 	}
+	// Earn-out promotion (rev7/T3.5): resolve pending drafted questions whose
+	// class has earned brain auto-answers, under the hard gates. After the
+	// escalation-timeout reaper (an expired escalation is no longer promotable)
+	// and before the pending-escalation snapshot below, so a worker resumed here
+	// is not mistaken for paused-with-pending.
+	res.AutoAnswered = e.autoAnswerEarnedOut(ctx)
 	// Supersession rollup: re-drive any ALIVE parent whose children have
 	// completed. maybeRollup coalesces to ≤1 rollup brain call per session per
 	// RollupInterval, so triggering opportunistically every sweep (regardless of

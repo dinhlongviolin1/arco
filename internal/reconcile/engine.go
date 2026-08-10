@@ -171,6 +171,18 @@ type Engine struct {
 	// path to completed_verified. Zero value = disabled.
 	CI CICfg
 
+	// Earn-out (rev7/T3.5): the sweep may resolve a pending DRAFTED question
+	// with the brain's own draft once its question_class has proven itself.
+	// VerificationLive is set by the daemon ONLY while a verification leg is
+	// enabled (T3.1 ci_check_runs or T3.2 merge_queue) — earned-out autonomy
+	// without machine verification downstream is never allowed. The Min* knobs
+	// are the class's required human track record; a non-positive value
+	// disables promotion outright (zero/unset must never mean "promote
+	// instantly"). Confirms are never auto-answered, whatever the stats.
+	VerificationLive    bool
+	EarnOutMinDecisions int
+	EarnOutMinAgreement float64
+
 	// IntakeMaster is the intake HMAC master secret (cfg.IntakeSecret, set by
 	// the daemon). When non-empty, Spawn writes each worker's DERIVED key
 	// (intakekey.Derive(master, workerID)) to <worker-root>/creds/intake_key

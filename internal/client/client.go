@@ -213,6 +213,13 @@ func (c *Client) QueueItems(ctx context.Context) (api.QueueResp, error) {
 	return r, err
 }
 
+// Autonomy reads the per-class earn-out report (rev7/T3.5).
+func (c *Client) Autonomy(ctx context.Context) (api.AutonomyResp, error) {
+	var r api.AutonomyResp
+	err := c.do(ctx, http.MethodGet, "/v1/autonomy", nil, &r)
+	return r, err
+}
+
 // Escalations lists escalations (status defaults to pending server-side).
 func (c *Client) Escalations(ctx context.Context) (api.EscalationsResp, error) {
 	var r api.EscalationsResp

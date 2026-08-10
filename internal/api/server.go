@@ -62,6 +62,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("POST /v1/workers/{id}/redeliver", s.redeliver)
 	s.mux.HandleFunc("POST /v1/queue", s.queueEnqueue)
 	s.mux.HandleFunc("GET /v1/queue", s.queueList)
+	s.mux.HandleFunc("GET /v1/autonomy", s.autonomy)
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
@@ -236,6 +237,20 @@ type QueueItemDTO struct {
 }
 type QueueResp struct {
 	Items []QueueItemDTO `json:"items"`
+}
+
+// AutonomyClassDTO is one question_class row of the earn-out report (T3.5).
+type AutonomyClassDTO struct {
+	Class    string `json:"class"`
+	Agree    int    `json:"agree"`
+	Total    int    `json:"total"`
+	Promotes bool   `json:"promotes"`
+}
+type AutonomyResp struct {
+	VerificationLive bool               `json:"verification_live"`
+	MinDecisions     int                `json:"min_decisions"`
+	MinAgreement     float64            `json:"min_agreement"`
+	Classes          []AutonomyClassDTO `json:"classes"`
 }
 
 // ---- handlers --------------------------------------------------------------
@@ -700,6 +715,27 @@ func (s *Server) queueList(w http.ResponseWriter, r *http.Request) {
 		out.Items = append(out.Items, QueueItemDTO{
 			ID: it.ID, Worker: it.WorkerID, Repo: it.Repo, Head: it.Head, Status: it.Status,
 		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// autonomy is the earn-out report (rev7/T3.5): per question_class, the human
+// track record on drafted escalations and whether the class currently promotes
+// under the live gates.
+func (s *Server) autonomy(w http.ResponseWriter, _ *http.Request) {
+	rep, err := s.eng.EarnOutReport()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	out := AutonomyResp{
+		VerificationLive: s.eng.VerificationLive,
+		MinDecisions:     s.eng.EarnOutMinDecisions,
+		MinAgreement:     s.eng.EarnOutMinAgreement,
+		Classes:          []AutonomyClassDTO{},
+	}
+	for _, c := range rep {
+		out.Classes = append(out.Classes, AutonomyClassDTO{Class: c.Class, Agree: c.Agree, Total: c.Total, Promotes: c.Promotes})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
