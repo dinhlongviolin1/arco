@@ -319,6 +319,15 @@ merge_queue = false
 # Optional (rev7/T3.6): D9 human-activity back-off tuning. Defaults shown.
 self_op_window          = "5s"    # activity this soon after arco touched a pane is arco's own echo
 activity_restore_after  = "20m"   # quiet period before an activity-demoted session returns to auto
+# Optional (rev7/T3.5): autonomy earn-out gates. Defaults shown. A question_class
+# needs earnout_min_decisions human decisions on DRAFTED escalations with an
+# agreement ratio >= earnout_min_agreement before the sweep answers new drafted
+# questions of that class with the brain's draft (answered_by='brain') — and only
+# in session mode auto while a verification leg (ci_check_runs or merge_queue) is
+# live (a T3.6 activity demotion pauses earn-out via the mode gate). Confirms are
+# never auto-answered. A zero/unset knob never promotes.
+earnout_min_decisions = 10
+earnout_min_agreement = 0.9
 ```
 `chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
 

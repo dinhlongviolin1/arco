@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 
@@ -75,6 +76,19 @@ func (r *reader) ListEscalations(f core.EscalationFilter) ([]core.Escalation, er
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// DraftAgreement reads the per-question_class earn-out tally (rev7/T3.5). A
+// class with no tallied decisions yet (or an empty class) is (0, 0, nil).
+func (r *reader) DraftAgreement(questionClass string) (int, int, error) {
+	var agree, total int
+	err := r.q.QueryRowContext(context.Background(),
+		`SELECT agree, total FROM draft_agreement WHERE question_class=?`, questionClass).
+		Scan(&agree, &total)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, nil
+	}
+	return agree, total, err
 }
 
 // OpenEscalation inserts a pending escalation. One pending per worker+capability:
@@ -157,6 +171,21 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	}
 	if esc.Kind != wantKind || esc.Status != "pending" {
 		return core.ErrEscalationState
+	}
+
+	// Earn-out bookkeeping (rev7/T3.5): a HUMAN decision on a DRAFTED escalation
+	// feeds the per-class agreement tally — the ledger-backed track record that
+	// gates brain auto-answers. An undrafted decision carries no brain call to
+	// score, so it never moves any tally. For a confirm the draft is the brain's
+	// case to proceed: approval agrees, rejection disagrees.
+	if esc.DraftAnswer != "" {
+		agrees := yes
+		if wantKind == "question" {
+			agrees = strings.EqualFold(strings.TrimSpace(text), strings.TrimSpace(esc.DraftAnswer))
+		}
+		if err := t.bumpDraftAgreement(esc.QuestionClass, agrees); err != nil {
+			return err
+		}
 	}
 
 	// B14 execute-time owner re-validation: an escalation records the session that
@@ -289,6 +318,83 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 		`UPDATE escalations SET status=?, decision=?, answer_text=?, decided_by='human',
 		 answered_by='human', once_or_always=?, decided_at=?, resumed_at=? WHERE id=? AND status='pending'`,
 		status, decision, text, onceAlways, t.now(), nullStr(resumedAt), id)
+	return err
+}
+
+// bumpDraftAgreement upserts one human decision into a class's earn-out tally.
+func (t *txn) bumpDraftAgreement(questionClass string, agrees bool) error {
+	inc := 0
+	if agrees {
+		inc = 1
+	}
+	_, err := t.q.ExecContext(context.Background(),
+		`INSERT INTO draft_agreement (question_class, agree, total) VALUES (?,?,1)
+		 ON CONFLICT(question_class) DO UPDATE SET agree=agree+excluded.agree, total=total+1`,
+		questionClass, inc)
+	return err
+}
+
+// AnswerQuestionBrain resolves a pending drafted QUESTION by the BRAIN (earn-out
+// promotion, rev7/T3.5). decide() stays the human path: this variant stamps
+// brain attribution, has no scope input at all (so it can never promote a
+// grant), never feeds the draft-agreement tally, and keeps decide()'s resume
+// guards — never a terminal worker, never a pool-owned one (MED-4).
+func (t *txn) AnswerQuestionBrain(id, text string, e core.Event) error {
+	esc, err := t.GetEscalation(id)
+	if err != nil {
+		return err
+	}
+	if esc.Kind != "question" || esc.Status != "pending" {
+		return core.ErrEscalationState
+	}
+	// Fail closed: a brain answer IS the draft — an escalation that carries none
+	// (or an empty answer) has nothing earned to say.
+	if text == "" || esc.DraftAnswer == "" {
+		return fmt.Errorf("ledger: brain auto-answer requires a non-empty draft")
+	}
+
+	var worker core.Worker
+	haveWorker := false
+	if esc.WorkerID != "" {
+		w, werr := t.GetWorker(esc.WorkerID)
+		if werr != nil && !errors.Is(werr, core.ErrNotFound) {
+			return werr
+		}
+		if werr == nil {
+			worker, haveWorker = w, true
+		}
+	}
+	// Same event attribution as decide(): land the resume/answer event in the
+	// worker's stream so the audit tail (and RecentWorkerEvents) can see it.
+	if haveWorker {
+		e.WorkerID = esc.WorkerID
+		if e.SessionID == "" {
+			e.SessionID = worker.OwnerSession
+		}
+	} else if e.SessionID == "" {
+		e.SessionID = esc.SessionID
+	}
+
+	resumedAt := ""
+	transitioned := false
+	if haveWorker && !worker.State.Terminal() && worker.OwnerSession != core.PoolSessionID &&
+		core.LegalWorkerTransition(worker.State, core.WorkerRunning) {
+		if err := t.TransitionWorker(esc.WorkerID, core.WorkerRunning, worker.Rev, e); err != nil {
+			return err
+		}
+		transitioned = true
+		resumedAt = t.now()
+	}
+	if !transitioned {
+		if err := t.appendChecked(e); err != nil {
+			return err
+		}
+	}
+
+	_, err = t.q.ExecContext(context.Background(),
+		`UPDATE escalations SET status='answered', decision='answered', answer_text=?, decided_by='brain',
+		 answered_by='brain', once_or_always='once', decided_at=?, resumed_at=? WHERE id=? AND status='pending'`,
+		text, t.now(), nullStr(resumedAt), id)
 	return err
 }
 

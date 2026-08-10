@@ -95,6 +95,11 @@ type Reader interface {
 	StaleBrainIntents(before time.Time) ([]string, error)
 	ListEscalations(f EscalationFilter) ([]Escalation, error)
 	GetEscalation(id string) (Escalation, error)
+	// DraftAgreement is the per-question_class earn-out tally (rev7/T3.5): of
+	// the HUMAN decisions taken on escalations that carried a brain DraftAnswer,
+	// how many agreed with the draft. Ledger-backed — survives restart. An
+	// untouched (or empty) class reads (0, 0, nil), never an error.
+	DraftAgreement(questionClass string) (agree, total int, err error)
 	Capability(name string) (CatalogRow, bool, error)
 	DefaultTree() ([]CatalogRow, error)
 	// Catalog returns the FULL capability_catalog (all rows incl. high-blast) —
@@ -181,6 +186,14 @@ type Tx interface {
 	// DecideConfirm resolves a pending danger-class confirm (yes/no). Same
 	// scope/grant rules as AnswerQuestion.
 	DecideConfirm(id string, yes bool, scope Scope, e Event) error
+	// AnswerQuestionBrain resolves a pending drafted QUESTION with the brain's
+	// own draft (rev7/T3.5 earn-out promotion), stamping answered_by/decided_by
+	// 'brain'. AnswerQuestion/DecideConfirm stay the human path: this variant
+	// takes no scope and can NEVER promote a grant (a brain-sourced approval/
+	// grant must not exist) and never feeds the DraftAgreement tally (it would
+	// ratify itself). Confirms are out of reach by kind. e must carry the audit
+	// payload naming the class stats that justified the promotion.
+	AnswerQuestionBrain(id, text string, e Event) error
 	// ExpirePendingForWorker closes any pending escalation for a worker that has
 	// left its waiting state by another path (so it doesn't linger as a phantom).
 	ExpirePendingForWorker(workerID string) (int, error)

@@ -456,6 +456,34 @@ func newQueueCmd() *cobra.Command {
 	return cmd
 }
 
+// newAutonomyCmd prints the earn-out report (rev7/T3.5): per question_class,
+// how often the human's decision agreed with the brain's draft, and whether
+// the class currently promotes to brain auto-answers under the live gates.
+func newAutonomyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "autonomy",
+		Short: "per-class draft agreement and whether each class earns brain auto-answers",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := newClient()
+			if err != nil {
+				return err
+			}
+			res, err := c.Autonomy(context.Background())
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "verification_live=%v min_decisions=%d min_agreement=%g\n",
+				res.VerificationLive, res.MinDecisions, res.MinAgreement)
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			fmt.Fprintln(tw, "CLASS\tAGREE\tTOTAL\tPROMOTES")
+			for _, x := range res.Classes {
+				fmt.Fprintf(tw, "%s\t%d\t%d\t%v\n", x.Class, x.Agree, x.Total, x.Promotes)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
 // newHookCmd posts a herdr-style state change to the daemon. This is what the
 // herdr plugin-hook shells out to (the PASS-2 intake bridge).
 func newHookCmd() *cobra.Command {

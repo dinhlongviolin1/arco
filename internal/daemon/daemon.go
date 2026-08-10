@@ -234,6 +234,13 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		mq = mergeq.New(store, mergeq.Config{TestCmd: cfg.MergeQueueTestCmd})
 		srv.EnableMergeQueue(mq)
 	}
+	// Autonomy earn-out (rev7/T3.5): promotion to brain auto-answers requires a
+	// LIVE verification leg — exactly the T3.1/T3.2 opt-ins above — plus the
+	// per-class human track record thresholds. With both legs off,
+	// VerificationLive stays false and no class ever promotes.
+	eng.VerificationLive = cfg.CICheckRuns || cfg.MergeQueue
+	eng.EarnOutMinDecisions = cfg.EarnOutMinDecisions
+	eng.EarnOutMinAgreement = cfg.EarnOutMinAgreement
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {

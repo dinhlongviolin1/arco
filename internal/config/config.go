@@ -103,6 +103,16 @@ type Config struct {
 	MergeQueue        bool     `toml:"merge_queue"`
 	MergeQueueTestCmd []string `toml:"merge_queue_test_cmd"`
 
+	// EarnOut* gate the autonomy earn-out (rev7/T3.5): a question_class needs at
+	// least EarnOutMinDecisions human decisions on drafted escalations with an
+	// agreement ratio ≥ EarnOutMinAgreement before the sweep may answer new
+	// drafted questions of that class with the brain's draft — and only while a
+	// verification leg (ci_check_runs or merge_queue) is live and the session
+	// mode is auto. The engine treats a non-positive value as "never promote":
+	// a zero/unset knob must not mean promote instantly.
+	EarnOutMinDecisions int     `toml:"earnout_min_decisions"`
+	EarnOutMinAgreement float64 `toml:"earnout_min_agreement"`
+
 	// Pinned operability defaults (build-guide-rev6 §C).
 	MaxBrainCalls         int           `toml:"max_brain_calls"`
 	SweepInterval         time.Duration `toml:"sweep_interval"`
@@ -167,6 +177,8 @@ func Defaults() Config {
 		LeaseTTL:              15 * time.Minute,
 		SelfOpWindow:          5 * time.Second,
 		ActivityRestoreAfter:  20 * time.Minute,
+		EarnOutMinDecisions:   10,
+		EarnOutMinAgreement:   0.9,
 
 		Notify: Notify{MinLevel: "info"}, // empty URLs → disabled; everything passes the filter
 	}

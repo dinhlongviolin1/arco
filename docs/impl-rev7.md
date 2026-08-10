@@ -47,6 +47,23 @@ Conventions:
 | T3.6 | D9 completion: human-activity back-off — focus/scroll/Done→Idle events (from T2.1) arco didn't cause start an activity timer that demotes `auto`→`assist` for the session; never call `pane.focus` in auto. | internal/fusion, reconcile | self-caused-event exclusion test; timer demote/restore tests |
 | T3.7 | herdr plugin: thin manifest+script exposing `arco status --json` in herdr UI. | new plugin/ dir | script smoke test |
 
+T3.5 shipped as `internal/reconcile/earnout.go` + migration `0007`: every human
+`decide()` on a DRAFTED escalation feeds a per-`question_class` tally
+(`draft_agreement` table, read via `Reader.DraftAgreement`) — a question answer
+agrees modulo surrounding whitespace/ASCII case, a confirm approval agrees and
+a rejection disagrees; undrafted decisions never count. The sweep then resolves
+a pending drafted QUESTION with its own draft (`answered_by='brain'`, via the
+new tx method `AnswerQuestionBrain` — `decide()` stays the human path) only
+when EVERY gate passes: session mode `auto` (the CURRENT owner's mode at sweep
+time, so a T3.6 activity demotion pauses earn-out with no extra code) ∧
+`VerificationLive` (`ci_check_runs` ∨ `merge_queue`) ∧ non-empty draft ∧ class
+history ≥ `earnout_min_decisions` with agree/total ≥ `earnout_min_agreement`
+(defaults 10 / 0.9; non-positive = never promote). Confirms are NEVER
+auto-answered; an auto-answer never creates a grant, never feeds its own tally,
+and appends an `auto_answer` event carrying the class stats that justified it.
+Report: `arco autonomy` over `GET /v1/autonomy` (per-class agree/total +
+promotes under the live gates).
+
 T3.6 shipped as `internal/reconcile/activity.go`: the daemon feeds every herdr
 pane activity event (focus/scroll, T2.1) to `Engine.ApplyHumanActivity`, which
 resolves the worker by `AgentRef` and drops its session `auto`→`assist` with
