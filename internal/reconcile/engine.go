@@ -183,6 +183,17 @@ type Engine struct {
 	EarnOutMinDecisions int
 	EarnOutMinAgreement float64
 
+	// AgentKind is the herdr agent kind Spawn launches (`agent start --kind`);
+	// "" → "claude". herdr's supervision API (list/prompt/wait/kill, pane
+	// liveness) is kind-agnostic, so any kind herdr knows can be supervised.
+	// SAFETY: the compiled permission surface (permcompile settings/hooks) is
+	// CLAUDE-ONLY — a non-claude kind launches with AgentArgs alone and NONE of
+	// those guardrails. AgentArgs are extra argv appended to the agent
+	// invocation (after the compiled claude args when kind is claude; the whole
+	// argv otherwise).
+	AgentKind string
+	AgentArgs []string
+
 	// IntakeMaster is the intake HMAC master secret (cfg.IntakeSecret, set by
 	// the daemon). When non-empty, Spawn writes each worker's DERIVED key
 	// (intakekey.Derive(master, workerID)) to <worker-root>/creds/intake_key

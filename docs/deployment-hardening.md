@@ -328,6 +328,13 @@ activity_restore_after  = "20m"   # quiet period before an activity-demoted sess
 # never auto-answered. A zero/unset knob never promotes.
 earnout_min_decisions = 10
 earnout_min_agreement = 0.9
+# Optional: which herdr agent kind spawned workers launch as (default "claude").
+# herdr's supervision API is kind-agnostic (list/prompt/wait/kill work for any
+# kind it knows), so codex/gemini/… can be SUPERVISED — but the compiled
+# permission surface (settings.json/hooks) is claude-only: a non-claude kind
+# launches with agent_args alone and NONE of those guardrails.
+agent_kind = "claude"
+# agent_args = ["--some-flag"]   # extra argv appended to the agent invocation
 ```
 `chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
 
