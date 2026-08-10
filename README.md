@@ -1,7 +1,7 @@
 # arco
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/status-pre--alpha%20(design)-orange.svg)](docs/)
+[![Status](https://img.shields.io/badge/status-alpha-orange.svg)](docs/rev7-review.md)
 [![gitleaks](https://img.shields.io/badge/protected%20by-gitleaks-brightgreen.svg)](.gitleaks.toml)
 
 **Command your worker agents the way a bow commands the strings** — a self-hosted daemon that

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/spawnenv"
@@ -135,7 +136,10 @@ func (r sshRunner) command(ctx context.Context, name string, args ...string) *ex
 }
 
 // shellQuote renders s as a single POSIX-shell token: wrap in single quotes and
-// escape any embedded single quote as '\''. Inside single quotes every other
+// escape each embedded single quote via the ReplaceAll below (close the quoted
+// span, emit a backslashed quote, reopen — the standard POSIX dance; spelled in
+// code only because gofmt smart-quotes the sequence in comments). Inside single
+// quotes every other
 // metacharacter (space, ; | & $ ` " \ newline, glob) is literal, so the remote
 // login shell ssh runs the command through cannot be broken out of. This is the
 // only generally-safe way to pass an untrusted argument to `ssh host cmd`.
@@ -440,7 +444,19 @@ func (l *LocalVMClient) closeWorkspace(ctx context.Context, wsID string) {
 // error envelope returned WITH exit 0 (`{"error":{...}}`) — herdr does the latter
 // for some errors (e.g. invalid_agent_name), so a clean exit code alone is not
 // success. Centralizes the check for every herdr call (git calls stay on runOutput).
+// herdrCmdTimeout bounds every herdr CLI invocation when the caller's context
+// carries no deadline of its own: the sweep loop runs on a cancel-only context,
+// so without this a wedged herdr binary (or dead ssh transport) would wedge the
+// whole loop, not cost one bounded call. Generously above the longest herdr-side
+// wait arco requests (agent prompt --wait --timeout 6000ms) plus ssh overhead.
+const herdrCmdTimeout = 30 * time.Second
+
 func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, herdrCmdTimeout)
+		defer cancel()
+	}
 	out, err := l.runOutput(ctx, l.Herdr, args...)
 	if err != nil {
 		return nil, err

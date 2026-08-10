@@ -97,11 +97,22 @@ func (e *Engine) deliverDecision(escID, text string) {
 		return
 	}
 	target := promptTarget(w)
-	wid := w.ID
+	wid, sid := w.ID, esc.SessionID
 	deliver := func() {
 		e.NoteSelfPaneOp(target) // arco-caused pane activity — excluded from the D9 back-off
 		if err := vmc.PromptReady(e.bg(), target, promptIntentText(text)); err != nil {
+			// PromptReady exhausting its retries means the answer very likely never
+			// reached the agent — the human decided, the ledger resumed the worker,
+			// and the pane is still parked. That silent divergence is the worst
+			// failure this path has, so it goes to the operator's phone, not just
+			// the event log (the sweep's stall detector would catch it, but late).
 			e.errorEvent(e.bg(), wid, "escalation answer delivery failed: "+err.Error())
+			e.notifyCard(sid, notify.Card{
+				Level: notify.LevelWarn,
+				Title: "arco: answer NOT delivered — " + wid,
+				Body: "your decision was recorded but could not be delivered to the agent's pane\n" +
+					"worker: " + wid + "\nerror: " + err.Error() + "\nuse: arco redeliver " + wid + " (or check the pane)",
+			})
 		}
 	}
 	if e.Exec != nil {

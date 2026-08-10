@@ -2,15 +2,17 @@
 
 ## Status
 
-Arco is **pre-alpha** and under active design. It is a supervisor for **autonomous
+Arco is **alpha** (rev-7 complete). It is a supervisor for **autonomous
 coding agents that execute code and run tools**. Treat every deployment as
 security-sensitive.
 
 **Do not run arco against production credentials, secrets, or repositories** until
-the security preconditions in the implementation plan are met (OS-user separation,
-scrubbed spawn environment, hardened git, no high-blast credentials on worker boxes,
-server-side branch protection, authenticated Telegram/Web/intake, and secret redaction).
-See the "Security preconditions" section of [`docs/implementation-plan.md`](docs/implementation-plan.md).
+the operator-side security preconditions are met (OS-user separation, scrubbed
+spawn environment, hardened git, no high-blast credentials on worker boxes,
+server-side branch protection, signed intake, and secret redaction).
+See [`docs/deployment-hardening.md`](docs/deployment-hardening.md) — the operator
+runbook — and its §12 known limitations (notably the worker cred-consumption
+contract, open at the time of writing).
 
 ## Threat model (summary)
 

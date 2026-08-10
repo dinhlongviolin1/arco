@@ -22,4 +22,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # gitleaks-action is free for public repositories; no license key needed.
 
-  # A Go build/test job is added in PASS-1 once source code lands (see docs/implementation-plan.md).
+  go:
+    name: build · vet · gofmt · test -race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "unformatted:"; echo "$out"; exit 1; fi
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test -race ./...
