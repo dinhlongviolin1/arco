@@ -32,6 +32,21 @@ func TestLoad_RejectsRemovedKnob_CrashLoopRestarts(t *testing.T) {
 	require.Contains(t, err.Error(), "crash_loop_restarts")
 }
 
+// Knobs deleted after the rev7 review found them dead (never enforced): a
+// config that still sets any of them must fail loud, not be silently ignored.
+func TestLoad_RejectsReviewRemovedKnobs(t *testing.T) {
+	for _, k := range []string{
+		"crash_loop_window = \"10m\"",
+		"suspect_timeout = \"60s\"",
+		"checkpoint_threshold = 40",
+		"auto_answer_budget_n = 10",
+		"clavis_profile = \"deepseek-1\"",
+	} {
+		_, err := Load(writeToml(t, k+"\n"))
+		require.Error(t, err, "removed knob must be rejected: %s", k)
+	}
+}
+
 // stall_n survives (it is now enforced by the sweep) and stays configurable.
 func TestLoad_StallNStillConfigurable(t *testing.T) {
 	cfg, err := Load(writeToml(t, "stall_n = 7\n"))

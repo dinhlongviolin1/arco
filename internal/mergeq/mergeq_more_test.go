@@ -87,6 +87,37 @@ func TestMergeQ_MaliciousHeadRefusedBeforeGit(t *testing.T) {
 	require.Equal(t, 0, countMergeArtifacts(t, s, wid))
 }
 
+// Crash-window idempotence: if the head already landed on origin main (a prior
+// ProcessNext pushed but crashed before recording merged), reprocessing must
+// record MERGED — even with a now-failing test gate — never kick work that
+// actually succeeded.
+func TestMergeQ_AlreadyLandedHeadRecordsMerged(t *testing.T) {
+	s := openStore(t)
+	origin, base := newOrigin(t)
+	wt, head := workerClone(t, origin, "feature.txt", "feature\n")
+	// Simulate the successful push that a crash then interrupted: the head is
+	// already on origin main.
+	git(t, wt, "push", "-q", "origin", "HEAD:main")
+	wid := seedCandidate(t, s, wt, head, base)
+	ctx := context.Background()
+
+	// A test gate that would FAIL if it ran — it must not, because the
+	// ancestor check short-circuits to merged before the gate.
+	q := mergeq.New(s, mergeq.Config{TestCmd: []string{"sh", "-c", "exit 1"}})
+	_, err := q.Enqueue(ctx, wid)
+	require.NoError(t, err)
+
+	ok, err := q.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	items, err := q.Items(ctx)
+	require.NoError(t, err)
+	require.Equal(t, mergeq.StatusMerged, items[0].Status, "an already-landed head records merged, not kicked")
+	require.Equal(t, 1, countMergeArtifacts(t, s, wid), "the verification_artifact is written")
+	require.Empty(t, pendingConfirms(t, s, wid), "no kickback escalation for work that landed")
+}
+
 // A green TestCmd runs in the integration workspace (the merged tree is
 // visible to it) and the merge lands.
 func TestMergeQ_GreenTestsRunInWorkspaceAndMerge(t *testing.T) {

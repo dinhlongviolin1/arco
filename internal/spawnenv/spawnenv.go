@@ -32,6 +32,10 @@ var secretSuffixes = []string{
 	"_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD", "_PWD",
 	"_APIKEY", "_API_KEY", "_ACCESS_KEY", "_SECRET_KEY",
 	"_PRIVATE_KEY", "_CREDENTIALS", "_DSN",
+	// Shapes a compromised worker's argv exposure would otherwise leak (the
+	// launch passes the scrubbed env to herdr as world-readable `--env` argv):
+	// a bare `_KEY`, plus session/cookie/short-secret conventions.
+	"_KEY", "_SESSION", "_COOKIE", "_SK",
 }
 
 // secretNames: exact names (no prefix/suffix shape) that carry credentials —

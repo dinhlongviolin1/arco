@@ -269,7 +269,15 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 
 	// ConnContext captures each conn's peer UID via SO_PEERCRED (unix only), so
 	// the intake can bind worker events to the worker's spawn-time UID (rev7/T1.6).
-	httpSrv := &http.Server{Handler: srv.Handler(), ConnContext: api.PeerCredConnContext}
+	httpSrv := &http.Server{
+		Handler:     srv.Handler(),
+		ConnContext: api.PeerCredConnContext,
+		// Bound header read (slowloris) and idle keep-alives. Deliberately NO
+		// Read/WriteTimeout: a dispatch handler legitimately runs for minutes
+		// (clone → provision → launch), and a whole-request deadline would kill it.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.Serve(ln) }()
 

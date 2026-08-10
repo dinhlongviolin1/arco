@@ -181,6 +181,14 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 	if _, out, err := q.git(ctx, ws, "checkout", "--quiet", "main"); err != nil {
 		return "target repo has no main branch", out
 	}
+	// Crash-window idempotence: if a previous ProcessNext pushed this head but
+	// crashed before recording `merged`, the item is still pending and gets
+	// reprocessed. The head is already reachable from origin main, so record it
+	// as landed (merged) rather than re-running the gate — which, if it now
+	// flaked or main moved, would wrongly kick work that actually succeeded.
+	if _, _, err := q.git(ctx, ws, "merge-base", "--is-ancestor", it.Head, "HEAD"); err == nil {
+		return "", "" // already on origin main
+	}
 	// The head is fetched from the worker's worktree (plain path-to-path git),
 	// then merged — a clone taken before main moved integrates cleanly instead
 	// of failing a non-ff push. `--` ends options so a head can never be read as
