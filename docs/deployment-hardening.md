@@ -388,7 +388,9 @@ workers). A second whole-system audit (post-#62) fixed four more:
   legal edge to lost, so finalize no-ops) → the counter is reset each sweep.
 
 The rest are **explicitly scoped-out known limitations** — none block the core
-spawn→autonomous-completion loop, but an operator should know them:
+spawn→autonomous-completion loop, but an operator should know them. **Rev-7
+closed several of these; the entries below are annotated with what closed them
+and the controls are catalogued in §13.**
 
 - ~~Human-answer delivery is not wired to the agent (MED).~~ **DONE (PR #65).**
   The API answer/confirm routes now go through `Engine.AnswerQuestion`/
@@ -469,8 +471,8 @@ spawn→autonomous-completion loop, but an operator should know them:
   the wrong workspace — only the *unattended* reaper is identity-strict; the operator
   path trusts explicit intent. **Operationally: `arco kill <id>` reclaims a worker's
   agent, and terminal + paused orphans self-clean on the next sweep.**
-- **Scoped creds pass via `herdr --env` argv (MED-5) — FIXED by file handoff
-  (T2.3).** *History:* herdr's only env mechanism is `workspace create --env
+- ~~Scoped creds pass via `herdr --env` argv (MED-5).~~ **FIXED by file handoff
+  (T2.3, PR #83) — see §13.6.** *History:* herdr's only env mechanism is `workspace create --env
   KEY=VALUE`, so a pool's clavis token used to ride the launch env and was
   briefly visible in `/proc/<herdr-pid>/cmdline` during the create call; the
   suggested mitigations were `hidepid` on shared hosts or a herdr
@@ -495,16 +497,206 @@ spawn→autonomous-completion loop, but an operator should know them:
   `export ANTHROPIC_AUTH_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/ANTHROPIC_AUTH_TOKEN")`),
   exactly as a systemd service consumes `LoadCredential=` files. The cred dir
   is same-user `0700`/`0600`, so the worker process can read it; nothing else can.
-- **Inert config knobs.** `crash_loop_restarts`/`crash_loop_window` (a
-  crash-loop breaker), a global `max_spawns` cap, and `stall_n` stall-detection
-  are defined in config but **not yet enforced** (only per-VM/per-session caps +
-  the brain-billing park limit loops today). `escalation_timeout` IS now enforced
-  (§11 / PR #58).
+- ~~**Inert config knobs.** `crash_loop_restarts`/`crash_loop_window`, a global
+  `max_spawns` cap, and `stall_n` stall-detection are defined in config but not
+  yet enforced.~~ **MOSTLY CLOSED (T1.3, PR #75) — see §13.10.** `stall_n` is
+  enforced (no-progress sweeps → `blocked` + escalation, `workers.stall_count`
+  written); `crash_loop_restarts` and `max_spawns` were **deleted** and config
+  `Load` now REJECTS either key — drop them from an existing TOML before
+  upgrading. `escalation_timeout` was already enforced (§11 / PR #58).
+  **Residual:** `crash_loop_window` survived the deletion — it is still parsed
+  and defaulted (`10m`) but read by no code. It is inert, not dangerous; it is
+  the one knob left that promises a control arco does not implement.
 - **Minor:** the initial task-delivery prompt has a narrow double-submit edge if
   the agent finishes a turn within the readiness poll gap; a worktree Read that
   resolves outside via a symlink (e.g. `node_modules`→shared store) is denied
   (allowlist it if it bites); a crash in the ~ms between `agent start` and the
   ref-commit leaks that one agent (documented in `herdr-contract.md`).
+
+## 13. Rev-7 controls
+
+What rev-7 added (plan: `docs/plan-rev7.md` D1–D9; tasks + PRs:
+`docs/impl-rev7.md`). One subsection per control, each naming its PR and the
+knob(s) that arm it. Every new *autonomy* behavior is default-off or
+default-conservative. **Two changes are not opt-in and can bite an upgrade:**
+config `Load` now REJECTS the deleted knobs `crash_loop_restarts` / `max_spawns`
+(13.10), and intake now refuses workspace-name `worker_ref`s (13.5). Read those
+two before upgrading a running deployment.
+
+### 13.1 Supervision modes `auto|assist|manual` (D9 — T1.5, #78)
+
+`sessions.supervision_mode` (migration `0006`, **default `assist`**) gates the
+four classes of action arco takes WITHOUT an operator command
+(`core.SupervisionMode.Allows`):
+
+| Action class | `auto` | `assist` | `manual` |
+|---|---|---|---|
+| `ActBrainDraft` — brain classify + draft | ✓ | ✓ | ✗ |
+| `ActBrainAct` — brain acting steps (`run_again`, dispatch) | ✓ | ✗ | ✗ |
+| `ActNotify` — push decision cards | ✓ | ✓ | ✗ |
+| `ActReapAgent` — reclaim an orphaned/paused agent | ✓ | ✓ | ✗ |
+
+An **unrecognized** mode allows nothing (fails toward zero autonomy).
+`ActReapAgent` stays on in `assist` deliberately: reclaiming the idle agent of a
+worker the system already parked is quota hygiene, not a decision. **Operator
+commands are not gated** — `arco kill`/`redeliver`/`answer` are your explicit
+intent in any mode; `manual` means arco does not touch the world on its own.
+
+Set with `arco mode <session> <auto|assist|manual>`
+(`POST /v1/sessions/{id}/mode`); every event/intent row carries an `Actor`, so
+"who did this" is answerable from the ledger alone. **Upgrade note:** existing
+sessions migrate to `assist` — arco tells you and drafts, but takes no brain
+action until you promote a session.
+
+### 13.2 Human-activity back-off + self-op suppression (D9 — T3.6, #88)
+
+`internal/reconcile/activity.go`: a herdr pane focus/scroll event on a worker's
+pane demotes that worker's session `auto`→`assist` (actor `activity-backoff`) —
+you touched the pane, so arco yields. `Sweep` restores `auto` after
+`activity_restore_after` (default `20m`) of quiet, and **only** for sessions the
+back-off itself demoted; an operator's `assist`/`manual` is a statement and is
+never touched. Arco calls `NoteSelfPaneOp` before any pane op, so the echo herdr
+pushes for arco's own prompt is ignored for `self_op_window` (default `5s`).
+
+- Knobs: `self_op_window`, `activity_restore_after`; **requires `herdr_socket`**
+  (the T2.1 subscriber, #82) — with no socket configured there are no activity
+  events and the back-off never fires.
+- Only **pane-scoped** events back off; workspace/tab focus carries no worker.
+- The demoted-set is in-memory: a daemon restart leaves those sessions in
+  `assist` (fails toward less autonomy — re-promote with `arco mode`).
+- Rests on the focus invariant in §0: arco never calls a pane-focus op, so a
+  focus event always means a human.
+
+### 13.3 ntfy decision cards — the primary human interface (D6 — T1.1, #77)
+
+`internal/notify` (shoutrrr) sends a card on escalation created (worker, task
+tail, question, brain draft, rationale), escalation answered/expired, and worker
+`completed_verified`/`failed`/`lost`. Knobs: `[notify] urls = [...]` (any
+shoutrrr URL — ntfy is the intended one), `min_level`. Unconfigured = a no-op
+sender, and `manual` sessions never notify (13.1). Notify failures are counted
+in `/metrics` (13.4), so a silently dead notifier is visible.
+
+### 13.4 `/metrics`, `arco status`, herdr plugin (T2.5 #84 · T1.2 #74 · T3.7 #85)
+
+- `GET /metrics` (promhttp, on the socket-served mux, no knob): workers by
+  state, escalations pending + age, brain calls/tokens, sweep duration, notify
+  failures. It is served on the **unix socket** — scraping it from Prometheus
+  means fronting the socket yourself; do not bind the raw mux to TCP (§5).
+- `arco status [--json]` (`GET /v1/status`): one-screen fleet table — sessions,
+  workers by state, pending escalations with age, pool leases, daemon health.
+- `plugin/arco-status/` puts that snapshot in the herdr UI
+  (`herdr plugin link $(pwd)/plugin/arco-status`); see `docs/herdr-contract.md`
+  for the manifest shape. The script shells `arco status --json` from `PATH`.
+- Escalation DTOs carry `brain_rationale` + `draft_confidence` (T1.4, #73), so a
+  card/CLI shows *why* the brain drafted what it drafted.
+
+### 13.5 Intake hardening: SO_PEERCRED + per-worker HKDF keys (T1.6 #76 · T3.4 #87)
+
+- **SO_PEERCRED binding (#76):** spawn records the worker's UID
+  (`workers.intake_uid`, migration `0005`); the UDS intake resolves the
+  connecting peer's UID and refuses events whose peer UID differs (403 + audit
+  event). A worker that never recorded a UID stays ungated (pre-rev-7
+  behavior); non-cred transports are unchanged. This is what stops one local
+  worker from posting as another **even when it holds a valid signature**.
+- **Per-worker HKDF intake keys (#87):** each worker signs with
+  `HKDF-SHA256(master, info="arco/intake/v1|"+workerID)`, handed over as the
+  `0600` cred file `$CREDENTIALS_DIRECTORY/intake_key` (13.6's file model). The
+  master never rides the wire. Full contract + the **respawn-after-rotation**
+  requirement: §5.
+- **Workspace-name fallback removed (#87):** `worker_ref` must be the worker
+  **id**; the guessable `arco_<id>` workspace ref now 403s and audits
+  (`intake_denied`), signed and unsigned alike.
+
+### 13.6 Launch hardening: srt wrapper + credentials-dir handoff (T2.2 #80 · T2.3 #83)
+
+- **Sandbox (#80), opt-in, off by default:** `[sandbox] enabled`, `policy_path`
+  (env: `ARCO_SANDBOX`, `ARCO_SANDBOX_POLICY` — one-way, they can only turn it
+  ON). Preflight `sandbox_srt_present` is **CRITICAL when enabled**, so a config
+  that promises confinement cannot boot without the binary.
+  `vm.SandboxWrap` produces the `srt [--settings <policy>] <argv…>` shape. **It
+  is not yet applied to the real launch:** herdr's `agent start` takes no
+  command override, so the actual rollout is a herdr *agent manifest* whose
+  command is srt-wrapped — operator work; the procedure is open item 4 in
+  `docs/herdr-contract.md`. Enabling the knob today gates boot and nothing else;
+  **do not read it as confinement.**
+- **Credentials-dir handoff (#83) — closes MED-5:** arco reads its own secrets
+  from `$CREDENTIALS_DIRECTORY` (systemd `LoadCredential=`) with per-key
+  fallback **file > env > TOML** (§5), and hands each worker credential over as
+  its own `0600` file in a `0700` `<per-worker-root>/creds/` dir — outside the
+  worktree, so repo tools can't read or commit it. The launch env carries only
+  the non-secret pointer `CREDENTIALS_DIRECTORY=<dir>`; **no secret touches
+  herdr argv anymore**. Packaging: `packaging/arco.service.example`. The agent
+  side is a documented contract (the agent sources
+  `$CREDENTIALS_DIRECTORY/<KEY>` itself) — see the §12 MED-5 entry.
+
+### 13.7 Verification legs — evidence only (T3.1 #86 · T3.2 #89)
+
+Both legs emit `verification_artifact` events; **neither promotes a worker.**
+`completed_candidate → completed_verified` remains the human `arco verify`
+diff-gate, unchanged by rev-7.
+
+- **CI check-runs (`ci_check_runs`, default off, #86):** the sweep polls
+  `gh api …/check-runs` in the candidate's worktree — green → one ledger-deduped
+  artifact per (worker, head SHA); red → one pending `confirm` escalation;
+  pending/zero-runs/`gh` error → retry next sweep. `gh` must be installed and
+  authenticated **as the daemon user**.
+- **In-daemon merge queue (`merge_queue`, default off, `merge_queue_test_cmd`,
+  #89):** a ledger-backed FIFO (event-sourced, so a restart resumes) drained one
+  item per sweep: scratch clone of the worktree's `origin` → merge → optional
+  test gate → push main. Conflict / red test / denied push kick the item back as
+  a `confirm` escalation carrying the git error. CLI: `arco queue <worker>` /
+  `arco queue list`. **Operator trap:** a non-bare target with `main` checked out
+  refuses the push (`receive.denyCurrentBranch`) — arco reports it as a kickback,
+  never a half-merged state (§11).
+
+### 13.8 Cross-VM routing (T3.3, #90)
+
+`[[vms]]` blocks (`name`/`host`/`herdr`/`socket`) build a per-worker VM registry
+over the SSH command layer validated in #69/#70; every worker-scoped op
+(spawn/dispatch launch, prompt delivery, sweep liveness + `GitHeads`, orphan
+reaper, kill, diff, redeliver, escalation delivery, brain `run_again`) resolves
+through the worker's VM. Knobs: `[[vms]]`, `default_vm`, `max_workers_per_vm`,
+`use_local_vm`. **No registry = routing off** (VM names stay labels,
+byte-for-byte pre-T3.3 behavior); a named VM with no entry never falls back to
+the local client. Bad fleet definitions fail daemon start; per-VM reachability is
+probed at boot and logged, not fatal. `VMDef.Socket` is **reserved** (herdr 0.7.5
+accepts no socket input). Full semantics, the **remote-worktree-provisioning
+constraint**, and the live routing smoke: §10 — read it before pointing
+`default_vm` at a remote host.
+
+### 13.9 Autonomy earn-out per `question_class` (T3.5, #91)
+
+`internal/reconcile/earnout.go` + migration `0007`: every human decision on a
+**drafted** escalation feeds a per-`question_class` agreement tally
+(`draft_agreement`). The sweep then answers a pending drafted QUESTION with the
+brain's own draft (`answered_by='brain'`, event `auto_answer` carrying the stats
+that justified it) only when **every** gate holds:
+
+1. the session's **current** mode is `auto` (so a 13.2 demotion pauses earn-out),
+2. a verification leg is live (`ci_check_runs` ∨ `merge_queue` — 13.7),
+3. the draft is non-empty, and
+4. the class has ≥ `earnout_min_decisions` decisions at ≥
+   `earnout_min_agreement` (defaults `10` / `0.9`; **non-positive = never
+   promote**).
+
+**Confirms are never auto-answered**, an auto-answer never creates a grant and
+never feeds its own tally. Report: `arco autonomy` (`GET /v1/autonomy`) — read it
+before turning a session to `auto`.
+
+### 13.10 Floor fixes: `stall_n` enforcement, dead-knob deletion, brain context (T1.3 #75 · T2.4 #81)
+
+- `stall_n` is **enforced**: N consecutive no-progress sweeps move a worker to
+  `blocked` + raise an escalation; progress resets `workers.stall_count`. The
+  futility bound the §12 audit asked for now exists.
+- `crash_loop_restarts` and `max_spawns` are **deleted** — config `Load` now
+  **rejects** either key rather than accepting a knob that does nothing. Remove
+  them from your TOML before upgrading or the daemon will not start. (Residual:
+  `crash_loop_window` is still parsed and defaulted but read by no code — see
+  §12.)
+- Brain prompts now carry session `Facts` + `ContextSummary` + the always-hot
+  memory tiers (`USER.md`, `MEMORY.md`) under a byte-stable budget (T2.4). The
+  brain finally sees the context the ledger was already keeping; nothing about
+  its authority changed (it still only drafts, except under 13.9's gates).
 
 ---
 
