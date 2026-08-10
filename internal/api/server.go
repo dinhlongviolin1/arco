@@ -143,6 +143,7 @@ type PoolStatusDTO struct {
 }
 type StatusResp struct {
 	Status             string                `json:"status"` // always "ok" when the daemon answers
+	Paused             bool                  `json:"paused"` // operator estop engaged (arco pause)
 	Sessions           map[string]int        `json:"sessions"`
 	Workers            map[string]int        `json:"workers"`
 	PendingEscalations []StatusEscalationDTO `json:"pending_escalations"`
@@ -397,6 +398,7 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	}
 	out := StatusResp{
 		Status:             "ok",
+		Paused:             s.eng.Paused(),
 		Sessions:           map[string]int{}, // never nil: zero state serializes as {}
 		Workers:            map[string]int{},
 		PendingEscalations: []StatusEscalationDTO{},

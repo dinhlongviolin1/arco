@@ -243,6 +243,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.EarnOutMinAgreement = cfg.EarnOutMinAgreement
 	eng.AgentKind = cfg.AgentKind
 	eng.AgentArgs = cfg.AgentArgs
+	eng.EStopPath = cfg.EStopPath() // `arco pause` sentinel — see reconcile.Paused
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
@@ -290,7 +291,7 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 				// Drain the merge queue strictly one item at a time on the sweep
 				// cadence (rev7/T3.2) — an error leaves the item pending for the
 				// next tick rather than looping hot.
-				for mq != nil {
+				for mq != nil && !eng.Paused() { // estop: no merges while paused
 					ok, err := mq.ProcessNext(sweepCtx)
 					if err != nil {
 						log.Printf("arco: mergeq: %v", err)

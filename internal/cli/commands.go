@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"text/tabwriter"
 	"time"
@@ -247,6 +248,10 @@ func newStatusCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 2, 2, ' ', 0)
+			if res.Paused {
+				fmt.Fprintln(tw, "*** PAUSED (estop engaged — arco resume to release) ***")
+				fmt.Fprintln(tw)
+			}
 			fmt.Fprintln(tw, "WORKERS")
 			states := make([]string, 0, len(res.Workers))
 			for st := range res.Workers {
@@ -480,6 +485,54 @@ func newAutonomyCmd() *cobra.Command {
 				fmt.Fprintf(tw, "%s\t%d\t%d\t%v\n", x.Class, x.Agree, x.Total, x.Promotes)
 			}
 			return tw.Flush()
+		},
+	}
+}
+
+// newPauseCmd engages the emergency stop: it writes the ESTOP sentinel next to
+// the ledger DIRECTLY (no daemon round-trip — the estop must work even when the
+// daemon or its socket is wedged). Pause-new-work, never-kill-in-flight: the
+// daemon's admission, brain, earn-out, CI polling, merge queue, and reaper all
+// stand down on their next check; running agents are untouched.
+func newPauseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pause",
+		Short: "engage the emergency stop: no new workers, no autonomous actions (in-flight work is never killed)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadCfg()
+			if err != nil {
+				return err
+			}
+			path := cfg.EStopPath()
+			if err := os.WriteFile(path, []byte("engaged by `arco pause` — remove with `arco resume`\n"), 0o600); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "paused (estop sentinel: %s)\n", path)
+			return nil
+		},
+	}
+}
+
+// newResumeCmd releases the emergency stop by removing the sentinel.
+func newResumeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resume",
+		Short: "release the emergency stop",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadCfg()
+			if err != nil {
+				return err
+			}
+			err = os.Remove(cfg.EStopPath())
+			if os.IsNotExist(err) {
+				fmt.Fprintln(cmd.OutOrStdout(), "not paused")
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "resumed")
+			return nil
 		},
 	}
 }

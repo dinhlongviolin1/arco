@@ -336,6 +336,14 @@ earnout_min_agreement = 0.9
 agent_kind = "claude"
 # agent_args = ["--some-flag"]   # extra argv appended to the agent invocation
 ```
+
+**Emergency stop:** `arco pause` writes an `ESTOP` sentinel next to the ledger
+(file-direct — works even when the daemon is wedged); `arco resume` removes it.
+While engaged: no new workers, no brain decisions, no earn-out answers, no CI
+polling, no merges, no reaping — in-flight agents are never killed, liveness
+bookkeeping continues, and operator actions (answer/confirm/kill/redeliver)
+still work. Any unreadable/corrupt sentinel counts as engaged (fails stopped).
+`arco status` shows PAUSED.
 `chmod 700 ~/.arco` (preflight requires the state/socket dir be `0700`).
 
 **2. Start the daemon:** `arco daemon --config ~/.arco/config.toml`

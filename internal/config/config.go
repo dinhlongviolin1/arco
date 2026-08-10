@@ -115,6 +115,8 @@ type Config struct {
 	AgentKind string   `toml:"agent_kind"`
 	AgentArgs []string `toml:"agent_args"`
 
+	// (EStopPath is derived, not configured — see the method below.)
+
 	// EarnOut* gate the autonomy earn-out (rev7/T3.5): a question_class needs at
 	// least EarnOutMinDecisions human decisions on drafted escalations with an
 	// agreement ratio ≥ EarnOutMinAgreement before the sweep may answer new
@@ -199,6 +201,14 @@ func Defaults() Config {
 
 // Load reads a TOML config file at path (missing file is OK — defaults are
 // used), overlays it on Defaults(), then applies ARCO_* environment overrides.
+// EStopPath is the emergency-stop sentinel file, derived from the ledger's
+// location so the daemon and the `arco pause`/`arco resume` CLI (which writes
+// the file DIRECTLY — the estop must work even when the daemon or its socket
+// is wedged) can never disagree about where it lives.
+func (c Config) EStopPath() string {
+	return filepath.Join(filepath.Dir(c.DBPath), "ESTOP")
+}
+
 func Load(path string) (Config, error) {
 	cfg := Defaults()
 	if path != "" {

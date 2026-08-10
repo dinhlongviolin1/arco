@@ -36,6 +36,10 @@ var (
 	// configured) and a worker's VM name has no client in it — the op is refused
 	// rather than silently falling back to the local client.
 	ErrUnknownVM = errors.New("core: unknown VM")
+	// ErrPaused is returned when the operator's emergency stop (the ESTOP
+	// sentinel) is engaged: no new workers, no autonomous actions. In-flight
+	// work is never killed; operator-initiated actions still run.
+	ErrPaused = errors.New("core: arco is paused — run `arco resume` (or remove the ESTOP file)")
 	// ErrAgentBusy is returned when an action would interrupt an agent that is
 	// observably working/blocked (e.g. redelivering its task).
 	ErrAgentBusy = errors.New("core: agent is busy")

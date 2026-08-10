@@ -54,10 +54,18 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// worker liveness, so it also runs when there are no live workers. Workers
 	// finalized later in THIS sweep are reaped on the next one (eventual).
 	res.LeasesReaped, _ = e.reapLeases(ctx)
+	// The estop (operator pause) stands down every AUTONOMOUS leg of the sweep —
+	// activity restores, earn-out answers, rollup brain calls, CI polling, and
+	// the orphan reaper — while liveness observation and state finalization
+	// continue (bookkeeping of reality, not new work). Checked once per sweep.
+	paused := e.Paused()
 	// Return sessions the human-activity back-off demoted to auto once their pane
 	// has been quiet long enough (D9/T3.6). Session-scoped, so it runs before any
-	// worker-shaped early return below.
-	res.ActivityRestored = e.restoreActivityBackoff(ctx)
+	// worker-shaped early return below. Not while paused: restoring AUTONOMY
+	// under an engaged estop would be exactly the surprise estop exists to stop.
+	if !paused {
+		res.ActivityRestored = e.restoreActivityBackoff(ctx)
+	}
 	// Pause workers that have sat unclaimed in the pool past the TTL.
 	if e.PoolTTL > 0 {
 		res.PooledPaused, _ = e.reapPooled(ctx)
@@ -73,12 +81,14 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// escalation-timeout reaper (an expired escalation is no longer promotable)
 	// and before the pending-escalation snapshot below, so a worker resumed here
 	// is not mistaken for paused-with-pending.
-	res.AutoAnswered = e.autoAnswerEarnedOut(ctx)
+	if !paused {
+		res.AutoAnswered = e.autoAnswerEarnedOut(ctx)
+	}
 	// Supersession rollup: re-drive any ALIVE parent whose children have
 	// completed. maybeRollup coalesces to ≤1 rollup brain call per session per
 	// RollupInterval, so triggering opportunistically every sweep (regardless of
 	// which path made a child terminal) is safe.
-	if e.RollupInterval > 0 && e.Brain.Enabled {
+	if e.RollupInterval > 0 && e.Brain.Enabled && !paused {
 		res.RollupsTriggered = e.triggerRollups(all)
 	}
 	// Re-drive brain classifications lost to a crash in the off-write-path call
@@ -139,7 +149,9 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		// burning quota; its worktree is preserved). Identity-strict, so it never
 		// closes a stranger's recycled pane. Runs before the liveness loop and even
 		// when the VM has no live workers.
-		res.AgentsReaped += e.reapOrphanedAgents(ctx, g.client, g.all, agents, pendingEsc)
+		if !paused { // estop: no destructive actions at all while paused
+			res.AgentsReaped += e.reapOrphanedAgents(ctx, g.client, g.all, agents, pendingEsc)
+		}
 
 		if len(g.live) == 0 {
 			continue
@@ -224,7 +236,9 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// workers, after the liveness loop (a candidate's agent is expectedly gone —
 	// finalize already declines it above, so candidates are always still live-
 	// listed here). Best-effort evidence gathering; never a sweep error.
-	e.pollCICheckRuns(ctx, all)
+	if !paused {
+		e.pollCICheckRuns(ctx, all)
+	}
 	return res, nil
 }
 

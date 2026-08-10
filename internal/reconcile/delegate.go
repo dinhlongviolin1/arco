@@ -27,6 +27,9 @@ const defaultMaxDepth = 2
 // re-drive sees the cid resolved and never spawns a duplicate child (empty for
 // non-brain callers).
 func (e *Engine) Delegate(ctx context.Context, parentWorkerID, task, brainCID string) (DispatchResult, error) {
+	if e.Paused() {
+		return DispatchResult{}, core.ErrPaused
+	}
 	// Children are assigned DefaultVM like every other spawn — resolve its client
 	// before any durable write (routing on + unresolvable VM refuses, T3.3).
 	vmc, err := e.vmFor(e.DefaultVM)
