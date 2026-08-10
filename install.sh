@@ -19,7 +19,7 @@ os=$(uname -s | tr '[:upper:]' '[:lower:]')
 case "$os" in
   linux)  os=linux ;;
   darwin) os=darwin ;;
-  *) err "unsupported OS: $os (Windows: download the .zip from the releases page)" ;;
+  *) err "unsupported OS: $os (arco is a unix daemon: linux for the daemon, darwin for the CLI)" ;;
 esac
 
 # --- Detect arch ---
