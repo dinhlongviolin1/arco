@@ -32,6 +32,10 @@ var (
 	// ErrVMAtCapacity is returned when a VM already runs the maximum number of
 	// active workers (per-VM concurrency admission).
 	ErrVMAtCapacity = errors.New("core: VM at worker capacity")
+	// ErrUnknownVM is returned when VM routing is enabled (a fleet registry is
+	// configured) and a worker's VM name has no client in it — the op is refused
+	// rather than silently falling back to the local client.
+	ErrUnknownVM = errors.New("core: unknown VM")
 	// ErrAgentBusy is returned when an action would interrupt an agent that is
 	// observably working/blocked (e.g. redelivering its task).
 	ErrAgentBusy = errors.New("core: agent is busy")

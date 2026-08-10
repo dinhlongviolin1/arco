@@ -77,6 +77,20 @@ evidence only: the worker stays `completed_candidate`. CLI: `arco queue
 
 T3.1 shipped as `internal/reconcile/civerify.go` (not verify.go — the human diff-gate stays untouched): config gate `ci_check_runs` (default off) has the sweep poll `gh api .../check-runs` inside the candidate's worktree; green → one ledger-deduped `verification_artifact` per (worker, head SHA), idempotent across restarts; red → one pending `confirm` escalation; pending/zero-runs/gh-error → retry next sweep. CI success is evidence only — the worker stays `completed_candidate`.
 
+T3.3 shipped as `Engine.VMs` (a named-VM registry, `internal/reconcile/vmroute.go`)
+built by the daemon from `[[vms]]` config blocks (`vm.NewRemote` per entry, only
+when `use_local_vm`): every per-worker VM op — spawn/dispatch launch + prompt
+delivery, sweep liveness/GitHeads/orphan-reaper (grouped once per VM), kill,
+diff, redeliver, escalation delivery, brain `run_again` — resolves through
+`vmFor(worker.VM)`. nil registry = routing off (names stay labels); a named VM
+with no entry refuses spawns pre-launch and is unobservable to the sweep (never
+a local-client fallback, never a mass-finalize on one host's ssh error). Bad
+fleet defs and a registry-less `default_vm` fail daemon start; per-VM
+reachability is probed at boot (logged, not fatal). `VMDef.Socket` is a reserved
+knob (no herdr CLI socket input exists). Remote worktree provisioning is NOT
+included — see deployment-hardening §10 for the shared-storage constraint and
+the live cross-host routing smoke (`TestIntegration_CrossVMRoutingDispatch`).
+
 ## M4 — Close-out
 
 | ID | Task |

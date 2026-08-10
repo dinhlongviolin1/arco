@@ -42,7 +42,11 @@ func (e *Engine) RedeliverInitialTask(ctx context.Context, workerID string) erro
 	if w.HeadCommit != "" && w.BaseCommit != "" && w.HeadCommit != w.BaseCommit {
 		return fmt.Errorf("%w: redeliver refused — worker HEAD advanced past base (the task likely already ran); verify, then arco kill + re-dispatch", core.ErrIllegalTransition)
 	}
-	if st, _ := e.VM.AgentStatus(ctx, promptTarget(w)); st == "working" || st == "blocked" {
+	vmc, err := e.vmFor(w.VM) // pane targets are per-host: status + prompt go to the worker's own VM
+	if err != nil {
+		return err
+	}
+	if st, _ := vmc.AgentStatus(ctx, promptTarget(w)); st == "working" || st == "blocked" {
 		return fmt.Errorf("redeliver refused: agent status %q — use arco kill if it is wedged: %w", st, core.ErrAgentBusy)
 	}
 	// Point of no return: re-validate the load-bearing invariants under the write
@@ -75,7 +79,7 @@ func (e *Engine) RedeliverInitialTask(ctx context.Context, workerID string) erro
 	}
 	target := promptTarget(w)
 	e.NoteSelfPaneOp(target) // arco-caused pane activity — excluded from the D9 back-off
-	if err := e.VM.PromptReady(ctx, target, promptIntentText(w.Task)); err != nil {
+	if err := vmc.PromptReady(ctx, target, promptIntentText(w.Task)); err != nil {
 		e.errorEvent(ctx, workerID, "redeliver failed: "+err.Error())
 		return err
 	}
