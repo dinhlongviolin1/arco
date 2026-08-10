@@ -22,21 +22,19 @@ func writeCred(t *testing.T, dir, name, content string) {
 func TestCredsDir_FileBeatsEnvAndToml(t *testing.T) {
 	cd := t.TempDir()
 	writeCred(t, cd, "intake_secret", "file-intake-secret-0123456789\n") // trailing newline: systemd-creds files often end with one
-	writeCred(t, cd, "telegram_token", "file-tg-token")
 	t.Setenv("CREDENTIALS_DIRECTORY", cd)
 	t.Setenv("ARCO_INTAKE_SECRET", "env-intake-secret-0123456789")
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "arco.toml")
 	require.NoError(t, os.WriteFile(path, []byte(
-		"intake_secret = \"toml-intake-secret-0123456789\"\n[telegram]\nenabled = true\ntoken = \"toml-tg-token\"\n",
+		"intake_secret = \"toml-intake-secret-0123456789\"\n",
 	), 0o600))
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
 	require.Equal(t, "file-intake-secret-0123456789", cfg.IntakeSecret,
 		"credential file wins and the trailing newline is trimmed")
-	require.Equal(t, "file-tg-token", cfg.Telegram.Token)
 }
 
 // Without a credentials dir the existing env-over-TOML behavior is unchanged.
@@ -49,21 +47,19 @@ func TestCredsDir_EnvFallbackWhenNoDir(t *testing.T) {
 	require.Equal(t, "env-intake-secret-0123456789", cfg.IntakeSecret)
 }
 
-// A credentials dir that exists but lacks a given credential file falls back
-// per-key (missing telegram_token must not clobber the env/TOML value, and a
-// present intake_secret must still win) — partial LoadCredential= setups are
-// normal.
+// A credentials dir that exists but LACKS a given credential file must not
+// clobber the TOML/env value with empty — a partial LoadCredential= setup is
+// normal (only some secrets wired as files).
 func TestCredsDir_PerKeyFallback(t *testing.T) {
-	cd := t.TempDir()
-	writeCred(t, cd, "intake_secret", "file-intake-secret-0123456789")
+	cd := t.TempDir() // exists but has no intake_secret file
 	t.Setenv("CREDENTIALS_DIRECTORY", cd)
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "arco.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[telegram]\ntoken = \"toml-tg-token\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("intake_secret = \"toml-intake-secret-0123456789\"\n"), 0o600))
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.Equal(t, "file-intake-secret-0123456789", cfg.IntakeSecret)
-	require.Equal(t, "toml-tg-token", cfg.Telegram.Token, "missing cred file → per-key fallback")
+	require.Equal(t, "toml-intake-secret-0123456789", cfg.IntakeSecret,
+		"missing cred file → the TOML value survives, not an empty clobber")
 }

@@ -19,18 +19,6 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
-// Telegram is the optional Telegram add-on config (off by default).
-type Telegram struct {
-	Enabled bool   `toml:"enabled"`
-	Token   string `toml:"token"`
-}
-
-// Web is the optional Web UI add-on config (off by default).
-type Web struct {
-	Enabled bool   `toml:"enabled"`
-	Addr    string `toml:"addr"`
-}
-
 // Notify is the push decision-card config (off by default: no URLs → a no-op
 // sender). URLs are shoutrrr service URLs (ntfy and friends); MinLevel filters
 // out cards below that severity ("info"|"warn"|"urgent", "" = info). An
@@ -69,14 +57,13 @@ type VMDef struct {
 // time.Duration values; the pinned operability defaults come from
 // build-guide-rev6 §C and are overridable via TOML or ARCO_* env vars.
 type Config struct {
-	DBPath        string `toml:"db_path"`
-	Socket        string `toml:"socket"`
-	TCPAddr       string `toml:"tcp_addr"`
-	ClavisProfile string `toml:"clavis_profile"`
-	BrainProfile  string `toml:"brain_profile"`
-	BrainModel    string `toml:"brain_model"`
-	HerdrBin      string `toml:"herdr_bin"`
-	UseLocalVM    bool   `toml:"use_local_vm"` // opt in to the real herdr LocalVMClient (else Fake)
+	DBPath       string `toml:"db_path"`
+	Socket       string `toml:"socket"`
+	TCPAddr      string `toml:"tcp_addr"`
+	BrainProfile string `toml:"brain_profile"`
+	BrainModel   string `toml:"brain_model"`
+	HerdrBin     string `toml:"herdr_bin"`
+	UseLocalVM   bool   `toml:"use_local_vm"` // opt in to the real herdr LocalVMClient (else Fake)
 	// HerdrSocket is the herdr NDJSON socket the events.subscribe push
 	// subscriber dials (rev7 D1). herdr exports the path to its panes as
 	// $HERDR_SOCKET_PATH (e.g. ~/.config/herdr/herdr.sock). Empty (the
@@ -131,12 +118,8 @@ type Config struct {
 	MaxBrainCalls         int           `toml:"max_brain_calls"`
 	SweepInterval         time.Duration `toml:"sweep_interval"`
 	StallN                int           `toml:"stall_n"`
-	CrashLoopWindow       time.Duration `toml:"crash_loop_window"`
 	LivenessMissThreshold int           `toml:"liveness_miss_threshold"`
-	SuspectTimeout        time.Duration `toml:"suspect_timeout"`
-	CheckpointThreshold   int           `toml:"checkpoint_threshold"`
 	EscalationTimeout     time.Duration `toml:"escalation_timeout"`
-	AutoAnswerBudgetN     int           `toml:"auto_answer_budget_n"`
 	MaxChildrenPerSession int           `toml:"max_children_per_session"`
 	DefaultVM             string        `toml:"default_vm"`         // VM new workers are assigned to ("" = unassigned)
 	MaxWorkersPerVM       int           `toml:"max_workers_per_vm"` // per-VM concurrency cap (0 = unlimited)
@@ -156,12 +139,9 @@ type Config struct {
 	// VMs is the configured VM fleet ([[vms]] blocks) the daemon builds the
 	// Engine's named-VM registry from (rev7/T3.3). Default: empty — routing
 	// stays off and VM names stay pure labels.
-	VMs []VMDef `toml:"vms"`
-
-	Telegram Telegram `toml:"telegram"`
-	Web      Web      `toml:"web"`
-	Notify   Notify   `toml:"notify"`
-	Sandbox  Sandbox  `toml:"sandbox"`
+	VMs     []VMDef `toml:"vms"`
+	Notify  Notify  `toml:"notify"`
+	Sandbox Sandbox `toml:"sandbox"`
 }
 
 // Defaults returns a Config populated with the pinned build-guide defaults.
@@ -179,12 +159,8 @@ func Defaults() Config {
 		SweepInterval: 30 * time.Second,
 
 		StallN:                3,
-		CrashLoopWindow:       10 * time.Minute,
 		LivenessMissThreshold: 3,
-		SuspectTimeout:        60 * time.Second, // >= one SweepInterval
-		CheckpointThreshold:   40,
 		EscalationTimeout:     30 * time.Minute,
-		AutoAnswerBudgetN:     10,
 		MaxChildrenPerSession: 8,
 		RollupInterval:        5 * time.Minute,
 		PerSessionBrainRate:   6,
@@ -247,6 +223,14 @@ func Load(path string) (Config, error) {
 var removedKnobs = map[string]bool{
 	"max_spawns":          true,
 	"crash_loop_restarts": true,
+	// Never-enforced knobs deleted after the rev7 review found them dead
+	// (parsed + defaulted, read by nothing). Fail loud so a stale config that
+	// set them isn't silently ignored.
+	"crash_loop_window":    true,
+	"suspect_timeout":      true,
+	"checkpoint_threshold": true,
+	"auto_answer_budget_n": true,
+	"clavis_profile":       true, // top-level; the live one is per-pool (arco pool create --profile)
 }
 
 // rejectRemovedKnobs errors on a removed top-level key; other unknown keys are
@@ -264,8 +248,7 @@ func rejectRemovedKnobs(undecoded []toml.Key) error {
 // credential name) to the config field it overrides — one line per credential.
 func credentialFiles(cfg *Config) map[string]*string {
 	return map[string]*string{
-		"intake_secret":  &cfg.IntakeSecret,
-		"telegram_token": &cfg.Telegram.Token,
+		"intake_secret": &cfg.IntakeSecret,
 	}
 }
 
@@ -304,9 +287,6 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_TCP_ADDR"); v != "" {
 		cfg.TCPAddr = v
-	}
-	if v := os.Getenv("ARCO_CLAVIS_PROFILE"); v != "" {
-		cfg.ClavisProfile = v
 	}
 	if v := os.Getenv("ARCO_BRAIN_PROFILE"); v != "" {
 		cfg.BrainProfile = v
