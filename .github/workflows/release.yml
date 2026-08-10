@@ -1,0 +1,47 @@
+name: release
+
+# Tag-driven single-binary releases: pushing a v* tag builds static arco
+# binaries (pure-Go SQLite → CGO_ENABLED=0, no runtime deps) and publishes
+# them as a GitHub Release with checksums.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build matrix
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/arm64; do
+            GOOS="${target%/*}" GOARCH="${target#*/}" \
+            go build -trimpath \
+              -ldflags "-s -w -X github.com/dinhlongviolin1/arco/internal/cli.version=${TAG}" \
+              -o "dist/arco_${TAG}_${target%/*}_${target#*/}" ./cmd/arco
+          done
+          (cd dist && sha256sum arco_* > SHA256SUMS)
+      - name: smoke the linux/amd64 binary
+        run: |
+          set -euo pipefail
+          BIN="dist/arco_${GITHUB_REF_NAME}_linux_amd64"
+          chmod +x "$BIN"
+          "$BIN" version
+          "$BIN" version | grep -q "${GITHUB_REF_NAME}"
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "arco ${GITHUB_REF_NAME}" --generate-notes
