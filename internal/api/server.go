@@ -852,6 +852,8 @@ func errStatus(err error) int {
 		errors.Is(err, core.ErrHighBlastScope), errors.Is(err, core.ErrEscalationState),
 		errors.Is(err, core.ErrAgentBusy):
 		return http.StatusConflict
+	case errors.Is(err, core.ErrPaused):
+		return http.StatusServiceUnavailable // estop engaged — temporary, retriable after resume
 	default:
 		return http.StatusInternalServerError
 	}
