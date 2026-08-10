@@ -25,20 +25,31 @@ repositories yet** — see [SECURITY.md](SECURITY.md).
 
 ## Install
 
-Each release ships a static single binary (pure-Go SQLite — no libc, no runtime deps),
-built by [`release.yml`](.github/workflows/release.yml) from a `v*` tag:
+One static binary (pure-Go SQLite — no libc, no runtime deps), released the same way as
+`clavis`: goreleaser on every `v*` tag, `checksums.txt` alongside.
+
+### Quick install (Linux / macOS)
 
 ```sh
-# latest release binary (linux amd64; also linux_arm64, darwin_arm64)
-curl -fL -o arco "$(curl -fsSL https://api.github.com/repos/dinhlongviolin1/arco/releases/latest \
-  | grep -o 'https://[^"]*arco_[^"]*_linux_amd64')" && chmod +x arco
-./arco version
-
-# or straight from source
-go install github.com/dinhlongviolin1/arco/cmd/arco@latest
+curl -fsSL https://raw.githubusercontent.com/dinhlongviolin1/arco/main/install.sh | sh
 ```
 
-Verify downloads against the release's `SHA256SUMS`.
+Or via Homebrew (macOS + Linuxbrew, once the tap is published):
+
+```sh
+brew install dinhlongviolin1/tap/arco
+```
+
+### Other ways
+
+```sh
+go install github.com/dinhlongviolin1/arco/cmd/arco@latest   # from source
+```
+
+Or grab `arco_<os>_<arch>.tar.gz` from the
+[releases page](https://github.com/dinhlongviolin1/arco/releases) and verify it against
+`checksums.txt`. Pin a version with `ARCO_VERSION=v0.1.0`, choose the target dir with
+`ARCO_INSTALL_DIR=~/.local/bin`.
 
 ### Running it (incl. LXC / Proxmox)
 
