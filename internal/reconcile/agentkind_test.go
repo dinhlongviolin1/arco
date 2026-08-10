@@ -45,3 +45,18 @@ func TestSpawn_NonClaudeKindLaunchesWithAgentArgsOnly(t *testing.T) {
 	require.Equal(t, []string{"--profile", "work"}, launched[0].Args,
 		"a non-claude kind must not inherit claude's compiled permission argv")
 }
+
+func TestSpawn_KindRecordedOnRowMatchesLaunch(t *testing.T) {
+	e, s, fake := newEngine(t)
+	e.ConfigDir = t.TempDir()
+	e.AgentKind = "codex"
+	repo, _ := localRepo(t)
+
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	require.NoError(t, err)
+
+	w, err := s.Reader().GetWorker(res.WorkerID)
+	require.NoError(t, err)
+	require.Equal(t, "codex", w.AgentKind, "the persisted row must record the ACTUAL launched kind, not hardcoded claude")
+	require.Equal(t, "codex", fake.Launched()[0].Kind)
+}

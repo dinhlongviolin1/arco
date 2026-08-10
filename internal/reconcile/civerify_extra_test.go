@@ -103,7 +103,7 @@ func TestCIVerify_MalformedJSONIsTransient(t *testing.T) {
 // SAME store (a daemon restart) must not duplicate the artifact.
 func TestCIVerify_ArtifactIdempotentAcrossRestart(t *testing.T) {
 	e, s, fake := newEngine(t)
-	id := mkCandidate(t, e, s, "/wt/ci-reboot", "0ddba1l7")
+	id := mkCandidate(t, e, s, "/wt/ci-reboot", "0ddba1c7")
 	fake.Agents = nil
 
 	var calls []ciCall

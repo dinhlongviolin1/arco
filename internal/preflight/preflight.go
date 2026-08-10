@@ -149,6 +149,17 @@ func Evaluate(p Probe) Report {
 		Detail: "sandbox.enabled is set but the srt binary was not found on PATH — refusing to boot workers that would be silently unsandboxed",
 	})
 
+	// sandbox_enabled (WARNING): with the sandbox off, a compromised worker runs
+	// as the daemon's own UID and every protective primitive (per-worker intake
+	// keys, 0600 cred files, the estop sentinel) is only as strong as OS file
+	// perms owned by that same UID — a sibling worker can read/defeat them. The
+	// crypto can lull an operator into thinking workers are isolated when they
+	// are not, so say so out loud at every boot that leaves it off.
+	r.Checks = append(r.Checks, Check{
+		Name: "sandbox_enabled", Critical: false, Pass: p.SandboxEnabled,
+		Detail: "sandbox is OFF: workers share the daemon's UID and are not OS-isolated — per-worker keys/cred-files/estop are best-effort against a compromised worker. Enable [sandbox] + a per-worker UID for real containment.",
+	})
+
 	return r
 }
 

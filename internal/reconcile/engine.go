@@ -412,8 +412,18 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 		if err != nil {
 			return err
 		}
-		headChanged := in.ObservedHead != "" && in.ObservedHead != w.HeadCommit
-		if err := tx.ObserveWorker(in.WorkerID, core.WorkerObservation{HeadCommit: in.ObservedHead}); err != nil {
+		// observed_head arrives from (untrusted) intake and flows verbatim into
+		// git/gh command lines downstream (mergeq fetch/merge, civerify's
+		// `gh api .../commits/<head>/check-runs`). Gate it to a plausible commit
+		// id HERE, at the boundary, so a worker cannot poison head_commit with an
+		// `--upload-pack=…` / `../` / metacharacter payload; a bad shape is simply
+		// dropped (the aliveness signal still lands, the head stays what it was).
+		observedHead := in.ObservedHead
+		if observedHead != "" && !core.LooksLikeRev(observedHead) {
+			observedHead = ""
+		}
+		headChanged := observedHead != "" && observedHead != w.HeadCommit
+		if err := tx.ObserveWorker(in.WorkerID, core.WorkerObservation{HeadCommit: observedHead}); err != nil {
 			return err
 		}
 		target, amb := fusion.Resolve(w.State, fusion.Signals{

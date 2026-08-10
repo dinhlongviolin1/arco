@@ -14,6 +14,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -52,7 +53,20 @@ var _ core.Store = (*Store)(nil)
 // foreign keys on. Use ":memory:" style paths only via OpenDSN for tests.
 func Open(path string) (*Store, error) {
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)&_pragma=journal_mode(WAL)"
-	return openDSN(dsn)
+	s, err := openDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	// The ledger holds task text, escalation details, and anything redaction
+	// missed. Its enclosing state dir is 0700, but tighten the DB (and its WAL/
+	// SHM siblings) to 0600 directly — MkdirAll won't re-tighten a pre-existing
+	// looser dir, and defense-in-depth shouldn't hinge on one perms assumption.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if p := path + suffix; p != "" && path != ":memory:" {
+			_ = os.Chmod(p, 0o600) // best-effort: the file may not exist yet (WAL/SHM)
+		}
+	}
+	return s, nil
 }
 
 func openDSN(dsn string) (*Store, error) {

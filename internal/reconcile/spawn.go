@@ -34,6 +34,16 @@ import (
 // implemented against the confirmed herdr 0.7.5 contract (workspace create →
 // list → agent start); live end-to-end verification against a running herdr is
 // user-gated (spawning a real agent is an outward, quota-consuming side effect).
+// agentKind is the configured herdr agent kind ("" → "claude"). Single source
+// of truth so the persisted worker row and the launch always agree (a row that
+// said "claude" while launching another kind misfed the future normalizer).
+func (e *Engine) agentKind() string {
+	if e.AgentKind == "" {
+		return "claude"
+	}
+	return e.AgentKind
+}
+
 func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession bool, repo, base string) (DispatchResult, error) {
 	if repo == "" {
 		return DispatchResult{}, fmt.Errorf("reconcile: Spawn requires a repo (use Dispatch for the prompt path)")
@@ -52,6 +62,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		return DispatchResult{}, err
 	}
 	workerID := ulid.Make().String()
+	kind := e.agentKind() // configured herdr kind; recorded on the row AND used at launch
 	workspace := "arco_" + workerID
 	var sessionID string
 	var granted map[string]bool
@@ -91,7 +102,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 		}
 		if err := tx.CreateWorker(core.Worker{
 			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting, VM: e.DefaultVM,
-			Workspace: workspace, Task: task, RunReason: "spawn", AgentKind: "claude",
+			Workspace: workspace, Task: task, RunReason: "spawn", AgentKind: kind,
 			IntakeUID: e.SpawnUID,
 		}); err != nil {
 			return err
@@ -323,10 +334,7 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, vmc core.VMClient, work
 	// gets the permcompile args. A non-claude kind runs with e.AgentArgs alone —
 	// the cfg dir is still compiled (inert for it) so the audit trail of WHAT
 	// was granted survives regardless of kind.
-	kind := e.AgentKind
-	if kind == "" {
-		kind = "claude"
-	}
+	kind := e.agentKind()
 	var args []string
 	if kind == "claude" {
 		args = permcompile.LaunchArgs(cfgDir, granted, cat)

@@ -243,6 +243,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	eng.EarnOutMinAgreement = cfg.EarnOutMinAgreement
 	eng.AgentKind = cfg.AgentKind
 	eng.AgentArgs = cfg.AgentArgs
+	if cfg.AgentKind != "" && cfg.AgentKind != "claude" {
+		// The compiled permission surface (settings.json/hooks/allow-deny) is
+		// claude-only; a non-claude kind launches with none of it. Loud, since it
+		// silently forfeits layer 1 of the defense.
+		log.Printf("arco: WARNING: agent_kind=%q launches WITHOUT the compiled permission surface (settings/hooks) — workers of this kind are unguarded; rely on the OS sandbox", cfg.AgentKind)
+	}
 	eng.EStopPath = cfg.EStopPath() // `arco pause` sentinel — see reconcile.Paused
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
@@ -256,6 +262,10 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	if err != nil {
 		return fmt.Errorf("daemon: listen %s: %w", cfg.Socket, err)
 	}
+	// The control socket is unauthenticated (dir-perm trust model, §2); tighten
+	// it to 0600 so its protection doesn't rest solely on the 0700 dir, which
+	// MkdirAll won't re-tighten if it pre-existed looser.
+	_ = os.Chmod(cfg.Socket, 0o600)
 
 	// ConnContext captures each conn's peer UID via SO_PEERCRED (unix only), so
 	// the intake can bind worker events to the worker's spawn-time UID (rev7/T1.6).

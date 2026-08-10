@@ -20,6 +20,7 @@
 package quarantine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,6 +28,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/dinhlongviolin1/arco/internal/spawnenv"
 )
 
 // repoConfigFiles are the repo-shipped config/tool surfaces at the worktree root.
@@ -122,21 +126,45 @@ func Run(worktree string, gitBin string) (Report, error) {
 	return rep, nil
 }
 
+// qgitTimeout bounds each quarantine git op — these are fast local $GIT_DIR
+// config/rev-parse calls on a fresh clone, but a wedged git must not stall the
+// spawn path indefinitely.
+const qgitTimeout = 15 * time.Second
+
+// qgit builds a `git -C <worktree> <args…>` command with arco's own credentials
+// SCRUBBED from the environment (precondition P1 — no arco/provider secret ever
+// reaches a git subprocess operating on a just-checked-out attacker tree) and a
+// bounded context. Matches vm.newCmd / worktree.run; the caller runs it.
+func qgit(worktree, gitBin string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), qgitTimeout)
+	cmd := exec.CommandContext(ctx, gitBin, append([]string{"-C", worktree}, args...)...)
+	cmd.Env = spawnenv.Scrub(os.Environ())
+	return cmd, cancel
+}
+
 // disableFSMonitor unsets a repo-local core.fsmonitor, then — if the value is
 // still EFFECTIVE (set in host global/system config, which --unset-all can't
 // reach) — shadows it to false at repo scope so the daemon hook can't run.
 func disableFSMonitor(worktree, gitBin string) bool {
-	_ = exec.Command(gitBin, "-C", worktree, "config", "--unset-all", "core.fsmonitor").Run()
-	out, _ := exec.Command(gitBin, "-C", worktree, "config", "--get", "core.fsmonitor").Output()
+	c1, cancel1 := qgit(worktree, gitBin, "config", "--unset-all", "core.fsmonitor")
+	_ = c1.Run()
+	cancel1()
+	c2, cancel2 := qgit(worktree, gitBin, "config", "--get", "core.fsmonitor")
+	out, _ := c2.Output()
+	cancel2()
 	if strings.TrimSpace(string(out)) == "" {
 		return true
 	}
-	return exec.Command(gitBin, "-C", worktree, "config", "core.fsmonitor", "false").Run() == nil
+	c3, cancel3 := qgit(worktree, gitBin, "config", "core.fsmonitor", "false")
+	defer cancel3()
+	return c3.Run() == nil
 }
 
 // addExclude appends the quarantine glob to the repo's info/exclude (best-effort).
 func addExclude(worktree, gitBin string) {
-	out, err := exec.Command(gitBin, "-C", worktree, "rev-parse", "--git-path", "info/exclude").Output()
+	cmd, cancel := qgit(worktree, gitBin, "rev-parse", "--git-path", "info/exclude")
+	defer cancel()
+	out, err := cmd.Output()
 	if err != nil {
 		return
 	}
@@ -163,5 +191,7 @@ func renameAside(p string) error {
 }
 
 func gitConfig(worktree, gitBin, key, val string) error {
-	return exec.Command(gitBin, "-C", worktree, "config", key, val).Run()
+	cmd, cancel := qgit(worktree, gitBin, "config", key, val)
+	defer cancel()
+	return cmd.Run()
 }
