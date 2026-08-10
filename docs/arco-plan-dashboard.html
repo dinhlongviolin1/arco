@@ -172,6 +172,7 @@
   .sev { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 3px 0; border-radius: 6px; text-align: center; height: fit-content; }
   .sev.high { background: rgba(248,113,113,.13); color: var(--red); }
   .sev.med  { background: rgba(251,146,60,.13); color: var(--orange); }
+  .sev.done { background: rgba(74,222,128,.13); color: var(--green); }
   .find .t { color: var(--text); font-weight: 600; }
   .find .d { color: var(--muted); margin-top: 2px; font-size: 13px; }
 
@@ -255,7 +256,7 @@
     <a class="n1" href="#plan">① Original Plan</a>
     <a class="n2" href="#progress">② What's Done</a>
     <a class="n3" href="#change">③ rev-7 — What Changes</a>
-    <div class="nav-date">2026-08-07 · rev-7</div>
+    <div class="nav-date">2026-08-07 · rev-7 · §2 re-scored 2026-08-10</div>
   </div>
 </nav>
 
@@ -270,9 +271,9 @@
     <small>The rev-7 repositioning: arco stops competing on remote control and prompt-answering (both taken), and owns the empty layer — outcome supervision.</small>
   </div>
   <div class="hero-stats">
-    <div class="stat s1"><div class="k">~88%</div><div class="l">of P2 MVP scope built &amp; live-verified end-to-end on vm0</div></div>
-    <div class="stat s2"><div class="k">~58%</div><div class="l">of the full documented vision (incl. P3 swarm + add-ons)</div></div>
-    <div class="stat s3"><div class="k">15 / 25</div><div class="l">promised CLI commands shipped (60%)</div></div>
+    <div class="stat s1"><div class="k">~95%</div><div class="l">of P2 MVP scope built &amp; live-verified end-to-end on vm0</div></div>
+    <div class="stat s2"><div class="k">~72%</div><div class="l">of the full documented vision (incl. P3 swarm + add-ons)</div></div>
+    <div class="stat s3"><div class="k">19 / 25</div><div class="l">CLI commands shipped (76%) — 15 promised + 4 beyond plan</div></div>
     <div class="stat s4"><div class="k">D1–D9</div><div class="l">rev-7 decisions: 5 changed · 1 new · 1 promoted · 2 kept</div></div>
   </div>
 </header>
@@ -324,8 +325,8 @@
       <thead><tr><th style="width:120px">Roadmap</th><th style="width:170px">Codename</th><th>Promise</th><th style="width:130px">Status today</th></tr></thead>
       <tbody>
         <tr><td>P1</td><td class="mono" style="color:var(--accent2)">Concierge</td><td>One VM, one worker, full ledger loop, human answers every escalation.</td><td><span class="pill p-live">LIVE ✓</span></td></tr>
-        <tr><td>P2</td><td class="mono" style="color:var(--accent2)">MVP</td><td>Pools &amp; leases, capability tree, diff-gated verify, brain drafts in shadow mode, signed intake.</td><td><span class="pill p-part">~88%</span></td></tr>
-        <tr><td>P3</td><td class="mono" style="color:var(--accent2)">Swarm</td><td>Cross-VM fleets over SSH, multi-worker sessions, supersession, autonomy graduation.</td><td><span class="pill p-todo">FOUNDATION</span></td></tr>
+        <tr><td>P2</td><td class="mono" style="color:var(--accent2)">MVP</td><td>Pools &amp; leases, capability tree, diff-gated verify, brain drafts in shadow mode, signed intake.</td><td><span class="pill p-part">~95%</span></td></tr>
+        <tr><td>P3</td><td class="mono" style="color:var(--accent2)">Swarm</td><td>Cross-VM fleets over SSH, multi-worker sessions, supersession, autonomy graduation.</td><td><span class="pill p-part">~55%</span></td></tr>
         <tr><td>Add-ons</td><td class="mono" style="color:var(--accent2)">—</td><td>Telegram notify, web dashboard, scheduler, playbooks.</td><td><span class="pill p-todo">0%</span></td></tr>
       </tbody>
     </table>
@@ -336,7 +337,7 @@
 <section id="progress">
   <div class="sec-tag"><span class="dot" style="background:var(--green)"></span>Section 02</div>
   <h2>What We Have Done</h2>
-  <p class="sec-desc">Measured against the frozen plan above. Anchor evidence: <code>deployment-hardening.md §11</code> — a real dispatch on vm0 ran the whole loop autonomously (clone → quarantine → permcompile → herdr launch → scoped creds → work → completion), and an adversarial verifier agent <b>refuted</b> the five scariest durability claims with line-level evidence. All tests green under <code>-race</code>, ~6.8k test lines.</p>
+  <p class="sec-desc">Measured against the frozen plan above. Anchor evidence: <code>deployment-hardening.md §11</code> — a real dispatch on vm0 ran the whole loop autonomously (clone → quarantine → permcompile → herdr launch → scoped creds → work → completion), and an adversarial verifier agent <b>refuted</b> the five scariest durability claims with line-level evidence. All tests green under <code>-race</code>, ~13.8k test lines. <b>Re-scored 2026-08-10 against everything merged through rev-7 M1–M3</b> (PRs #73–#91, catalogued in <code>deployment-hardening.md §13</code>).</p>
 
   <div class="dials">
     <div class="dial-card">
@@ -344,13 +345,13 @@
         <svg width="128" height="128" viewBox="0 0 128 128">
           <circle cx="64" cy="64" r="54" fill="none" stroke="#1c2434" stroke-width="11"/>
           <circle class="ring-fill" cx="64" cy="64" r="54" fill="none" stroke="#4ade80" stroke-width="11"
-                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="88"/>
+                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="95"/>
         </svg>
-        <div class="num"><b style="color:var(--green)">88%</b><s>P2 MVP</s></div>
+        <div class="num"><b style="color:var(--green)">95%</b><s>P2 MVP</s></div>
       </div>
       <div>
         <h3>P2 MVP scope</h3>
-        <p>PASS-0/1 complete, PASS-2 live-verified, Task S done. Remaining: brain never sees the memory it checkpoints, memory tier 24a is manual-only, and three §E tests are missing.</p>
+        <p>PASS-0/1 complete, PASS-2 live-verified, Task S done. rev-7 closed the three residuals: the brain now gets Facts + ContextSummary + the hot memory tiers (T2.4, #81), and the §E test debt + kill-9 crash matrix landed (T1.7, #79). Remaining: per-topic 24a memory files are still JIT/manual and never enter the prompt.</p>
       </div>
     </div>
     <div class="dial-card">
@@ -358,13 +359,13 @@
         <svg width="128" height="128" viewBox="0 0 128 128">
           <circle cx="64" cy="64" r="54" fill="none" stroke="#1c2434" stroke-width="11"/>
           <circle class="ring-fill" cx="64" cy="64" r="54" fill="none" stroke="#e8a33d" stroke-width="11"
-                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="58"/>
+                  stroke-linecap="round" stroke-dasharray="339.3" stroke-dashoffset="339.3" data-pct="72"/>
         </svg>
-        <div class="num"><b style="color:var(--accent)">58%</b><s>FULL VISION</s></div>
+        <div class="num"><b style="color:var(--accent)">72%</b><s>FULL VISION</s></div>
       </div>
       <div>
         <h3>Full documented vision</h3>
-        <p>Weighted across P1–P3 + operator surface + add-ons. The cross-VM SSH layer is built and cross-host-validated (PR #69/#70) but not yet wired into dispatch; supersession, depth-2 sessions, and every add-on are unstarted. (rev-7 deliberately cuts part of this denominator — see §3.)</p>
+        <p>Weighted across P1–P3 + operator surface + add-ons. rev-7 moved this the most: the SSH layer is now <i>wired</i> — every worker-scoped op routes through a per-VM registry (T3.3, #90) — the operator floor exists (cards, <code>/metrics</code>, <code>status</code>), two verification legs emit evidence, and autonomy graduation is real but gated (T3.5, #91). Still unstarted: supersession, depth-2 sessions, remote worktree provisioning, and every add-on. (rev-7 deliberately cuts part of this denominator — see §3.)</p>
       </div>
     </div>
   </div>
@@ -374,13 +375,13 @@
     <div style="margin-top:14px">
       <div class="bar-row"><div class="name">PASS-0 · Freeze<small>decisions · schema · contracts</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
       <div class="bar-row"><div class="name">PASS-1 · Spine<small>ledger · store · domain · reconcile</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
-      <div class="bar-row"><div class="name">PASS-2 · Walking skeleton<small>live-verified §11 · memory gaps</small></div><div class="track"><div class="fill f-green" data-w="95"></div></div><div class="pct" style="color:var(--green)">95%</div></div>
-      <div class="bar-row"><div class="name">PASS-3 · Hardening<small>P1–P6 · ops recovery</small></div><div class="track"><div class="fill f-yellow" data-w="55"></div></div><div class="pct" style="color:var(--yellow)">55%</div></div>
+      <div class="bar-row"><div class="name">PASS-2 · Walking skeleton<small>live-verified §11 · memory gaps closed (T2.4)</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
+      <div class="bar-row"><div class="name">PASS-3 · Hardening<small>P1–P6 · ops recovery · rev-7 §13</small></div><div class="track"><div class="fill f-green" data-w="85"></div></div><div class="pct" style="color:var(--green)">85%</div></div>
       <div class="bar-row"><div class="name">Task S + S-cross<small>real herdr · real 2nd host</small></div><div class="track"><div class="fill f-green" data-w="100"></div></div><div class="pct" style="color:var(--green)">100%</div></div>
-      <div class="bar-row"><div class="name">CLI operator surface<small>15 of ~25 promised commands</small></div><div class="track"><div class="fill f-yellow" data-w="60"></div></div><div class="pct" style="color:var(--yellow)">60%</div></div>
-      <div class="bar-row"><div class="name">Cross-VM (P3 gate)<small>SSH layer validated, not wired</small></div><div class="track"><div class="fill f-orange" data-w="40"></div></div><div class="pct" style="color:var(--orange)">40%</div></div>
-      <div class="bar-row"><div class="name">Memory system<small>checkpoints written, never read by brain</small></div><div class="track"><div class="fill f-orange" data-w="35"></div></div><div class="pct" style="color:var(--orange)">35%</div></div>
-      <div class="bar-row"><div class="name">Notifications / observability<small>notify_level column exists, unused</small></div><div class="track"><div class="fill f-red" data-w="5"></div></div><div class="pct" style="color:var(--red)">5%</div></div>
+      <div class="bar-row"><div class="name">CLI operator surface<small>19 shipped: 15 promised + 4 beyond plan</small></div><div class="track"><div class="fill f-yellow" data-w="76"></div></div><div class="pct" style="color:var(--yellow)">76%</div></div>
+      <div class="bar-row"><div class="name">Cross-VM (P3 gate)<small>routed per worker (T3.3) · provisioning gap</small></div><div class="track"><div class="fill f-yellow" data-w="70"></div></div><div class="pct" style="color:var(--yellow)">70%</div></div>
+      <div class="bar-row"><div class="name">Memory system<small>tiers 1–2 in the prompt · per-topic still manual</small></div><div class="track"><div class="fill f-yellow" data-w="65"></div></div><div class="pct" style="color:var(--yellow)">65%</div></div>
+      <div class="bar-row"><div class="name">Notifications / observability<small>ntfy cards · /metrics · arco status · herdr plugin</small></div><div class="track"><div class="fill f-green" data-w="80"></div></div><div class="pct" style="color:var(--green)">80%</div></div>
       <div class="bar-row"><div class="name">Add-ons<small>telegram · web · scheduler · playbooks</small></div><div class="track"><div class="fill f-red" data-w="0"></div></div><div class="pct" style="color:var(--red)">0%</div></div>
     </div>
   </div>
@@ -390,18 +391,19 @@
       <h3>PASS-3 ledger: done vs open</h3>
       <ul>
         <li><span class="pill p-done">DONE</span> quarantine clone · permcompile · signed intake (HMAC) · preflight · redaction · spawn-env scrubbing · <code>arco kill</code> · <code>arco redeliver</code> (#71) · escalation timeout (#58) · auto-kill-on-pause (#67)</li>
-        <li style="margin-top:10px"><span class="pill p-todo">OPEN</span> ownership-transfer intent unrouted · supersession &amp; depth-2 sessions · cross-VM wiring (§10) · <code>--env</code> argv leak (MED-5) · inert config knobs (§12)</li>
+        <li style="margin-top:10px"><span class="pill p-done">DONE (rev-7)</span> SO_PEERCRED intake binding (#76) · per-worker HKDF intake keys + workspace-ref fallback removed (#87) · cred-dir file handoff, MED-5 closed (#83) · supervision modes (#78) · activity back-off (#88) · <code>stall_n</code> enforced, dead knobs deleted (#75) · cross-VM routing (#90) — catalogued in <code>deployment-hardening §13</code></li>
+        <li style="margin-top:10px"><span class="pill p-todo">OPEN</span> ownership-transfer intent unrouted · supersession &amp; depth-2 sessions · remote worktree provisioning (§10) · srt is a boot gate, not yet real confinement (needs a herdr agent manifest) · <code>crash_loop_window</code> still parsed but unread (§12)</li>
         <li style="margin-top:10px"><span class="pill p-shadow">BY DESIGN</span> resume-via-relaunch intentionally not built (§12, #68) · cost tracking CUT (§A)</li>
       </ul>
     </div>
     <div class="card">
-      <h3>Verified findings still open <span class="chip" style="background:rgba(248,113,113,.1);color:var(--red)">7-agent review</span></h3>
+      <h3>7-agent review findings — 4 of 5 closed by rev-7 <span class="chip" style="background:rgba(248,113,113,.1);color:var(--red)">7-agent review</span></h3>
       <div style="margin-top:8px">
-        <div class="find"><div class="sev high">HIGH</div><div><div class="t">Brain context starvation</div><div class="d">20 events × 200 chars; Facts / ContextSummary / memory never enter the prompt — <code>brain_apply.go:136-167</code>.</div></div></div>
-        <div class="find"><div class="sev med">MED→HIGH</div><div><div class="t">Intake workspace-name fallback</div><div class="d">Any HMAC holder can forge per-worker events — <code>server.go:508-528</code>. Becomes HIGH at cross-VM.</div></div></div>
-        <div class="find"><div class="sev med">MED</div><div><div class="t">Dead safety knobs</div><div class="d"><code>crash_loop_restarts</code>, <code>max_spawns</code>, <code>stall_n</code> parsed but never enforced; no futility bound.</div></div></div>
-        <div class="find"><div class="sev med">MED</div><div><div class="t">Operator floor missing</div><div class="d">No <code>arco status</code> / <code>logs</code> / notifications; <code>brain_rationale</code> absent from EscalationDTO.</div></div></div>
-        <div class="find"><div class="sev med">MED</div><div><div class="t">herdr <code>--</code> flag-parse task loss</div><div class="d">Looks fixed at herdr HEAD (0.8.0, #1878) — re-verify on upgrade, then close.</div></div></div>
+        <div class="find"><div class="sev med">MED</div><div><div class="t">herdr <code>--</code> flag-parse task loss</div><div class="d"><b>STILL OPEN.</b> This host runs herdr <b>0.7.5</b>, not 0.8.0 — unverifiable read-only (probing it writes to a live pane). Named gate for cross-VM; re-check list in <code>herdr-contract.md</code>.</div></div></div>
+        <div class="find"><div class="sev done">CLOSED</div><div><div class="t">Brain context starvation</div><div class="d">Facts + ContextSummary + hot memory tiers now assembled under a byte-stable budget — T2.4, #81.</div></div></div>
+        <div class="find"><div class="sev done">CLOSED</div><div><div class="t">Intake workspace-name fallback</div><div class="d">Workspace refs 403 + audit; per-worker HKDF keys so the master never signs — T3.4, #87. Plus SO_PEERCRED UID binding — T1.6, #76.</div></div></div>
+        <div class="find"><div class="sev done">CLOSED</div><div><div class="t">Dead safety knobs</div><div class="d"><code>stall_n</code> enforced (futility bound); <code>crash_loop_restarts</code>/<code>max_spawns</code> deleted and now <i>rejected</i> by config load — T1.3, #75. Residual: <code>crash_loop_window</code> parsed but unread.</div></div></div>
+        <div class="find"><div class="sev done">CLOSED</div><div><div class="t">Operator floor missing</div><div class="d">ntfy decision cards (#77), <code>arco status</code> + <code>GET /v1/status</code> (#74), <code>/metrics</code> (#84), herdr plugin (#85), <code>brain_rationale</code>/<code>draft_confidence</code> in the DTO (#73).</div></div></div>
       </div>
     </div>
   </div>
@@ -422,8 +424,11 @@
       <div class="cli ok">pool create / list</div>
       <div class="cli ok">daemon</div>
       <div class="cli ok">version</div>
+      <div class="cli ok">status</div>
       <div class="cli extra">redeliver ★</div>
-      <div class="cli miss">status</div>
+      <div class="cli extra">mode ★</div>
+      <div class="cli extra">queue / queue list ★</div>
+      <div class="cli extra">autonomy ★</div>
       <div class="cli miss">session &lt;id&gt;</div>
       <div class="cli miss">logs</div>
       <div class="cli miss">attach</div>
@@ -435,9 +440,9 @@
       <div class="cli miss">playbook</div>
     </div>
     <div class="legend">
-      <span><i style="background:var(--green)"></i>shipped (15)</span>
+      <span><i style="background:var(--green)"></i>shipped (19 — 15 promised + 4 ★)</span>
       <span><i style="background:var(--accent2)"></i>★ shipped beyond plan</span>
-      <span><i style="background:var(--red)"></i>promised, missing (10) — rev-7 cuts <span class="mono">attach / schedule / playbook / grant / revoke</span> and replaces <span class="mono">logs</span>-style needs with ntfy cards</span>
+      <span><i style="background:var(--red)"></i>promised, missing (9) — rev-7 cuts <span class="mono">attach / schedule / playbook / grant / revoke</span> and replaces <span class="mono">logs</span>-style needs with ntfy cards, leaving <span class="mono">session &lt;id&gt; / pause / resume</span> genuinely open</span>
     </div>
   </div>
 </section>
