@@ -41,6 +41,9 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	if e.ConfigDir == "" {
 		return DispatchResult{}, fmt.Errorf("reconcile: Spawn requires Engine.ConfigDir")
 	}
+	if e.Paused() {
+		return DispatchResult{}, core.ErrPaused
+	}
 	// Resolve the assigned VM's client BEFORE anything durable or external: with
 	// routing on, a typo'd VM refuses the spawn here — no worker row, no
 	// provisioning, and nothing ever launched anywhere (T3.3).

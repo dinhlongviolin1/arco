@@ -20,6 +20,9 @@ import (
 // ledger tx), then applies the typed StepResult. Malformed/billing/errors park
 // the worker `blocked` — never a crash-loop, never a retry into a billing wall.
 func (e *Engine) brainClassify(ctx context.Context, workerID string) {
+	if e.Paused() {
+		return // estop: no autonomous decisions; the event stays recorded for later
+	}
 	w, err := e.Store.Reader().GetWorker(workerID)
 	// Only a still-running/starting worker is brain-classifiable. If a concurrent
 	// intake already resolved it (waiting/blocked/candidate/terminal), skip — no

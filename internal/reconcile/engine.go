@@ -183,6 +183,11 @@ type Engine struct {
 	EarnOutMinDecisions int
 	EarnOutMinAgreement float64
 
+	// EStopPath is the operator emergency-stop sentinel (see Paused): a file
+	// next to the ledger whose EXISTENCE pauses all new/autonomous work. Set by
+	// the daemon; "" (tests, embedded use) = no estop surface.
+	EStopPath string
+
 	// AgentKind is the herdr agent kind Spawn launches (`agent start --kind`);
 	// "" → "claude". herdr's supervision API (list/prompt/wait/kill, pane
 	// liveness) is kind-agnostic, so any kind herdr knows can be supervised.
@@ -260,6 +265,9 @@ type DispatchResult struct {
 // dispatch_done + transition to running. A crash between intent and done leaves a
 // recoverable worker with no dispatch_done (boot recovery re-drives — later pass).
 func (e *Engine) Dispatch(ctx context.Context, sessionRef, task string, newSession bool) (DispatchResult, error) {
+	if e.Paused() {
+		return DispatchResult{}, core.ErrPaused
+	}
 	// Resolve the assigned VM's client BEFORE any durable write or launch: with
 	// routing on, an unresolvable VM refuses the dispatch outright (T3.3).
 	vmc, err := e.vmFor(e.DefaultVM)

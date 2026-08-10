@@ -56,6 +56,8 @@ func newRoot() *cobra.Command {
 		newVerifyCmd(),
 		newDiffCmd(),
 		newQueueCmd(),
+		newPauseCmd(),
+		newResumeCmd(),
 		newAutonomyCmd(),
 		newEscalationsCmd(),
 		newAnswerCmd(),
