@@ -202,6 +202,11 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 	if len(q.cfg.TestCmd) > 0 {
 		cmd := exec.CommandContext(ctx, q.cfg.TestCmd[0], q.cfg.TestCmd[1:]...)
 		cmd.Dir = ws
+		// The gate runs the WORKER-MERGED tree's build/test scripts — worker-
+		// controlled code. Scrub the daemon's creds from its env (P1), exactly
+		// like git() above; otherwise a hostile Makefile/test target reads
+		// ANTHROPIC_API_KEY/GITHUB_TOKEN straight out of the environment.
+		cmd.Env = append(spawnenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return "test gate failed", string(out)
 		}

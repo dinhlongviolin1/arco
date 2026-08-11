@@ -213,12 +213,26 @@ func (s *Store) WithTx(ctx context.Context, fn func(core.Tx) error) error {
 	if err != nil {
 		return err
 	}
+	// A panic in fn must not leak the open *sql.Tx: database/sql has no
+	// finalizer for it, so an un-rolled-back write tx would hold SQLite's write
+	// lock for the life of the process and stall every later WithTx at
+	// busy_timeout — a daemon-wide write outage masquerading as "database is
+	// locked". Roll back, then re-panic so the caller/HTTP layer still sees it.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = sqlTx.Rollback() // no-op after a successful Commit
+		}
+	}()
 	tx := newTxn(sqlTx, s.now, s.scrub)
 	if err := fn(tx); err != nil {
-		_ = sqlTx.Rollback()
 		return err
 	}
-	return sqlTx.Commit()
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // Reader returns a read-only view over the database (WAL concurrent reads).

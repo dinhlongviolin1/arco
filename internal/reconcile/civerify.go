@@ -65,6 +65,18 @@ func failureIsh(conclusion string) bool {
 	return false
 }
 
+// greenConclusion is the ALLOWLIST of passing conclusions. Anything a completed
+// run reports that is neither this nor failureIsh (e.g. GitHub's `stale`, or any
+// conclusion GitHub adds later) is treated as not-yet-passing — evidence must
+// fail toward "pending", never default to green on an unrecognized value.
+func greenConclusion(conclusion string) bool {
+	switch conclusion {
+	case "success", "neutral", "skipped":
+		return true
+	}
+	return false
+}
+
 // pollCICheckRuns is verification leg 1 (rev7/T3.1): for every
 // completed_candidate worker, query its branch's GitHub check-runs and record
 // the outcome as ledger evidence:
@@ -91,7 +103,7 @@ func (e *Engine) pollCICheckRuns(ctx context.Context, all []core.Worker) {
 			continue
 		}
 		out, err := e.CI.Runner(ctx, w.Worktree,
-			"api", "repos/{owner}/{repo}/commits/"+w.HeadCommit+"/check-runs")
+			"api", "repos/{owner}/{repo}/commits/"+w.HeadCommit+"/check-runs?per_page=100")
 		if err != nil {
 			log.Printf("arco: ci: check-runs poll failed for %s: %v", w.ID, err)
 			continue
@@ -102,15 +114,20 @@ func (e *Engine) pollCICheckRuns(ctx context.Context, all []core.Worker) {
 			continue
 		}
 		// Zero check-runs is pending-for-safety: checks may simply not have been
-		// created yet, so it must never read as success.
-		pending := runs.TotalCount <= 0 || len(runs.CheckRuns) == 0
+		// created yet, so it must never read as success. total_count > the page we
+		// got means GitHub paginated (default 30/page) and a failing/pending check
+		// could be on an unseen page — also pending, never green on a partial view.
+		pending := runs.TotalCount <= 0 || len(runs.CheckRuns) == 0 || runs.TotalCount > len(runs.CheckRuns)
 		var failed []string
 		for _, r := range runs.CheckRuns {
 			if r.Status != "completed" {
 				pending = true
+				continue
 			}
 			if failureIsh(r.Conclusion) {
 				failed = append(failed, r.Name)
+			} else if !greenConclusion(r.Conclusion) {
+				pending = true // completed but not a recognized passing conclusion (e.g. stale)
 			}
 		}
 		switch {
