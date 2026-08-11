@@ -56,6 +56,26 @@ func TestScrub_StripsSecretsPreservesRestAndOrder(t *testing.T) {
 	}, got, "secrets removed, benign vars preserved in original order")
 }
 
+// ScrubWorker additionally strips the operator's SSH agent / GPG keyring
+// pointers so an untrusted worker can't push/sign/ssh as the operator — while
+// plain Scrub (arco's own git subprocesses) keeps them for ssh:// clones.
+func TestScrubWorker_StripsSSHAgentAndGPG(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.123",
+		"SSH_AGENT_PID=123",
+		"GNUPGHOME=/home/op/.gnupg",
+		"HOME=/home/arco",
+	}
+	// arco's own subprocesses keep the agent (can clone ssh:// repos).
+	require.Contains(t, Scrub(in), "SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.123",
+		"plain Scrub must keep SSH_AUTH_SOCK for arco's own ssh clones")
+	// the worker launch env does not.
+	got := ScrubWorker(in)
+	require.Equal(t, []string{"PATH=/usr/bin", "HOME=/home/arco"}, got,
+		"worker env drops SSH_AUTH_SOCK/SSH_AGENT_PID/GNUPGHOME, keeps benign vars in order")
+}
+
 func TestScrub_HandlesBareNameAndEmpty(t *testing.T) {
 	require.Empty(t, Scrub(nil))
 	// a malformed entry with no '=' is treated as a bare name and still filtered

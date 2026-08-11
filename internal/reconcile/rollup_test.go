@@ -60,6 +60,57 @@ func TestRollup_FiresOnChildCompletionWithContext(t *testing.T) {
 	require.Contains(t, ri.Payload, `"tainted":true`)
 }
 
+// rev20 review #07/#1: a rollup is a brain draft, so a MANUAL session must get
+// none — no brain call, no rollup_intent trace (manual = "arco touches nothing").
+func TestRollup_SkippedInManualMode(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.RollupInterval = time.Hour
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"run_again","instruction":"x"}`), nil
+		}}
+
+	parent := dispatchRunning(t, e)
+	setMode(t, s, parent, core.ModeManual)
+	child, err := e.Delegate(context.Background(), parent, "subtask", "")
+	require.NoError(t, err)
+	completeChild(t, s, child.WorkerID)
+
+	_, err = e.Sweep(context.Background())
+	require.NoError(t, err)
+	e.Exec.Wait()
+
+	require.Equal(t, int32(0), calls.Load(), "manual session must not fire a rollup brain call")
+	evs, _ := s.Reader().EventsSince(0, 100000)
+	for _, ev := range evs {
+		require.NotEqual(t, "rollup_intent", ev.Kind, "manual session must leave no rollup_intent trace")
+	}
+}
+
+// rev20 review #07/#6: a rollup queued before the operator paused must not fire
+// once the estop is engaged (execution-time Paused() check).
+func TestRollup_SkippedWhenPaused(t *testing.T) {
+	var calls atomic.Int32
+	e, s, _ := newEngine(t)
+	e.RollupInterval = time.Hour
+	e.Brain = BrainCfg{Enabled: true, Profile: "p", Model: "m",
+		Runner: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			calls.Add(1)
+			return []byte(`{"kind":"run_again","instruction":"x"}`), nil
+		}}
+	parent := dispatchRunning(t, e)
+	child, err := e.Delegate(context.Background(), parent, "subtask", "")
+	require.NoError(t, err)
+	completeChild(t, s, child.WorkerID)
+
+	engage(t, e) // estop sentinel now present
+	e.rollup(context.Background(), parent)
+
+	require.Equal(t, int32(0), calls.Load(), "an engaged estop must stand down a queued rollup")
+}
+
 func TestRollup_CoalescesWithinInterval(t *testing.T) {
 	var calls atomic.Int32
 	var prompt string

@@ -73,14 +73,31 @@ func IsSecretVar(name string) bool {
 // Scrub returns environ (each entry "KEY=VALUE") with every secret-bearing
 // variable removed, preserving the order and values of the rest. Deterministic;
 // a malformed entry without '=' is treated as a bare name and checked too.
-func Scrub(environ []string) []string {
+func Scrub(environ []string) []string { return scrub(environ, false) }
+
+// workerOnlyStrip are variables kept for arco's OWN subprocesses (so git can
+// clone an ssh:// repo / a gpg-signed op works) but stripped from a WORKER's
+// launch env: an untrusted worker inheriting the operator's SSH agent or GPG
+// keyring could push/sign/ssh anywhere AS the operator, bypassing the whole
+// per-worker scoped-credential model (rev20 review #18/#3).
+var workerOnlyStrip = map[string]bool{
+	"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true,
+	"GNUPGHOME": true, "GPG_AGENT_INFO": true,
+}
+
+// ScrubWorker is Scrub plus the worker-only strips above. Use it for the
+// environment handed to a launched worker agent (spawn), NOT for arco's own
+// git/ssh subprocesses (which legitimately need the agent to reach ssh:// repos).
+func ScrubWorker(environ []string) []string { return scrub(environ, true) }
+
+func scrub(environ []string, worker bool) []string {
 	out := make([]string, 0, len(environ))
 	for _, kv := range environ {
 		name := kv
 		if i := strings.IndexByte(kv, '='); i >= 0 {
 			name = kv[:i]
 		}
-		if IsSecretVar(name) {
+		if IsSecretVar(name) || (worker && workerOnlyStrip[strings.ToUpper(name)]) {
 			continue
 		}
 		out = append(out, kv)
