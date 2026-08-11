@@ -156,7 +156,12 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 			}
 		}
 	}
-	err = e.Store.WithTx(ctx, func(tx core.Tx) error {
+	// Phase 3 commits on e.bg(), NOT the request ctx: once phase 1's durable
+	// intent landed, the finalize (BindLaunch + dispatch_done) MUST complete even
+	// if the client disconnected mid-clone — otherwise the worker is stranded in
+	// `starting` forever (steady-state sweep skips starting; only boot Recover
+	// resolves it), holding its pool lease with a possibly-live agent unmanaged.
+	err = e.Store.WithTx(e.bg(), func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err
