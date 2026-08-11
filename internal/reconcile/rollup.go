@@ -39,9 +39,16 @@ func (e *Engine) maybeRollup(parentWorkerID string) {
 //     would un-park it and dispatch would spawn from a parked parent;
 //   - a POOL-OWNED worker (handoff-released sentinel) — else it runs a paid brain
 //     loop on the protected pool, prompts/pulls-out an unowned worker, and opens
-//     escalations attributed to the pool session.
+//     escalations attributed to the pool session;
+//   - a WAITING or PAUSED worker — brainClassify only ever classifies
+//     running|starting, and applyStep's acting branches (dispatch/handoff) assume
+//     that; a rollup on a waiting_for_user/paused parent would un-park it
+//     (candidate/waiting→running is legal) and strand its pending escalation, or
+//     spawn a child from a parked parent (rev20 review #07/#2). So gate to the
+//     same running|starting set the other two brain entries use.
 func rollupEligible(w core.Worker) bool {
-	return !w.State.Terminal() && w.State != core.WorkerBlocked && w.OwnerSession != core.PoolSessionID
+	return (w.State == core.WorkerRunning || w.State == core.WorkerStarting) &&
+		w.OwnerSession != core.PoolSessionID
 }
 
 // rollup runs one coalesced rollup brain call for a parent worker. The coalesce
@@ -49,6 +56,12 @@ func rollupEligible(w core.Worker) bool {
 // lock, so concurrent child completions in a session yield at most one rollup
 // per interval (race-free, mirrors the brain-rate gate).
 func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
+	// Estop, checked at EXECUTION time (mirrors brainClassify): the sweep gates
+	// rollup submission on !paused, but a rollup queued on the per-parent Exec
+	// before the operator paused could otherwise still fire a brain call and act.
+	if e.Paused() {
+		return
+	}
 	// Cheap pre-check to avoid a tx for a parent the brain must not touch.
 	if w, err := e.Store.Reader().GetWorker(parentWorkerID); err != nil || !rollupEligible(w) {
 		return
@@ -63,6 +76,19 @@ func (e *Engine) rollup(ctx context.Context, parentWorkerID string) {
 		// (mirrors brainClassify; opus review).
 		cur, err := tx.GetWorker(parentWorkerID)
 		if err != nil || !rollupEligible(cur) {
+			proceed = false
+			return nil
+		}
+		// D9 mode gate on the CURRENT owner: a rollup is a brain draft, so a
+		// manual session (or unknown mode) must get none — and, like brainClassify,
+		// return BEFORE recording rollup_intent so the ledger carries no trace of a
+		// call that must not happen (rev20 review #07/#1).
+		s, serr := tx.GetSession(cur.OwnerSession)
+		if serr != nil {
+			proceed = false
+			return nil
+		}
+		if mode, merr := core.ParseSupervisionMode(string(s.SupervisionMode)); merr != nil || !mode.Allows(core.ActBrainDraft) {
 			proceed = false
 			return nil
 		}

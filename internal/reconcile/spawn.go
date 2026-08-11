@@ -278,7 +278,11 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, vmc core.VMClient, work
 	if err = permcompile.Compile(cfgDir, wt, granted, cat); err != nil {
 		return cleanup(err, "permcompile")
 	}
-	env := spawnenv.Scrub(os.Environ())
+	// ScrubWorker (not Scrub): the launched worker is untrusted, so also strip the
+	// operator's SSH agent / GPG keyring pointers — otherwise it could push/sign/
+	// ssh anywhere AS the operator, defeating the per-worker scoped-cred model.
+	// arco's own git subprocesses keep those (they clone ssh:// repos).
+	env := spawnenv.ScrubWorker(os.Environ())
 	// Hand the worker's SCOPED provider creds (from its pool's clavis profile)
 	// over as FILES, not env (MED-5): herdr's only env mechanism is `workspace
 	// create --env KEY=VALUE` argv, so anything in LaunchSpec.Env is briefly
