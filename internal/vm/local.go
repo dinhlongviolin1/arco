@@ -214,7 +214,9 @@ func (l *LocalVMClient) GitHeads(ctx context.Context, worktrees []string) (map[s
 		if wt == "" {
 			continue // never `git -C "" ` (would run in the daemon's cwd)
 		}
-		out, err := l.cmd(ctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
+		gctx, cancel := l.bounded(ctx) // a wedged git/ssh must not hang the sweep
+		out, err := l.cmd(gctx, l.Git, "-C", wt, "rev-parse", "HEAD").Output()
+		cancel()
 		if err != nil {
 			continue
 		}
@@ -451,12 +453,22 @@ func (l *LocalVMClient) closeWorkspace(ctx context.Context, wsID string) {
 // wait arco requests (agent prompt --wait --timeout 6000ms) plus ssh overhead.
 const herdrCmdTimeout = 30 * time.Second
 
-func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, error) {
+// bounded returns ctx with herdrCmdTimeout applied when it carries no deadline
+// of its own. Used by every herdr AND git invocation: the sweep loop runs on a
+// cancel-only context, so an unbounded call (a wedged herdr, a git op on a
+// stale NFS mount, or a git-over-ssh to a black-holed fleet host) would wedge
+// the whole reconcile loop rather than cost one bounded call. Caller must defer
+// the returned cancel.
+func (l *LocalVMClient) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
 	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, herdrCmdTimeout)
-		defer cancel()
+		return context.WithTimeout(ctx, herdrCmdTimeout)
 	}
+	return ctx, func() {}
+}
+
+func (l *LocalVMClient) herdrRun(ctx context.Context, args ...string) ([]byte, error) {
+	ctx, cancel := l.bounded(ctx)
+	defer cancel()
 	out, err := l.runOutput(ctx, l.Herdr, args...)
 	if err != nil {
 		return nil, err
@@ -564,6 +576,8 @@ func (l *LocalVMClient) Diff(ctx context.Context, worktree, base, head string) (
 	if !looksLikeRev(base) || !looksLikeRev(head) {
 		return d, fmt.Errorf("vm: refusing non-commit-shaped rev (base=%q head=%q)", base, head)
 	}
+	ctx, cancel := l.bounded(ctx) // bound both git diff invocations (numstat + patch)
+	defer cancel()
 	rng := base + ".." + head
 	num, err := l.cmd(ctx, l.Git, "-C", worktree, "diff", "--numstat", rng).Output()
 	if err != nil {

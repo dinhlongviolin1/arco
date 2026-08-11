@@ -173,6 +173,15 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 		return core.ErrEscalationState
 	}
 
+	// Scrub the human's answer at the write-time chokepoint, like every other
+	// escalation free-text field (OpenEscalation scrubs action/detail/draft/…).
+	// A human answering "use token ghp_…" must not persist verbatim in the
+	// escalations row or ride into the notify card. Done before the tally
+	// compare below so both sides are in the same (scrubbed) domain.
+	if t.scrub != nil {
+		text, _ = t.scrub.Scrub(text)
+	}
+
 	// Earn-out bookkeeping (rev7/T3.5): a HUMAN decision on a DRAFTED escalation
 	// feeds the per-class agreement tally — the ledger-backed track record that
 	// gates brain auto-answers. An undrafted decision carries no brain call to

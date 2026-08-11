@@ -18,6 +18,12 @@ func TestScrub_GoldenCorpus(t *testing.T) {
 		{"openai", "key sk-abcdefghijklmnopqrstuvwxyz012345 done", "sk-abcdefghijklmnopqrstuvwxyz012345"},
 		{"aws", "AKIAIOSFODNN7EXAMPLE creds", "AKIAIOSFODNN7EXAMPLE"},
 		{"openai-proj", "key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 done", "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"},
+		// Modern OpenAI key SHAPE: base64url body with `_` and `-` — the shapes
+		// the old `[A-Za-z0-9]{20,}\b` pattern silently failed on (rev20 #19).
+		// Bodies are obviously-synthetic (no real project marker) so this fixture
+		// isn't itself flagged as a live key, while still exercising the class.
+		{"openai-proj-underscore-dash", "OPENAI=sk-proj-AAAA1111_bbbb2222-CCCC3333dddd4444EEEE end", "sk-proj-AAAA1111_bbbb2222-CCCC3333dddd4444EEEE"},
+		{"openai-svcacct-underscore-dash", "k sk-svcacct-ZZZZ0000_yyyy1111-XXXX2222wwww3333 x", "sk-svcacct-ZZZZ0000_yyyy1111-XXXX2222wwww3333"},
 		{"url-creds", "clone https://alice:s3cr3tpw@github.com/x/y.git", "s3cr3tpw"},
 		{"url-creds-colon-pass", "https://alice:s3:cr3t@github.com/x/y.git", "s3:cr3t"},
 	}
