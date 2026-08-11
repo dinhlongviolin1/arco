@@ -368,7 +368,10 @@ func (e *Engine) launchAndFinalize(ctx context.Context, vmc core.VMClient, worke
 			}
 		}
 	}
-	err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+	// Finalize on e.bg(), NOT the request ctx: after phase 1's durable intent, the
+	// dispatch_done transition must land even if the caller disconnected, or the
+	// worker is stranded `starting` forever (the launched agent unmanaged).
+	err := e.Store.WithTx(e.bg(), func(tx core.Tx) error {
 		w, err := tx.GetWorker(workerID)
 		if err != nil {
 			return err

@@ -26,9 +26,13 @@ type Fake struct {
 	// AliveOnPrompt models "the agent spawned but Prompt still returned an error"
 	// (ambiguous launch): a prompted workspace is thereafter reported alive.
 	AliveOnPrompt bool
-	killed        []string
-	launched      []core.LaunchSpec
-	LaunchErr     error
+	// PromptHook, if set, runs at the start of Prompt — a test seam to inject an
+	// action mid-phase-2 (e.g. cancel the request context to model a client
+	// disconnect during a slow launch).
+	PromptHook func()
+	killed     []string
+	launched   []core.LaunchSpec
+	LaunchErr  error
 	// LaunchAliveOnErr models a launch that SPAWNED the agent but still returned an
 	// error (ref-capture timeout / transient post-spawn error): the agent shows
 	// alive by workspace despite LaunchErr, so the caller must resolve by liveness.
@@ -67,6 +71,9 @@ var _ core.VMClient = (*Fake)(nil)
 func NewFake() *Fake { return &Fake{Heads: map[string]string{}} }
 
 func (f *Fake) Prompt(_ context.Context, workspace, text string) error {
+	if f.PromptHook != nil { // test seam: e.g. cancel the request ctx mid-phase-2
+		f.PromptHook()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prompts = append(f.prompts, Prompted{workspace, text})
