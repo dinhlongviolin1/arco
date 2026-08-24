@@ -235,14 +235,26 @@ func (b *Bot) refreshAllStatus(ctx context.Context) {
 		if s.Kind == core.SessionKindPool {
 			continue
 		}
-		if s.TGTopicID == nil || *s.TGTopicID == 0 {
-			continue
-		}
 		if s.Status == core.SessionDone || s.Status == core.SessionArchived {
-			b.maybeCloseTopic(ctx, s.ID, *s.TGTopicID)
+			if s.TGTopicID != nil && *s.TGTopicID != 0 {
+				b.maybeCloseTopic(ctx, s.ID, *s.TGTopicID)
+			}
 			continue
 		}
-		b.refreshStatus(ctx, s.ID, *s.TGTopicID)
+		// Active session: ensure a topic EAGERLY (so "work with topics" shows a
+		// thread per session without waiting for an escalation), then refresh its
+		// live status card.
+		tid := int64(0)
+		if s.TGTopicID != nil {
+			tid = *s.TGTopicID
+		}
+		if tid == 0 {
+			var err error
+			if tid, err = b.ensureTopic(ctx, s.ID); err != nil {
+				continue
+			}
+		}
+		b.refreshStatus(ctx, s.ID, tid)
 	}
 }
 
