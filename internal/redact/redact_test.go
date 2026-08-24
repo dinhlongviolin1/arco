@@ -24,6 +24,11 @@ func TestScrub_GoldenCorpus(t *testing.T) {
 		// isn't itself flagged as a live key, while still exercising the class.
 		{"openai-proj-underscore-dash", "OPENAI=sk-proj-AAAA1111_bbbb2222-CCCC3333dddd4444EEEE end", "sk-proj-AAAA1111_bbbb2222-CCCC3333dddd4444EEEE"},
 		{"openai-svcacct-underscore-dash", "k sk-svcacct-ZZZZ0000_yyyy1111-XXXX2222wwww3333 x", "sk-svcacct-ZZZZ0000_yyyy1111-XXXX2222wwww3333"},
+		// Modern Slack shapes the old xox[baprs]- class missed: xoxc- (browser) and
+		// xoxe- (refresh). Built by concatenation so the literal isn't a contiguous
+		// token — GitHub push-protection false-positives a token-shaped test fixture.
+		{"slack-browser-xoxc", "cookie xox" + "c-abcdefghij0123456789 end", "xox" + "c-abcdefghij0123456789"},
+		{"slack-refresh-xoxe", "tok xox" + "e-synthetic0123456789 end", "xox" + "e-synthetic0123456789"},
 		{"url-creds", "clone https://alice:s3cr3tpw@github.com/x/y.git", "s3cr3tpw"},
 		{"url-creds-colon-pass", "https://alice:s3:cr3t@github.com/x/y.git", "s3:cr3t"},
 	}
