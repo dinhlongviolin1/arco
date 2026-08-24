@@ -146,6 +146,10 @@ type Engine struct {
 	ConfigDir string
 	// GitBin is the git binary for worktree provisioning ("" → "git").
 	GitBin string
+	// InjectSkills names the built-in agent skill bundles to install into each
+	// claude-kind worker's worktree (.claude/skills/) at spawn. Empty = none. Set
+	// by the daemon (e.g. "arco-image" when the Telegram image relay is enabled).
+	InjectSkills []string
 	// DefaultPool is the provider pool a spawned worker draws a concurrency lease
 	// from ("" = no lease). LeaseTTL is that lease's TTL. Both from config; the
 	// lease is acquired atomically in Spawn's create tx (admission before intent).
