@@ -231,7 +231,21 @@ func (b *Bot) ensureTopic(ctx context.Context, sessionID string) (int64, error) 
 	if s.TGTopicID != nil && *s.TGTopicID != 0 {
 		return *s.TGTopicID, nil
 	}
-	tid, err := b.api.CreateForumTopic(ctx, b.groupID, topicName(s))
+	name := topicName(s)
+	// A dispatch-created session often has no slug/title/goal → topicName would
+	// degrade to "session: session <id>". Fall back to a worker's task so the
+	// topic is human-readable ("working with topics").
+	if s.Slug == "" && s.Title == "" && s.Goal == "" {
+		if ws, _ := b.store.ListWorkers(core.WorkerFilter{OwnerSession: sessionID}); len(ws) > 0 {
+			for _, w := range ws {
+				if w.Task != "" {
+					name = "session: " + truncate(w.Task, 60)
+					break
+				}
+			}
+		}
+	}
+	tid, err := b.api.CreateForumTopic(ctx, b.groupID, name)
 	if err != nil {
 		return 0, err
 	}

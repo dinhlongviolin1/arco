@@ -16,6 +16,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/quarantine"
 	"github.com/dinhlongviolin1/arco/internal/spawnenv"
 	"github.com/dinhlongviolin1/arco/internal/worktree"
+	"github.com/dinhlongviolin1/arco/skills"
 )
 
 // Spawn is the T14 repo-based spawn pipeline: it provisions a fresh per-worker
@@ -277,6 +278,14 @@ func (e *Engine) provisionAndLaunch(ctx context.Context, vmc core.VMClient, work
 	}
 	if err = permcompile.Compile(cfgDir, wt, granted, cat); err != nil {
 		return cleanup(err, "permcompile")
+	}
+	// Inject built-in agent skills (SKILL.md packages) into the worktree's
+	// .claude/skills/ so a claude-kind worker discovers them (e.g. arco-image).
+	// claude-only: SKILL.md is Claude Code's convention; other kinds skip it.
+	if e.agentKind() == "claude" && len(e.InjectSkills) > 0 {
+		if err = skills.Install(e.GitBin, wt, e.InjectSkills); err != nil {
+			return cleanup(err, "skills")
+		}
 	}
 	// ScrubWorker (not Scrub): the launched worker is untrusted, so also strip the
 	// operator's SSH agent / GPG keyring pointers — otherwise it could push/sign/

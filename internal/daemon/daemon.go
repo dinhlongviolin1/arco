@@ -262,7 +262,8 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			return fmt.Errorf("daemon: telegram: %w", err)
 		}
 		eng.Notify = tgBot
-		srv.EnableImageRelay(tgBot) // `arco image send` → this bot (outbound relay)
+		srv.EnableImageRelay(tgBot)               // `arco image send` → this bot (outbound relay)
+		eng.InjectSkills = []string{"arco-image"} // give claude workers the image skill
 	}
 
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
