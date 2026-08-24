@@ -353,6 +353,15 @@ func (e *Engine) admitVM(tx core.Tx, vm string) error {
 	return nil
 }
 
+// adoptionProbeTimeout bounds the post-launch liveness probe that decides
+// whether a launch-errored worker actually came up. It runs on e.bg() (NOT the
+// request ctx) so a client disconnect — which is exactly what tends to error the
+// launch in the first place — can't ALSO cancel the probe and mislabel a live
+// agent `failed` (skipping BindLaunch → the orphan reaper, needing an identity
+// match, could never reap it: a permanent leaked agent). Bounded so a VMClient
+// whose ListAgents lacks its own timeout can't hang the finalize.
+const adoptionProbeTimeout = 15 * time.Second
+
 // launchAndFinalize performs the external launch (phase 2) then the durable
 // dispatch_done transition (phase 3) shared by Dispatch and Delegate, on the
 // worker's assigned VM client (vmc, resolved by the caller pre-intent). A launch
@@ -363,7 +372,8 @@ func (e *Engine) launchAndFinalize(ctx context.Context, vmc core.VMClient, worke
 	finalState := core.WorkerRunning
 	if launchErr != nil {
 		finalState = core.WorkerFailed
-		if agents, aerr := vmc.ListAgents(ctx); aerr == nil {
+		pctx, cancel := context.WithTimeout(e.bg(), adoptionProbeTimeout)
+		if agents, aerr := vmc.ListAgents(pctx); aerr == nil {
 			for _, a := range agents {
 				if a.Alive && a.Workspace == workspace {
 					finalState = core.WorkerRunning
@@ -371,6 +381,7 @@ func (e *Engine) launchAndFinalize(ctx context.Context, vmc core.VMClient, worke
 				}
 			}
 		}
+		cancel()
 	}
 	// Finalize on e.bg(), NOT the request ctx: after phase 1's durable intent, the
 	// dispatch_done transition must land even if the caller disconnected, or the
