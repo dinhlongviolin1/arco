@@ -131,6 +131,47 @@ func newKillCmd() *cobra.Command {
 	}
 }
 
+func newImageCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "image",
+		Short: "relay images between a worker and its operator Telegram topic",
+	}
+	cmd.AddCommand(newImageSendCmd())
+	return cmd
+}
+
+func newImageSendCmd() *cobra.Command {
+	var caption string
+	c := &cobra.Command{
+		Use:   "send <path>",
+		Short: "send an image from this worktree to the operator's Telegram topic",
+		Long: `Send a local image to the operator. Run it from inside your worktree; arco
+resolves which worker/session you are from the working directory and posts the
+image into that session's Telegram topic. <path> is relative to the worktree
+(and must stay inside it). Inbound images the operator sends you land in
+.arco/inbox/ — just read them directly.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cl, err := newClient()
+			if err != nil {
+				return err
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			resp, err := cl.ImageSend(context.Background(), api.ImageSendReq{Worktree: cwd, Path: args[0], Caption: caption})
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "sent to session %s (message %d)\n", resp.Session, resp.MessageID)
+			return nil
+		},
+	}
+	c.Flags().StringVar(&caption, "caption", "", "optional caption")
+	return c
+}
+
 func newRedeliverCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "redeliver <worker-id>",

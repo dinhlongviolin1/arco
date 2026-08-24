@@ -60,6 +60,8 @@ func (b *Bot) handleUpdate(ctx context.Context, u Update) {
 	switch {
 	case u.CallbackQuery != nil:
 		b.handleCallback(ctx, u.CallbackQuery)
+	case u.Message != nil && (len(u.Message.Photo) > 0 || u.Message.Document != nil):
+		b.handleInboundImage(ctx, u.Message)
 	case u.Message != nil:
 		b.handleMessage(ctx, u.Message)
 	}

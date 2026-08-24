@@ -21,6 +21,10 @@ type api interface {
 	PinChatMessage(ctx context.Context, chatID, messageID int64) error
 	AnswerCallbackQuery(ctx context.Context, id, text string) error
 	GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Update, error)
+	// Image relay (T6).
+	SendPhoto(ctx context.Context, req SendPhotoReq) (Message, error)
+	GetFile(ctx context.Context, fileID string) (File, error)
+	DownloadFile(ctx context.Context, filePath string) ([]byte, error)
 }
 
 // Actions is the engine surface the bot drives from an inbound button tap or a
@@ -79,6 +83,7 @@ type Bot struct {
 	locks    map[string]*sync.Mutex // per-session lock serializing topic create/status edit
 	lastEdit map[string]time.Time   // per-session status-card edit throttle
 	closed   map[string]bool        // sessions whose topic we've already closed (idempotence)
+	escMsg   map[string]int64       // escalation id → its card message id (to edit on resolve)
 }
 
 // New builds a Bot from cfg.
@@ -98,6 +103,7 @@ func New(cfg Config) *Bot {
 		locks:    map[string]*sync.Mutex{},
 		lastEdit: map[string]time.Time{},
 		closed:   map[string]bool{},
+		escMsg:   map[string]int64{},
 	}
 }
 
@@ -115,6 +121,15 @@ const (
 // per-session-muted cards are dropped. Best-effort: any error is returned to the
 // engine's notifyCard, which logs and swallows it.
 func (b *Bot) Send(ctx context.Context, c notify.Card) error {
+	// A resolution card edits the original escalation message in place (stripping
+	// its now-stale buttons) — handled BEFORE the min filter so an answered card
+	// always cleans up, even under a high min_level, and without spamming a new
+	// message. Falls through to a normal send only if we don't know the card id.
+	if c.Resolved && c.EscalationID != "" {
+		if b.editResolved(ctx, c) {
+			return nil
+		}
+	}
 	if c.Level < b.min {
 		return nil
 	}
@@ -131,23 +146,56 @@ func (b *Bot) Send(ctx context.Context, c notify.Card) error {
 		b.refreshStatus(ctx, c.SessionID, threadID)
 	}
 
+	open := c.EscalationID != "" && !c.Resolved
 	req := SendMessageReq{ChatID: b.groupID, MessageThreadID: threadID, Text: cardText(c)}
-	if c.EscalationID != "" {
+	if open {
 		kb := keyboardFor(c.EscalationKind, c.EscalationID)
 		req.ReplyMarkup = &kb
 	}
-	if _, err := b.api.SendMessage(ctx, req); err != nil {
+	m, err := b.api.SendMessage(ctx, req)
+	if err != nil {
 		return err
 	}
-	// Mirror an open escalation posted into a session topic to General, so a muted
-	// or unwatched topic can't hide a decision the operator must make.
-	if c.EscalationID != "" && threadID != 0 {
-		_, _ = b.api.SendMessage(ctx, SendMessageReq{
-			ChatID: b.groupID,
-			Text:   "🔔 decision needed in topic — " + firstLine(c.Title),
-		})
+	if open {
+		// Remember the card's message id so the later resolution can strip its
+		// buttons, and mirror to General so a muted/unwatched topic can't hide a
+		// decision the operator must make.
+		b.mu.Lock()
+		b.escMsg[c.EscalationID] = m.MessageID
+		b.mu.Unlock()
+		if threadID != 0 {
+			_, _ = b.api.SendMessage(ctx, SendMessageReq{
+				ChatID: b.groupID,
+				Text:   "🔔 decision needed in topic — " + firstLine(c.Title),
+			})
+		}
 	}
 	return nil
+}
+
+// editResolved edits a resolved escalation's original card in place: it replaces
+// the text with the resolution and removes the inline keyboard (an empty markup
+// clears it), so the buttons can't be tapped again. Returns false if we don't
+// know the card's message id (e.g. daemon restarted after the card was posted),
+// letting Send fall back to posting a normal message.
+func (b *Bot) editResolved(ctx context.Context, c notify.Card) bool {
+	b.mu.Lock()
+	mid := b.escMsg[c.EscalationID]
+	b.mu.Unlock()
+	if mid == 0 {
+		return false
+	}
+	empty := InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{}}
+	err := b.api.EditMessageText(ctx, EditMessageTextReq{
+		ChatID: b.groupID, MessageID: mid, Text: cardText(c), ReplyMarkup: &empty,
+	})
+	if err != nil && !IsNotModified(err) {
+		return false
+	}
+	b.mu.Lock()
+	delete(b.escMsg, c.EscalationID)
+	b.mu.Unlock()
+	return true
 }
 
 // sessionMutes reports whether a session's notify_level suppresses this card.

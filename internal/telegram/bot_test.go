@@ -28,6 +28,7 @@ type fakeAPIRec struct {
 	closed  []int64
 	pinned  []int64
 	toasts  []string
+	photos  []SendPhotoReq
 	nextMsg int64
 	nextTop int64
 }
@@ -71,6 +72,19 @@ func (f *fakeAPIRec) AnswerCallbackQuery(_ context.Context, _, text string) erro
 	return nil
 }
 func (f *fakeAPIRec) GetUpdates(_ context.Context, _, _ int) ([]Update, error) { return nil, nil }
+func (f *fakeAPIRec) SendPhoto(_ context.Context, req SendPhotoReq) (Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.photos = append(f.photos, req)
+	f.nextMsg++
+	return Message{MessageID: f.nextMsg, MessageThreadID: req.MessageThreadID}, nil
+}
+func (f *fakeAPIRec) GetFile(_ context.Context, fileID string) (File, error) {
+	return File{FileID: fileID, FilePath: "photos/" + fileID + ".jpg"}, nil
+}
+func (f *fakeAPIRec) DownloadFile(_ context.Context, _ string) ([]byte, error) {
+	return []byte("IMAGEBYTES"), nil
+}
 
 type fakeStore struct {
 	mu       sync.Mutex
@@ -283,6 +297,42 @@ func TestSend_MirrorsEscalationToGeneral(t *testing.T) {
 		}
 	}
 	require.True(t, mirrored, "an open escalation is mirrored to General (thread 0)")
+}
+
+func TestSend_ResolvedEditsOriginalAndStripsButtons(t *testing.T) {
+	b, api, st, _ := newTestBot(t)
+	seedSession(st, "S1", "s1")
+	st.escs["E1"] = core.Escalation{ID: "E1", SessionID: "S1", WorkerID: "W1", Kind: "question", Status: "pending", DraftAnswer: "do X"}
+
+	// open escalation card → stores its message id
+	require.NoError(t, b.Send(context.Background(), notify.FormatEscalation(notify.EscalationCard{
+		EscalationID: "E1", Kind: "question", SessionID: "S1", WorkerID: "W1", Question: "?",
+	})))
+	sentBefore := len(api.sent)
+	require.NotZero(t, b.escMsg["E1"], "open escalation card message id remembered")
+
+	// resolution card → edits the SAME message, strips the keyboard, posts nothing new
+	require.NoError(t, b.Send(context.Background(), notify.Card{
+		Level: notify.LevelInfo, Title: "arco: escalation answered — W1", Body: "answer: do X",
+		SessionID: "S1", EscalationID: "E1", Resolved: true,
+	}))
+	require.Len(t, api.edits, 1, "resolved card edits in place")
+	require.NotNil(t, api.edits[0].ReplyMarkup)
+	require.Empty(t, api.edits[0].ReplyMarkup.InlineKeyboard, "buttons stripped on resolve")
+	require.Contains(t, api.edits[0].Text, "answered")
+	require.Equal(t, sentBefore, len(api.sent), "no NEW message posted for the resolution")
+	require.Zero(t, b.escMsg["E1"], "card id forgotten after resolve")
+}
+
+func TestSend_ResolvedFallsBackWhenCardUnknown(t *testing.T) {
+	b, api, st, _ := newTestBot(t)
+	seedSession(st, "S1", "s1")
+	// no prior open card for E9 (e.g. daemon restarted) → resolution posts a normal message
+	require.NoError(t, b.Send(context.Background(), notify.Card{
+		Level: notify.LevelInfo, Title: "answered — W1", SessionID: "S1", EscalationID: "E9", Resolved: true,
+	}))
+	require.Empty(t, api.edits, "nothing to edit")
+	require.NotEmpty(t, api.sent, "falls back to posting a message")
 }
 
 // --- T4: inbound auth + actions ---

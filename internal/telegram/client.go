@@ -45,11 +45,40 @@ func NewClient(token string, httpClient *http.Client) *Client {
 
 // Message is the subset of a Telegram message arco cares about.
 type Message struct {
-	MessageID       int64  `json:"message_id"`
-	MessageThreadID int64  `json:"message_thread_id,omitempty"`
-	Text            string `json:"text,omitempty"`
-	Chat            Chat   `json:"chat"`
-	From            *User  `json:"from,omitempty"`
+	MessageID       int64       `json:"message_id"`
+	MessageThreadID int64       `json:"message_thread_id,omitempty"`
+	Text            string      `json:"text,omitempty"`
+	Caption         string      `json:"caption,omitempty"`
+	Chat            Chat        `json:"chat"`
+	From            *User       `json:"from,omitempty"`
+	Photo           []PhotoSize `json:"photo,omitempty"`    // present for a photo message (multiple sizes)
+	Document        *Document   `json:"document,omitempty"` // present for a file/document message
+}
+
+// PhotoSize is one size variant of a photo. Telegram sends several; the last is
+// the largest.
+type PhotoSize struct {
+	FileID   string `json:"file_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	FileSize int64  `json:"file_size,omitempty"`
+}
+
+// Document is a file attachment (image sent as a file, or any document).
+type Document struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	FileSize int64  `json:"file_size,omitempty"`
+}
+
+// LargestPhoto returns the highest-resolution photo's file id, or "" if the
+// message carries no photo.
+func (m *Message) LargestPhoto() string {
+	if len(m.Photo) == 0 {
+		return ""
+	}
+	return m.Photo[len(m.Photo)-1].FileID // Telegram orders sizes ascending
 }
 
 // Chat identifies a chat/supergroup.

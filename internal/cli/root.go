@@ -63,6 +63,7 @@ func newRoot() *cobra.Command {
 		newAnswerCmd(),
 		newConfirmCmd(),
 		newHookCmd(),
+		newImageCmd(),
 	)
 	return root
 }

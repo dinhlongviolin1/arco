@@ -63,11 +63,16 @@ type Card struct {
 	// SessionID routes the card to that session's forum topic (Telegram). "" =
 	// the General topic / a flat chat.
 	SessionID string
-	// EscalationID, when set, marks this as an OPEN escalation card: the Telegram
-	// sender attaches answer buttons keyed to it. EscalationKind ("question" |
-	// "confirm") picks which keyboard.
+	// EscalationID, when set, marks this as an escalation card: an OPEN one (the
+	// Telegram sender attaches answer buttons keyed to it), or — with Resolved —
+	// a card that edits the open card in place, stripping its buttons.
+	// EscalationKind ("question" | "confirm") picks which keyboard.
 	EscalationID   string
 	EscalationKind string
+	// Resolved marks the "escalation answered/expired" card: the Telegram sender
+	// edits the original escalation message (removing its now-stale buttons)
+	// instead of posting a new one, so a second tap can't hit a dead card.
+	Resolved bool
 	// WorkerID is the worker the card concerns (used by the diff button / status).
 	WorkerID string
 }
