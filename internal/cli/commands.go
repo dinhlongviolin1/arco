@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dinhlongviolin1/arco/internal/api"
+	"github.com/dinhlongviolin1/arco/internal/config"
 )
 
 func newDispatchCmd() *cobra.Command {
@@ -129,6 +131,88 @@ func newKillCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newConfigCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "inspect arco configuration",
+	}
+	cmd.AddCommand(newConfigDumpCmd())
+	return cmd
+}
+
+func newConfigDumpCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dump",
+		Short: "print the fully-resolved config (file → env → credentials), secrets masked",
+		Long: `Print the configuration arco actually resolves, after layering the TOML file,
+ARCO_* environment overrides, and $CREDENTIALS_DIRECTORY secrets — so you can see
+which layer won a value. Secrets (tokens, intake key, notify URLs) are masked.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadCfg()
+			if err != nil {
+				return err
+			}
+			raw, err := json.Marshal(maskSecrets(cfg))
+			if err != nil {
+				return err
+			}
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err != nil {
+				return err
+			}
+			// Render duration fields as human strings ("30s") instead of raw ns.
+			for _, k := range []string{
+				"SweepInterval", "EscalationTimeout", "RollupInterval",
+				"PoolTTL", "LeaseTTL", "SelfOpWindow", "ActivityRestoreAfter",
+			} {
+				if v, ok := m[k].(float64); ok {
+					m[k] = time.Duration(int64(v)).String()
+				}
+			}
+			out, err := json.MarshalIndent(m, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+			return nil
+		},
+	}
+}
+
+// maskSecrets returns a copy of cfg with credential-bearing fields redacted, so
+// `config dump` never prints a token/secret.
+func maskSecrets(c config.Config) config.Config {
+	if c.IntakeSecret != "" {
+		c.IntakeSecret = "***set***"
+	}
+	if c.Telegram.Token != "" {
+		c.Telegram.Token = "***set***"
+	}
+	if len(c.Notify.URLs) > 0 {
+		masked := make([]string, len(c.Notify.URLs))
+		for i, u := range c.Notify.URLs {
+			masked[i] = maskURL(u)
+		}
+		c.Notify.URLs = masked
+	}
+	return c
+}
+
+// maskURL hides the credential in a shoutrrr URL (e.g. telegram://TOKEN@telegram)
+// while keeping the scheme/host visible for debugging.
+func maskURL(u string) string {
+	i := strings.Index(u, "://")
+	if i < 0 {
+		return "***"
+	}
+	scheme, rest := u[:i+3], u[i+3:]
+	if at := strings.Index(rest, "@"); at >= 0 {
+		return scheme + "***@" + rest[at+1:]
+	}
+	return scheme + "***"
 }
 
 func newImageCmd() *cobra.Command {

@@ -64,6 +64,7 @@ func newRoot() *cobra.Command {
 		newConfirmCmd(),
 		newHookCmd(),
 		newImageCmd(),
+		newConfigCmd(),
 	)
 	return root
 }

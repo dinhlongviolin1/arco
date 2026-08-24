@@ -1,0 +1,10 @@
+{"name":"plain-question","raw":"{\"kind\":\"question\",\"instruction\":\"Which web framework should I use for the API?\",\"reason\":\"The task did not specify and two are present in go.mod.\"}","want_state":"waiting_for_user","want_esc":"question"}
+{"name":"real-question-redispatch","raw":"{\"kind\":\"question\",\"instruction\":\"Re-dispatch the intent 'add a README' to the herdr agent (wC:p1) once more; the previous attempt failed only at the prompt-confirmation step after 5 attempts.\",\"reason\":\"The worker is still running and the task has not been executed; the only failure was initial delivery.\"}","want_state":"waiting_for_user","want_esc":"question"}
+{"name":"fenced-json-question","raw":"```json\n{\"kind\": \"question\", \"instruction\": \"Should I force-push to rewrite history?\"}\n```","want_state":"waiting_for_user","want_esc":"question"}
+{"name":"question-with-reasoning-preamble","raw":"Let me reason about this. The worker is stalled and the goal is ambiguous, so I should ask.\n{\"kind\":\"question\",\"instruction\":\"Do you want tests included in this change?\"}","want_state":"waiting_for_user","want_esc":"question"}
+{"name":"final-output-done","raw":"{\"kind\":\"final_output\",\"reason\":\"Goal accomplished: the README was added and committed.\"}","want_state":"completed_candidate"}
+{"name":"fenced-final-output","raw":"Here is my decision:\n```json\n{\"kind\":\"final_output\",\"reason\":\"All acceptance checks pass.\"}\n```","want_state":"completed_candidate"}
+{"name":"run-again-auto","raw":"{\"kind\":\"run_again\",\"instruction\":\"Continue implementing the /health endpoint and add a test.\"}","mode":"auto","want_state":"running"}
+{"name":"malformed-prose","raw":"I'm not entirely sure what the worker is doing here — it looks stuck but I can't tell why.","want_state":"blocked"}
+{"name":"malformed-truncated-json","raw":"{\"kind\":\"question\",\"instruction\":\"which","want_state":"blocked"}
+{"name":"unknown-kind","raw":"{\"kind\":\"teleport\",\"instruction\":\"do something novel\"}","want_state":"blocked"}
