@@ -49,7 +49,7 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("telegram: download: %w", err)
+		return nil, fmt.Errorf("telegram: download: %w", c.scrubToken(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -114,7 +114,7 @@ func (c *Client) uploadFile(ctx context.Context, method, field string, chatID, t
 	httpReq.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return Message{}, fmt.Errorf("telegram: %s: %w", method, err)
+		return Message{}, fmt.Errorf("telegram: %s: %w", method, c.scrubToken(err))
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

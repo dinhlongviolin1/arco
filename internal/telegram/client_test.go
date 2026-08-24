@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,25 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestScrubToken_Direct(t *testing.T) {
+	c := NewClient("SEKRET-TOKEN", nil)
+	require.Equal(t, "boom *** end", c.scrubToken(errors.New("boom SEKRET-TOKEN end")).Error())
+	require.Nil(t, c.scrubToken(nil))
+	require.Equal(t, "no token here", c.scrubToken(errors.New("no token here")).Error())
+}
+
+// A transport failure (connection refused) must NOT surface the bot token, which
+// is embedded in the request URL — the leak the review caught.
+func TestClient_TransportErrorScrubsToken(t *testing.T) {
+	const tok = "7737662158:AAHsupersecretbodyxxxxxxxxxxxxxxxxxx"
+	c := NewClient(tok, nil)
+	c.base = "http://127.0.0.1:1" // nothing listens → connection refused, error carries the URL
+	_, err := c.SendMessage(context.Background(), SendMessageReq{ChatID: 1, Text: "x"})
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), tok, "bot token must never appear in a transport error")
+	require.Contains(t, err.Error(), "***")
+}
 
 // fakeAPI is an httptest Bot API: it records the last method+body and replies
 // with a canned ok envelope (or a canned error).
