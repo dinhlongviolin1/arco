@@ -144,7 +144,7 @@ func (c *Client) call(ctx context.Context, method string, body any, out any) err
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("telegram: %s: %w", method, err)
+		return fmt.Errorf("telegram: %s: %w", method, c.scrubToken(err))
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -177,6 +177,21 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("telegram: %s: api error %d: %s", e.Method, e.Code, e.Description)
+}
+
+// scrubToken redacts the bot token from an error string. Transport failures
+// return a *url.Error whose text includes the full request URL — which embeds
+// the token (…/bot<token>/<method>). Left raw, that error reaches the daemon log
+// (notify.go) and the operator's Telegram topic (relay.imgErr) on any network
+// blip. Mirrors internal/vm redactSecrets on the VM launch path.
+func (c *Client) scrubToken(err error) error {
+	if err == nil || c.token == "" {
+		return err
+	}
+	if s := err.Error(); strings.Contains(s, c.token) {
+		return errors.New(strings.ReplaceAll(s, c.token, "***"))
+	}
+	return err
 }
 
 // IsNotModified reports whether the error is Bot API's "message is not
