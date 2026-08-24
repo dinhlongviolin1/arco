@@ -317,6 +317,24 @@ func (l *LocalVMClient) agentStatusOf(ctx context.Context, target string) string
 	return resp.Result.Agent.AgentStatus
 }
 
+// paneStart* bound the agent-start retry over the herdr pane-not-ready race
+// (agent_pane_busy). ~6 tries × 750ms ≈ 4.5s of patience, well inside bounded()'s
+// 30s launch deadline.
+const (
+	paneStartAttempts = 6
+	paneStartBackoff  = 750 * time.Millisecond
+)
+
+// retryablePaneErr reports whether an `agent start` error is the pane-not-yet-a-
+// shell race (herdr agent_pane_busy), which retrying after a short wait resolves.
+func retryablePaneErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "agent_pane_busy") || strings.Contains(s, "not an available shell")
+}
+
 // retryablePromptErr is a herdr "the agent wasn't ready" prompt outcome (still
 // booting), as opposed to a hard error (unknown target, etc.).
 func retryablePromptErr(err error) bool {
@@ -406,9 +424,30 @@ func (l *LocalVMClient) Launch(ctx context.Context, spec core.LaunchSpec) (strin
 	if len(spec.Args) > 0 { // only add the `--` marker when args follow (off-contract otherwise)
 		start = append(append(start, "--"), spec.Args...)
 	}
-	if _, err := l.herdrRun(ctx, start...); err != nil {
+	// Retry the herdr pane-not-ready race: `workspace create` can return before
+	// the new pane's shell is an "available shell", so `agent start` fails with
+	// agent_pane_busy — intermittent locally, common over SSH latency. Back off and
+	// retry the same start (idempotent: nothing launched yet on this error).
+	var startErr error
+	for attempt := 0; attempt < paneStartAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				l.closeWorkspace(ctx, wsID)
+				return "", "", redactSecrets(ctx.Err(), secrets)
+			case <-time.After(paneStartBackoff):
+			}
+		}
+		if _, startErr = l.herdrRun(ctx, start...); startErr == nil {
+			break
+		}
+		if !retryablePaneErr(startErr) {
+			break
+		}
+	}
+	if startErr != nil {
 		l.closeWorkspace(ctx, wsID) // don't orphan the workspace on a failed agent start
-		return "", "", redactSecrets(fmt.Errorf("herdr agent start: %w", err), secrets)
+		return "", "", redactSecrets(fmt.Errorf("herdr agent start: %w", startErr), secrets)
 	}
 	// Resolve the just-started agent's stable identity (terminal_id) so the worker
 	// row carries it from birth — arming the sweep's identity guard before the
