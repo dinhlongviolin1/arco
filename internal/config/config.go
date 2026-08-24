@@ -28,6 +28,32 @@ type Notify struct {
 	MinLevel string   `toml:"min_level"`
 }
 
+// Telegram is the optional forum-supergroup operator UX. When Enabled, arco
+// creates one forum topic per session, posts a live-edited status card and
+// escalation cards with answer buttons, and runs an inbound long-poll loop that
+// turns a button tap or a General-topic command into an engine action.
+//
+// It is the ACTIVE notifier when enabled and is mutually exclusive with
+// [notify] (Load fails if both are set): one operator surface at a time.
+// Token may come from the file, $ARCO_TELEGRAM_TOKEN, or a systemd
+// LoadCredential= "telegram_token" file (preferred — never in argv).
+type Telegram struct {
+	Enabled bool   `toml:"enabled"`
+	Token   string `toml:"token"`
+	// GroupID is the forum supergroup chat id (a negative -100... id). Cards go
+	// to per-session topics inside it; the General topic is the fleet console.
+	GroupID int64 `toml:"group_id"`
+	// AllowedUserIDs authorizes INBOUND: only these Telegram user ids may answer
+	// escalations or run console commands. Empty = receive-nothing (safe default,
+	// mirrors the Gatus bot) — but then buttons do nothing, so a real deploy sets
+	// it. Every inbound update (message AND button tap) is checked against this
+	// list; everything else is silently dropped (a stranger can't drive the fleet).
+	AllowedUserIDs []int64 `toml:"allowed_user_ids"`
+	// MinLevel filters cards below that severity ("info"|"warn"|"urgent",
+	// "" = info) — same knob as notify.min_level, for the Telegram path.
+	MinLevel string `toml:"min_level"`
+}
+
 // Sandbox is the optional srt (anthropic-experimental/sandbox-runtime) wrapper
 // config, OFF by default: opting in prefixes a worker's command with `srt` so an
 // agent escape stays confined. PolicyPath is srt's settings file; empty means
@@ -139,9 +165,10 @@ type Config struct {
 	// VMs is the configured VM fleet ([[vms]] blocks) the daemon builds the
 	// Engine's named-VM registry from (rev7/T3.3). Default: empty — routing
 	// stays off and VM names stay pure labels.
-	VMs     []VMDef `toml:"vms"`
-	Notify  Notify  `toml:"notify"`
-	Sandbox Sandbox `toml:"sandbox"`
+	VMs      []VMDef  `toml:"vms"`
+	Notify   Notify   `toml:"notify"`
+	Telegram Telegram `toml:"telegram"`
+	Sandbox  Sandbox  `toml:"sandbox"`
 }
 
 // Defaults returns a Config populated with the pinned build-guide defaults.
@@ -214,7 +241,36 @@ func Load(path string) (Config, error) {
 	if _, err := notify.ParseLevel(cfg.Notify.MinLevel); err != nil {
 		return Config{}, fmt.Errorf("config: key notify.min_level: %w", err)
 	}
+	if err := validateTelegram(&cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// validateTelegram enforces the "one active notifier" rule and fills/validates
+// the Telegram knobs. [telegram] and [notify] are mutually exclusive: enabling
+// both is a config error, not a silent precedence pick.
+func validateTelegram(cfg *Config) error {
+	t := &cfg.Telegram
+	if t.MinLevel == "" {
+		t.MinLevel = "info"
+	}
+	if _, err := notify.ParseLevel(t.MinLevel); err != nil {
+		return fmt.Errorf("config: key telegram.min_level: %w", err)
+	}
+	if !t.Enabled {
+		return nil
+	}
+	if len(cfg.Notify.URLs) > 0 {
+		return fmt.Errorf("config: [telegram] and notify.urls are both set — pick one active notifier")
+	}
+	if t.Token == "" {
+		return fmt.Errorf("config: telegram.enabled but telegram.token is empty (set token, $ARCO_TELEGRAM_TOKEN, or a LoadCredential= telegram_token)")
+	}
+	if t.GroupID == 0 {
+		return fmt.Errorf("config: telegram.enabled but telegram.group_id is unset (the forum supergroup chat id)")
+	}
+	return nil
 }
 
 // removedKnobs are config keys that no longer exist (rev7/T1.3 deleted the dead
@@ -248,7 +304,8 @@ func rejectRemovedKnobs(undecoded []toml.Key) error {
 // credential name) to the config field it overrides — one line per credential.
 func credentialFiles(cfg *Config) map[string]*string {
 	return map[string]*string{
-		"intake_secret": &cfg.IntakeSecret,
+		"intake_secret":  &cfg.IntakeSecret,
+		"telegram_token": &cfg.Telegram.Token,
 	}
 }
 
@@ -302,6 +359,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("ARCO_INTAKE_SECRET"); v != "" {
 		cfg.IntakeSecret = v
+	}
+	if v := os.Getenv("ARCO_TELEGRAM_TOKEN"); v != "" {
+		cfg.Telegram.Token = v
 	}
 	if v := os.Getenv("ARCO_LOCAL_VM"); v == "1" || v == "true" {
 		cfg.UseLocalVM = true

@@ -85,11 +85,15 @@ func (e *Engine) AuditDeniedAttempt(ctx context.Context, workerID, capability, d
 	}
 	// POST-COMMIT: push the danger-confirm decision card.
 	if opened {
-		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
+		card := notify.EscalationCard{
 			WorkerID: workerID,
 			TaskTail: taskTail(task),
 			Question: "worker attempted a deny-listed capability",
-		}))
+		}
+		if esc, ok := e.pendingEscForCard(workerID); ok {
+			card.EscalationID, card.Kind, card.SessionID = esc.ID, esc.Kind, sess
+		}
+		e.notifyCard(sess, notify.FormatEscalation(card))
 	}
 	return nil
 }

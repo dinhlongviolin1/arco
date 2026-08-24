@@ -174,6 +174,10 @@ type Tx interface {
 	// (reject unknown BEFORE writing), bumps the session rev, and appends a
 	// `mode_change` event attributed to actor with the old+new mode.
 	SetSessionMode(id string, m SupervisionMode, actor string) error
+	// SetSessionTelegram binds a session's Telegram forum topic id and/or pinned
+	// status-card message id — arco-internal routing state (like BindAgentRef:
+	// no rev bump, no event). A nil pointer leaves that column unchanged.
+	SetSessionTelegram(id string, topicID, statusMsgID *int64) error
 	AttachWorker(sessionID, workerID string) error
 
 	Grant(sessionID, capability, grantedBy string, e Event) (newPermRev int64, err error)

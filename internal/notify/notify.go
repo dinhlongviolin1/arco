@@ -50,10 +50,26 @@ func (l Level) String() string {
 }
 
 // Card is one push notification.
+//
+// The first three fields are the whole message for the generic shoutrrr path
+// (ntfy et al.). The trailing fields are OPTIONAL routing metadata the Telegram
+// forum sender uses (topic per session, inline answer buttons); the generic
+// sender ignores them entirely, so a Card is backend-agnostic.
 type Card struct {
 	Level Level
 	Title string
 	Body  string
+
+	// SessionID routes the card to that session's forum topic (Telegram). "" =
+	// the General topic / a flat chat.
+	SessionID string
+	// EscalationID, when set, marks this as an OPEN escalation card: the Telegram
+	// sender attaches answer buttons keyed to it. EscalationKind ("question" |
+	// "confirm") picks which keyboard.
+	EscalationID   string
+	EscalationKind string
+	// WorkerID is the worker the card concerns (used by the diff button / status).
+	WorkerID string
 }
 
 // Sender delivers cards.
@@ -153,15 +169,19 @@ func (r *Recorder) Cards() []Card {
 
 // EscalationCard is the input for rendering an escalation decision card.
 type EscalationCard struct {
-	WorkerID   string
-	TaskTail   string
-	Question   string
-	Draft      string
-	Confidence float64
-	Rationale  string
+	EscalationID string // routing: attaches Telegram answer buttons keyed to it
+	Kind         string // "question" | "confirm" — picks the button set
+	SessionID    string // routing: the session's forum topic
+	WorkerID     string
+	TaskTail     string
+	Question     string
+	Draft        string
+	Confidence   float64
+	Rationale    string
 }
 
-// FormatEscalation renders an escalation as an urgent decision card.
+// FormatEscalation renders an escalation as an urgent decision card, carrying
+// the routing metadata the Telegram sender needs (escalation id/kind + session).
 func FormatEscalation(c EscalationCard) Card {
 	lines := make([]string, 0, 4)
 	if c.TaskTail != "" {
@@ -175,8 +195,12 @@ func FormatEscalation(c EscalationCard) Card {
 		lines = append(lines, "rationale: "+c.Rationale)
 	}
 	return Card{
-		Level: LevelUrgent,
-		Title: "arco: decision needed — " + c.WorkerID,
-		Body:  strings.Join(lines, "\n"),
+		Level:          LevelUrgent,
+		Title:          "arco: decision needed — " + c.WorkerID,
+		Body:           strings.Join(lines, "\n"),
+		SessionID:      c.SessionID,
+		EscalationID:   c.EscalationID,
+		EscalationKind: c.Kind,
+		WorkerID:       c.WorkerID,
 	}
 }
