@@ -33,6 +33,7 @@ type Server struct {
 	mux          *http.ServeMux
 	intakeSecret string // HMAC key for signed intake (P4); "" = unauthenticated (socket-only)
 	mq           *mergeq.Queue
+	imageRelay   ImageRelay // outbound image relay (telegram); nil = disabled → 503
 }
 
 // EnableMergeQueue installs the merge queue behind /v1/queue (rev7/T3.2).
@@ -66,6 +67,7 @@ func New(store core.Store, eng *reconcile.Engine) *Server {
 	s.mux.HandleFunc("GET /v1/escalations", s.listEscalations)
 	s.mux.HandleFunc("POST /v1/escalations/answer", s.answer)
 	s.mux.HandleFunc("POST /v1/escalations/confirm", s.confirm)
+	s.mux.HandleFunc("POST /v1/image/send", s.imageSend)
 	return s
 }
 

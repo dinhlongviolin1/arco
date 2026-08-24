@@ -24,12 +24,31 @@ func (e *Engine) notifyCard(sessionID string, c notify.Card) {
 	if !e.sessionMode(sessionID).Allows(core.ActNotify) {
 		return
 	}
+	// Stamp the concerned session so a topic-routing sender (Telegram forum) can
+	// deliver into the right per-session thread; the generic shoutrrr sender
+	// ignores it. FormatEscalation may already have set it — this is the single
+	// chokepoint that guarantees it for every card kind.
+	c.SessionID = sessionID
 	go func() {
 		if err := e.Notify.Send(e.bg(), c); err != nil {
 			e.meterNotifyFailure()
 			log.Printf("arco: notify: send failed: %v", err)
 		}
 	}()
+}
+
+// pendingEscForCard returns a worker's pending escalation, so a decision card
+// can carry the routing metadata (escalation id + kind) a topic-aware notifier
+// (Telegram forum) needs to attach answer buttons. Best-effort: a read failure
+// or no pending row yields ok=false and the card still sends (button-less). A
+// worker holds at most one pending escalation (the open path gates on that), so
+// the first row is the right one.
+func (e *Engine) pendingEscForCard(workerID string) (core.Escalation, bool) {
+	list, err := e.Store.Reader().ListEscalations(core.EscalationFilter{WorkerID: workerID, Status: "pending"})
+	if err != nil || len(list) == 0 {
+		return core.Escalation{}, false
+	}
+	return list[0], true
 }
 
 // taskTail is the tail of a worker task for decision cards: the last 120

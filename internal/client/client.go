@@ -148,6 +148,12 @@ func (c *Client) KillWorker(ctx context.Context, workerID string) error {
 
 // Redeliver re-prompts a stranded running worker with its original task
 // (operator recovery for a crash-lost initial delivery).
+func (c *Client) ImageSend(ctx context.Context, req api.ImageSendReq) (api.ImageSendResp, error) {
+	var out api.ImageSendResp
+	err := c.do(ctx, "POST", "/v1/image/send", req, &out)
+	return out, err
+}
+
 func (c *Client) Redeliver(ctx context.Context, workerID string) error {
 	return c.do(ctx, http.MethodPost, "/v1/workers/"+workerID+"/redeliver", nil, nil)
 }

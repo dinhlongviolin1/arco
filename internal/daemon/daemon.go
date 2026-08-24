@@ -26,6 +26,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
+	"github.com/dinhlongviolin1/arco/internal/telegram"
 	"github.com/dinhlongviolin1/arco/internal/vm"
 )
 
@@ -251,6 +252,19 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	eng.EStopPath = cfg.EStopPath() // `arco pause` sentinel — see reconcile.Paused
 
+	// Telegram forum mode (optional, mutually exclusive with [notify]): overrides
+	// eng.Notify with the topic-routing bot and arms the inbound long-poll loop
+	// (started below with the sweep lifecycle). Token verified at boot.
+	var tgBot *telegram.Bot
+	if cfg.Telegram.Enabled {
+		tgBot, err = buildTelegramBot(ctx, cfg, eng)
+		if err != nil {
+			return fmt.Errorf("daemon: telegram: %w", err)
+		}
+		eng.Notify = tgBot
+		srv.EnableImageRelay(tgBot) // `arco image send` → this bot (outbound relay)
+	}
+
 	// Boot recovery (survive-and-reconcile) before we accept traffic.
 	if err := eng.Recover(ctx); err != nil {
 		return fmt.Errorf("daemon: boot recovery: %w", err)
@@ -365,6 +379,16 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		go func() {
 			defer sweepWG.Done()
 			_ = hc.Run(sweepCtx) // returns promptly on sweepCancel (shutdown)
+		}()
+	}
+
+	// Telegram inbound long-poll loop (button taps / console commands). Joins the
+	// sweep ctx+WaitGroup so shutdown drains it before store.Close.
+	if tgBot != nil {
+		sweepWG.Add(1)
+		go func() {
+			defer sweepWG.Done()
+			tgBot.Start(sweepCtx) // returns promptly on sweepCancel (shutdown)
 		}()
 	}
 

@@ -493,11 +493,16 @@ func (e *Engine) ApplyEvent(ctx context.Context, in EventInput) error {
 	}
 	// POST-COMMIT: push the decision card for a newly-opened escalation.
 	if openedEsc {
-		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
+		card := notify.EscalationCard{
 			WorkerID: in.WorkerID,
 			TaskTail: taskTail(task),
 			Question: "worker is awaiting input",
-		}))
+		}
+		if esc, ok := e.pendingEscForCard(in.WorkerID); ok {
+			card.EscalationID, card.Kind, card.SessionID = esc.ID, esc.Kind, sess
+			card.Draft, card.Confidence, card.Rationale = esc.DraftAnswer, esc.DraftConfidence, esc.BrainRationale
+		}
+		e.notifyCard(sess, notify.FormatEscalation(card))
 	}
 	// Ambiguous signals → ask the brain to classify, OFF the write path, serialized
 	// per worker via Exec (Submit fires strictly after the commit above; no

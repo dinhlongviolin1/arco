@@ -330,6 +330,15 @@ func (t *txn) SetSessionMode(id string, m core.SupervisionMode, actor string) er
 	})
 }
 
+func (t *txn) SetSessionTelegram(id string, topicID, statusMsgID *int64) error {
+	// COALESCE(?, col): a nil pointer marshals to NULL and leaves the column as-is;
+	// a non-nil pointer overwrites it. Arco-internal binding — no rev bump/event.
+	_, err := t.q.ExecContext(context.Background(),
+		`UPDATE sessions SET tg_topic_id=COALESCE(?, tg_topic_id), tg_status_msg_id=COALESCE(?, tg_status_msg_id) WHERE id=?`,
+		topicID, statusMsgID, id)
+	return err
+}
+
 func (t *txn) SetSessionStatus(id string, to core.SessionStatus, expectedRev int64, e core.Event) error {
 	cur, err := t.GetSession(id)
 	if err != nil {

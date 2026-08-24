@@ -504,12 +504,15 @@ func (e *Engine) openFromBrain(ctx context.Context, workerID, kind string, ac co
 		return
 	}
 	e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
-		WorkerID:   workerID,
-		TaskTail:   taskTail(task),
-		Question:   esc.Action,
-		Draft:      esc.DraftAnswer,
-		Confidence: esc.DraftConfidence,
-		Rationale:  esc.BrainRationale,
+		EscalationID: esc.ID,
+		Kind:         esc.Kind,
+		SessionID:    sess,
+		WorkerID:     workerID,
+		TaskTail:     taskTail(task),
+		Question:     esc.Action,
+		Draft:        esc.DraftAnswer,
+		Confidence:   esc.DraftConfidence,
+		Rationale:    esc.BrainRationale,
 	}))
 }
 

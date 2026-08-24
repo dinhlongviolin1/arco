@@ -200,10 +200,14 @@ func (e *Engine) ciEscalateFailure(ctx context.Context, w core.Worker, failed []
 		return
 	}
 	if opened {
-		e.notifyCard(w.OwnerSession, notify.FormatEscalation(notify.EscalationCard{
+		card := notify.EscalationCard{
 			WorkerID: w.ID,
 			TaskTail: taskTail(w.Task),
 			Question: action + " — " + detail,
-		}))
+		}
+		if esc, ok := e.pendingEscForCard(w.ID); ok {
+			card.EscalationID, card.Kind, card.SessionID = esc.ID, esc.Kind, w.OwnerSession
+		}
+		e.notifyCard(w.OwnerSession, notify.FormatEscalation(card))
 	}
 }

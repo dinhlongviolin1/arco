@@ -25,9 +25,11 @@ func (e *Engine) AnswerQuestion(ctx context.Context, id, text string, scope core
 	}
 	if escErr == nil {
 		e.notifyCard(esc.SessionID, notify.Card{
-			Level: notify.LevelInfo,
-			Title: "arco: escalation answered — " + esc.WorkerID,
-			Body:  fmt.Sprintf("worker: %s\nanswer: %s", esc.WorkerID, text),
+			Level:        notify.LevelInfo,
+			Title:        "arco: escalation answered — " + esc.WorkerID,
+			Body:         fmt.Sprintf("worker: %s\nanswer: %s", esc.WorkerID, text),
+			EscalationID: id, // edit the original card, stripping its buttons (Resolved)
+			Resolved:     true,
 		})
 	}
 	e.deliverDecision(id, text)
@@ -52,9 +54,11 @@ func (e *Engine) DecideConfirm(ctx context.Context, id string, yes bool, scope c
 			decision = "approved"
 		}
 		e.notifyCard(esc.SessionID, notify.Card{
-			Level: notify.LevelInfo,
-			Title: "arco: escalation answered — " + esc.WorkerID,
-			Body:  fmt.Sprintf("worker: %s\ndecision: %s", esc.WorkerID, decision),
+			Level:        notify.LevelInfo,
+			Title:        "arco: escalation answered — " + esc.WorkerID,
+			Body:         fmt.Sprintf("worker: %s\ndecision: %s", esc.WorkerID, decision),
+			EscalationID: id, // edit the original card, stripping its buttons (Resolved)
+			Resolved:     true,
 		})
 	}
 	if yes {

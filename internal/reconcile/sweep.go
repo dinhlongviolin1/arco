@@ -635,11 +635,15 @@ func (e *Engine) checkStall(ctx context.Context, w core.Worker, headNow string) 
 	}
 	// POST-COMMIT: push the decision card for a newly-opened stall question.
 	if opened {
-		e.notifyCard(sess, notify.FormatEscalation(notify.EscalationCard{
+		card := notify.EscalationCard{
 			WorkerID: w.ID,
 			TaskTail: taskTail(task),
 			Question: action,
-		}))
+		}
+		if esc, ok := e.pendingEscForCard(w.ID); ok {
+			card.EscalationID, card.Kind, card.SessionID = esc.ID, esc.Kind, sess
+		}
+		e.notifyCard(sess, notify.FormatEscalation(card))
 	}
 	return blocked, nil
 }
