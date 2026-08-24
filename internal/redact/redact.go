@@ -32,7 +32,7 @@ var patterns = []pattern{
 	// OpenAI: legacy sk-… and current sk-proj-/sk-svcacct-/sk-admin-… (opus P2-2).
 	{"openai-key", regexp.MustCompile(`sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`)},
 	{"aws-access-key", regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`)},
-	{"slack-token", regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`)},
+	{"slack-token", regexp.MustCompile(`\bxox[abceprs]-[A-Za-z0-9-]{10,}\b`)}, // incl. modern xoxc- (browser) / xoxe- (refresh)
 	{"private-key", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)},
 	// URL embedded credentials: scheme://user:pass@host → keep host, drop creds.
 	// userinfo classes allow ':' so a colon-bearing password is caught (opus P2-1);

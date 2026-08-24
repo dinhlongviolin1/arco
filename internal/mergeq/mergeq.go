@@ -206,7 +206,11 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 		// controlled code. Scrub the daemon's creds from its env (P1), exactly
 		// like git() above; otherwise a hostile Makefile/test target reads
 		// ANTHROPIC_API_KEY/GITHUB_TOKEN straight out of the environment.
-		cmd.Env = append(spawnenv.Scrub(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+		// ScrubWorker (NOT the plain Scrub git() uses): this runs worker-controlled
+		// build/test scripts, so also strip the operator's SSH agent / GPG keyring
+		// (SSH_AUTH_SOCK/GNUPGHOME) — else a hostile Makefile could push/sign/ssh
+		// AS the operator.
+		cmd.Env = append(spawnenv.ScrubWorker(os.Environ()), "GIT_TERMINAL_PROMPT=0")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return "test gate failed", string(out)
 		}

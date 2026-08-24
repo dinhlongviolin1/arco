@@ -143,6 +143,29 @@ func TestMergeQ_GreenTestsRunInWorkspaceAndMerge(t *testing.T) {
 	require.Equal(t, 1, countMergeArtifacts(t, s, wid))
 }
 
+// Regression: the test gate runs worker-controlled build/test code (the merged
+// tree's Makefile/tests), so it must NOT inherit the operator's SSH agent — else
+// a hostile target could `git push`/`ssh`/`gpg` AS the operator. The gate uses
+// ScrubWorker, which strips SSH_AUTH_SOCK; this gate passes ONLY if it's absent.
+func TestMergeQ_GateStripsOperatorSSHAgent(t *testing.T) {
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/op-agent.sock")
+	s := openStore(t)
+	origin, base := newOrigin(t)
+	wt, head := workerClone(t, origin, "feature.txt", "feature\n")
+	wid := seedCandidate(t, s, wt, head, base)
+	ctx := context.Background()
+
+	q := mergeq.New(s, mergeq.Config{TestCmd: []string{"sh", "-c", `test -z "$SSH_AUTH_SOCK"`}})
+	_, err := q.Enqueue(ctx, wid)
+	require.NoError(t, err)
+	ok, err := q.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	items, _ := q.Items(ctx)
+	require.Equal(t, mergeq.StatusMerged, items[0].Status,
+		"gate saw no SSH_AUTH_SOCK → merged (worker-controlled test code can't reach the operator agent)")
+}
+
 // A worker with no worktree/head (never launched) has nothing to integrate.
 func TestMergeQ_EnqueueRefusesWorkerWithoutWorktree(t *testing.T) {
 	s := openStore(t)
