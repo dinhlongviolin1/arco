@@ -215,7 +215,9 @@ func (c Config) EStopPath() string {
 func Load(path string) (Config, error) {
 	cfg := Defaults()
 	if path != "" {
-		if _, err := os.Stat(path); err == nil {
+		_, statErr := os.Stat(path)
+		switch {
+		case statErr == nil:
 			md, err := toml.DecodeFile(path, &cfg)
 			if err != nil {
 				return Config{}, err
@@ -223,6 +225,13 @@ func Load(path string) (Config, error) {
 			if err := rejectRemovedKnobs(md.Undecoded()); err != nil {
 				return Config{}, err
 			}
+		case errors.Is(statErr, fs.ErrNotExist):
+			// A missing config file is fine — defaults apply.
+		default:
+			// An explicitly-passed --config that exists but can't be stat'd
+			// (EACCES/ENOTDIR/…) must fail loud, not silently fall back to
+			// defaults (which could start the daemon in an unintended posture).
+			return Config{}, fmt.Errorf("config: cannot access %q: %w", path, statErr)
 		}
 	}
 	applyEnv(&cfg)
@@ -243,6 +252,12 @@ func Load(path string) (Config, error) {
 	}
 	if err := validateTelegram(&cfg); err != nil {
 		return Config{}, err
+	}
+	// sweep_interval feeds time.NewTicker unconditionally (daemon.Run); a zero or
+	// negative value panics it at startup. Reject loud with the offending value
+	// rather than crash. (Other duration knobs are guarded by `> 0` at their use.)
+	if cfg.SweepInterval <= 0 {
+		return Config{}, fmt.Errorf("config: sweep_interval must be positive (got %s)", cfg.SweepInterval)
 	}
 	return cfg, nil
 }

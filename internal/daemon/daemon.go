@@ -319,7 +319,12 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 				return
 			case <-ticker.C:
 				start := time.Now()
-				_, _ = eng.Sweep(sweepCtx)
+				if _, err := eng.Sweep(sweepCtx); err != nil && sweepCtx.Err() == nil {
+					// Surface a sweep failure (e.g. a herdr outage making the
+					// authoritative loop a silent no-op). Skip logging on our own
+					// shutdown cancel, which is expected, not an outage.
+					log.Printf("arco: sweep: %v", err)
+				}
 				metrics.SweepDone(time.Since(start))
 				// Drain the merge queue strictly one item at a time on the sweep
 				// cadence (rev7/T3.2) — an error leaves the item pending for the

@@ -852,10 +852,10 @@ func errStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch),
 		errors.Is(err, core.ErrHighBlastScope), errors.Is(err, core.ErrEscalationState),
-		errors.Is(err, core.ErrAgentBusy):
-		return http.StatusConflict
-	case errors.Is(err, core.ErrPaused):
-		return http.StatusServiceUnavailable // estop engaged — temporary, retriable after resume
+		errors.Is(err, core.ErrAgentBusy), errors.Is(err, core.ErrLeaseRejected):
+		return http.StatusConflict // admission conflict (incl. pool-lease refusal) — not a server fault
+	case errors.Is(err, core.ErrPaused), errors.Is(err, core.ErrVMAtCapacity):
+		return http.StatusServiceUnavailable // estop / at-capacity — temporary, retriable
 	default:
 		return http.StatusInternalServerError
 	}

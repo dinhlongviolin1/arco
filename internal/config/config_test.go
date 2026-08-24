@@ -52,3 +52,12 @@ func TestLoad_EmptyBrainModelInTOMLStillGetsCheapDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "haiku", cfg.BrainModel)
 }
+
+func TestLoad_RejectsNonPositiveSweepInterval(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("sweep_interval = 0\n"), 0o600))
+	_, err := Load(path)
+	require.Error(t, err, "sweep_interval = 0 would panic time.NewTicker; Load must reject it")
+	require.Contains(t, err.Error(), "sweep_interval")
+}

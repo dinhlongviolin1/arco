@@ -278,3 +278,42 @@ func TestDecide_WrongStateRejected(t *testing.T) {
 	})
 	require.ErrorIs(t, err, core.ErrEscalationState)
 }
+
+// ExpireEscalation is id-scoped and pending-guarded: it expires exactly the
+// sampled row and is a no-op once that row is resolved — so the sweep's
+// escalation-timeout reaper can't expire a DIFFERENT (fresh) escalation minted
+// for the same worker between its snapshot and the expire tx.
+func TestExpireEscalation_IDScopedAndPendingGuarded(t *testing.T) {
+	s := newTestStore(t)
+	worker, session := waitingWorker(t, s)
+	var id string
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		id, e = tx.OpenEscalation(core.Escalation{WorkerID: worker, SessionID: session, Kind: "question", Action: "q"})
+		return e
+	}))
+	// First expire: the pending row is expired (1).
+	var n int
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		n, e = tx.ExpireEscalation(id)
+		return e
+	}))
+	require.Equal(t, 1, n)
+	esc, _ := s.Reader().GetEscalation(id)
+	require.Equal(t, "expired", esc.Status)
+	// Second expire on the now-resolved row: no-op (0) — the pending guard holds.
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		n, e = tx.ExpireEscalation(id)
+		return e
+	}))
+	require.Equal(t, 0, n)
+	// An unknown id is also a no-op.
+	require.NoError(t, s.WithTx(context.Background(), func(tx core.Tx) error {
+		var e error
+		n, e = tx.ExpireEscalation("nonexistent")
+		return e
+	}))
+	require.Equal(t, 0, n)
+}
