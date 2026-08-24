@@ -205,6 +205,12 @@ type Tx interface {
 	// ExpirePendingForWorker closes any pending escalation for a worker that has
 	// left its waiting state by another path (so it doesn't linger as a phantom).
 	ExpirePendingForWorker(workerID string) (int, error)
+	// ExpireEscalation expires ONE escalation by id, only if still pending
+	// (returns the number expired: 1 or 0). Unlike ExpirePendingForWorker this
+	// targets the exact row the caller sampled, so the escalation-timeout reaper
+	// can't expire a DIFFERENT (freshly-opened) escalation for the same worker
+	// that was minted between its pending snapshot and this tx.
+	ExpireEscalation(id string) (int, error)
 
 	// AcquireLease atomically admits a new lease against poolID under the
 	// single-writer lock (counts active + start-window leases, applies admission),

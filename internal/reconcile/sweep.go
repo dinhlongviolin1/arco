@@ -314,9 +314,18 @@ func (e *Engine) reapEscalations(ctx context.Context) int {
 		}
 		var expired int
 		txErr := e.Store.WithTx(ctx, func(tx core.Tx) error {
+			// Expire THIS exact escalation (id-scoped, pending-guarded) — not every
+			// pending escalation for the worker. A worker-scoped expire would nuke a
+			// DIFFERENT escalation minted for the same worker between the snapshot
+			// above and this tx (e.g. the sampled one was just answered and a fresh
+			// one opened), pausing the worker on an age-0 escalation it never had a
+			// chance to answer. If our row is no longer pending, expired==0 → skip.
 			var err error
-			if expired, err = tx.ExpirePendingForWorker(esc.WorkerID); err != nil {
+			if expired, err = tx.ExpireEscalation(esc.ID); err != nil {
 				return err
+			}
+			if expired == 0 || esc.WorkerID == "" {
+				return nil
 			}
 			w, err := tx.GetWorker(esc.WorkerID)
 			if err != nil {
@@ -337,8 +346,8 @@ func (e *Engine) reapEscalations(ctx context.Context) int {
 				Title: "arco: escalation expired — " + esc.WorkerID,
 				Body:  fmt.Sprintf("worker: %s\nquestion: %s", esc.WorkerID, esc.Action),
 			})
+			n++
 		}
-		n++
 	}
 	return n
 }

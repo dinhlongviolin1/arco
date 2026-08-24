@@ -421,6 +421,22 @@ func (t *txn) ExpirePendingForWorker(workerID string) (int, error) {
 	return int(n), nil
 }
 
+// ExpireEscalation expires a SINGLE escalation by id iff it is still pending.
+// The `AND status='pending'` guard makes it a no-op (0 rows) when the row was
+// resolved/expired between the caller's snapshot and this tx — so the reaper
+// never expires a fresh escalation it never sampled. Also expires workerless
+// escalations (worker_id NULL), which ExpirePendingForWorker could never match.
+func (t *txn) ExpireEscalation(id string) (int, error) {
+	res, err := t.q.ExecContext(context.Background(),
+		`UPDATE escalations SET status='expired', decided_at=? WHERE status='pending' AND id=?`,
+		t.now(), id)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func joinAnd(parts []string) string {
 	out := ""
 	for i, p := range parts {
