@@ -101,7 +101,10 @@ func (f *Fake) Prompts() []Prompted {
 	return append([]Prompted(nil), f.prompts...)
 }
 
-func (f *Fake) ListAgents(context.Context) ([]core.AgentObs, error) {
+func (f *Fake) ListAgents(ctx context.Context) ([]core.AgentObs, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err // a real backend (herdr/ssh) fails on a cancelled ctx; model it
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]core.AgentObs(nil), f.Agents...), nil

@@ -148,7 +148,12 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	finalState := core.WorkerRunning
 	if perr != nil {
 		finalState = core.WorkerFailed
-		if agents, aerr := vmc.ListAgents(ctx); aerr == nil {
+		// Probe on a bounded e.bg() ctx, NOT the request ctx: a client disconnect
+		// mid-launch is exactly what errors the launch, and it would also cancel a
+		// request-ctx probe — mislabeling a live agent `failed` and leaking it (see
+		// adoptionProbeTimeout).
+		pctx, cancel := context.WithTimeout(e.bg(), adoptionProbeTimeout)
+		if agents, aerr := vmc.ListAgents(pctx); aerr == nil {
 			for _, a := range agents {
 				if a.Alive && a.Workspace == workspace {
 					finalState = core.WorkerRunning
@@ -156,6 +161,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 				}
 			}
 		}
+		cancel()
 	}
 	// Phase 3 commits on e.bg(), NOT the request ctx: once phase 1's durable
 	// intent landed, the finalize (BindLaunch + dispatch_done) MUST complete even
