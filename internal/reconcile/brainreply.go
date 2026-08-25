@@ -23,7 +23,14 @@ func (e *Engine) BrainReply(ctx context.Context, prompt string) (string, error) 
 	}
 	res := brain.Invoke(ctx, brain.Config{Profile: e.Brain.Profile, Model: e.Brain.Model}, prompt, e.Brain.Runner)
 	e.meterBrainCall(approxTokens(prompt, res.Raw))
-	if res.Err != nil {
+	if res.Billing {
+		return "", fmt.Errorf("brain: billing/quota")
+	}
+	// A chat reply is plain prose, so brain.Invoke reports Malformed (it couldn't
+	// parse a StepResult) — that is EXPECTED here: the raw model text IS the
+	// answer. Only a real exec/transport failure (Err without Malformed) is a
+	// failure for chat.
+	if res.Err != nil && !res.Malformed {
 		return "", res.Err
 	}
 	reply := strings.TrimSpace(res.Raw)
