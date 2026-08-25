@@ -56,6 +56,24 @@ func (a engineActions) Resume(context.Context) error {
 
 func (a engineActions) Paused() bool { return a.eng.Paused() }
 
+func (a engineActions) Dispatch(ctx context.Context, repo, task string) (string, string, error) {
+	// The repo-based spawn path (a real worker on a fresh per-worker worktree),
+	// the same one `arco dispatch --repo` uses.
+	res, err := a.eng.Spawn(ctx, "", task, true, repo, "")
+	if err != nil {
+		return "", "", err
+	}
+	return res.WorkerID, res.SessionID, nil
+}
+
+func (a engineActions) Kill(ctx context.Context, workerID string) error {
+	return a.eng.KillWorker(ctx, workerID)
+}
+
+func (a engineActions) BrainReply(ctx context.Context, prompt string) (string, error) {
+	return a.eng.BrainReply(ctx, prompt)
+}
+
 // tgStore adapts core.Store to telegram.Store: reads go through Reader(); the
 // topic-id binding runs in a one-statement write tx.
 type tgStore struct{ s core.Store }

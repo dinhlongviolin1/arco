@@ -165,13 +165,17 @@ type confirmCall struct {
 	yes   bool
 }
 type fakeActions struct {
-	mu       sync.Mutex
-	answers  []answerCall
-	confirms []confirmCall
-	diffOut  string
-	paused   bool
-	pauseHit int
-	resHit   int
+	mu          sync.Mutex
+	answers     []answerCall
+	confirms    []confirmCall
+	diffOut     string
+	paused      bool
+	pauseHit    int
+	resHit      int
+	dispatches  []string
+	kills       []string
+	chatPrompts []string
+	chatReply   string
 }
 
 func (a *fakeActions) AnswerQuestion(_ context.Context, escID, text string, scope core.Scope) error {
@@ -202,6 +206,27 @@ func (a *fakeActions) Resume(context.Context) error {
 	return nil
 }
 func (a *fakeActions) Paused() bool { return a.paused }
+func (a *fakeActions) Dispatch(_ context.Context, repo, task string) (string, string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.dispatches = append(a.dispatches, repo+" | "+task)
+	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
+}
+func (a *fakeActions) Kill(_ context.Context, workerID string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.kills = append(a.kills, workerID)
+	return nil
+}
+func (a *fakeActions) BrainReply(_ context.Context, prompt string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.chatPrompts = append(a.chatPrompts, prompt)
+	if a.chatReply == "" {
+		return "ok", nil
+	}
+	return a.chatReply, nil
+}
 
 type fakeScrubber struct{}
 

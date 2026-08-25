@@ -160,39 +160,22 @@ func (b *Bot) sendDiff(ctx context.Context, esc core.Escalation) {
 	})
 }
 
-// handleMessage handles an authorized slash-command in the General topic.
+// handleMessage routes an authorized text message: a slash-command, or free
+// text (chat / an in-topic escalation answer). Commands + chat live in
+// commands.go.
 func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 	if m.From == nil || !b.allowed[m.From.ID] {
 		return
 	}
 	text := strings.TrimSpace(m.Text)
-	if !strings.HasPrefix(text, "/") {
+	if text == "" {
 		return
 	}
-	cmd := strings.Fields(text)[0]
-	cmd = strings.SplitN(cmd, "@", 2)[0] // strip /cmd@botname
-	var reply string
-	switch cmd {
-	case "/status":
-		reply = b.fleetStatus()
-	case "/pause":
-		if err := b.actions.Pause(ctx); err != nil {
-			reply = "pause failed: " + err.Error()
-		} else {
-			reply = "⛔ estop engaged — no new workers, no autonomous actions (in-flight work keeps running)"
-		}
-	case "/resume":
-		if err := b.actions.Resume(ctx); err != nil {
-			reply = "resume failed: " + err.Error()
-		} else {
-			reply = "▶️ estop released"
-		}
-	case "/help":
-		reply = "arco console — commands:\n/status — fleet summary\n/pause — engage emergency stop\n/resume — release it"
-	default:
-		return // ignore unknown commands silently
+	if strings.HasPrefix(text, "/") {
+		b.handleCommand(ctx, m, text)
+		return
 	}
-	_, _ = b.api.SendMessage(ctx, SendMessageReq{ChatID: b.groupID, MessageThreadID: m.MessageThreadID, Text: reply})
+	b.handleChat(ctx, m, text)
 }
 
 // fleetStatus renders the /status reply: estop state + a by-state tally of
