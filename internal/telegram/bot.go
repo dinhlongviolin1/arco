@@ -45,8 +45,9 @@ type Actions interface {
 	// Paused reports whether the emergency stop is currently engaged (for /status).
 	Paused() bool
 	// Dispatch spawns a worker on repo to do task (the /dispatch command), on the
-	// given VM ("" = engine default), returning the new worker + session ids.
-	Dispatch(ctx context.Context, repo, task, vm string) (workerID, sessionID string, err error)
+	// given VM ("" = engine default). into is the session/issue to add the agent
+	// to ("" = start a new issue), returning the new worker + session ids.
+	Dispatch(ctx context.Context, repo, task, vm, into string) (workerID, sessionID string, err error)
 	// Kill terminates a worker (the /kill command).
 	Kill(ctx context.Context, workerID string) error
 	// BrainReply is a conversational reply from arco's brain (free-text chat).

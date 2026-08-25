@@ -19,6 +19,8 @@ read:
 
 act:
   /dispatch <repo> <task>   spawn a worker on <repo> to do <task>
+                            (in an issue's topic → adds an aspect to that issue;
+                             in General → starts a new issue; --vm <name> to pick a VM)
   /kill <worker>            terminate a worker (id prefix ok)
   /pause  /resume           emergency stop on / off
 
@@ -57,7 +59,7 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 			b.reply(ctx, m, "▶️ estop released")
 		}
 	case "/dispatch", "/new":
-		b.reply(ctx, m, b.cmdDispatch(ctx, arg))
+		b.reply(ctx, m, b.cmdDispatch(ctx, m, arg))
 	case "/kill":
 		b.reply(ctx, m, b.cmdKill(ctx, arg))
 	case "/diff":
@@ -91,7 +93,7 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 }
 
 // cmdDispatch spawns a worker: "/dispatch <repo> <task…>".
-func (b *Bot) cmdDispatch(ctx context.Context, arg string) string {
+func (b *Bot) cmdDispatch(ctx context.Context, m *Message, arg string) string {
 	arg = strings.TrimSpace(arg)
 	// optional leading "--vm <name>" chooses which VM the agent runs on
 	vm := ""
@@ -104,11 +106,24 @@ func (b *Bot) cmdDispatch(ctx context.Context, arg string) string {
 	if !ok || strings.TrimSpace(repo) == "" || strings.TrimSpace(task) == "" {
 		return "usage: /dispatch [--vm <name>] <repo> <task>\ne.g. /dispatch /srv/git/app.git add a health endpoint"
 	}
-	wid, sid, err := b.actions.Dispatch(ctx, strings.TrimSpace(repo), strings.TrimSpace(task), vm)
+	// Issue model: /dispatch inside an existing issue's TOPIC adds an aspect to
+	// THAT issue (same session, own worktree/VM/permissions); in General it starts
+	// a new issue with its own topic.
+	into := ""
+	if m.MessageThreadID != 0 {
+		if s, ok := b.sessionByTopic(m.MessageThreadID); ok {
+			into = s.ID
+		}
+	}
+	wid, sid, err := b.actions.Dispatch(ctx, strings.TrimSpace(repo), strings.TrimSpace(task), vm, into)
 	if err != nil {
 		return "dispatch failed: " + err.Error()
 	}
-	out := fmt.Sprintf("🚀 dispatched worker %s (session %s)\nrepo: %s", short(wid), short(sid), repo)
+	verb := "🚀 started issue — worker"
+	if into != "" {
+		verb = "➕ added aspect to this issue — worker"
+	}
+	out := fmt.Sprintf("%s %s (session %s)\nrepo: %s", verb, short(wid), short(sid), repo)
 	// Announce the running target — which VM + herdr workspace/pane — so it's
 	// never a mystery where a worker landed (fleet visibility), plus how to jump
 	// back into it from the CLI.
