@@ -69,27 +69,51 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 	}
 }
 
-// handleChat handles free text: inside a worker's topic with a pending question
-// it's the answer to that question; otherwise it's a conversational brain reply.
+// handleChat handles free text. Priority: (1) a swipe-reply to a specific
+// escalation card answers THAT agent; (2) a bare message in an issue topic with
+// exactly one pending question answers it — with several pending it refuses to
+// guess and asks the operator to reply to a specific card; (3) otherwise it's a
+// conversational brain reply.
 func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
+	// (1) swipe-reply → the exact card's escalation.
+	if escID, ok := b.escForReplyTo(m); ok {
+		b.answerEsc(ctx, m, escID, text)
+		return
+	}
+	// (2) bare text in an issue topic.
 	if m.MessageThreadID != 0 {
 		if s, ok := b.sessionByTopic(m.MessageThreadID); ok {
-			if esc, ok := b.pendingQuestion(s.ID); ok {
-				if err := b.actions.AnswerQuestion(ctx, esc.ID, text, core.ScopeOnce); err != nil {
-					b.reply(ctx, m, "couldn't answer: "+err.Error())
-				} else {
-					b.reply(ctx, m, "✅ answered — relayed to the worker")
+			pend := b.pendingQuestions(s.ID)
+			switch {
+			case len(pend) == 1:
+				b.answerEsc(ctx, m, pend[0].ID, text)
+				return
+			case len(pend) > 1:
+				var sb strings.Builder
+				sb.WriteString("several agents are waiting — swipe-reply to the specific card, or tap its ✅. pending:\n")
+				for _, e := range pend {
+					fmt.Fprintf(&sb, "• %s — %s\n", short(e.WorkerID), truncate(e.Action, 50))
 				}
+				b.reply(ctx, m, strings.TrimRight(sb.String(), "\n"))
 				return
 			}
 		}
 	}
+	// (3) conversational brain reply.
 	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(text))
 	if err != nil {
 		b.reply(ctx, m, "🤖 chat unavailable ("+err.Error()+") — try /help for commands")
 		return
 	}
 	b.reply(ctx, m, reply)
+}
+
+func (b *Bot) answerEsc(ctx context.Context, m *Message, escID, text string) {
+	if err := b.actions.AnswerQuestion(ctx, escID, text, core.ScopeOnce); err != nil {
+		b.reply(ctx, m, "couldn't answer: "+err.Error())
+		return
+	}
+	b.reply(ctx, m, "✅ answered — relayed to the worker")
 }
 
 // cmdDispatch spawns a worker: "/dispatch <repo> <task…>".
@@ -296,18 +320,19 @@ func (b *Bot) resolveWorker(fragment string) (core.Worker, error) {
 	}
 }
 
-// pendingQuestion returns a session's pending QUESTION escalation, if any.
-func (b *Bot) pendingQuestion(sessionID string) (core.Escalation, bool) {
+// pendingQuestions returns a session's pending QUESTION escalations.
+func (b *Bot) pendingQuestions(sessionID string) []core.Escalation {
 	escs, err := b.store.ListEscalations(core.EscalationFilter{SessionID: sessionID, Status: "pending"})
 	if err != nil {
-		return core.Escalation{}, false
+		return nil
 	}
+	var out []core.Escalation
 	for _, e := range escs {
 		if e.Kind == "question" {
-			return e, true
+			out = append(out, e)
 		}
 	}
-	return core.Escalation{}, false
+	return out
 }
 
 // reply posts text into the message's topic.
