@@ -279,8 +279,11 @@ func (t *txn) decide(id, wantKind string, yes bool, text string, scope core.Scop
 	// whether once_or_always should truthfully say "always").
 	granted := false
 	if wouldGrant {
-		if _, err := t.Grant(effSession, esc.Capability, "human:escalation", core.Event{
-			Kind: "grant", SessionID: effSession, Payload: `{"via":"escalation"}`,
+		// Promote to the WORKER, not the whole session (issue-model isolation): a
+		// worker-scoped escalation's "always" authorizes only that aspect, not its
+		// siblings. esc.WorkerID "" (a session-scoped escalation) → session-wide.
+		if _, err := t.GrantWorker(effSession, esc.WorkerID, esc.Capability, "human:escalation", core.Event{
+			Kind: "grant", SessionID: effSession, WorkerID: esc.WorkerID, Payload: `{"via":"escalation"}`,
 		}); err != nil {
 			return err
 		}

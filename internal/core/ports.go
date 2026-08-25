@@ -116,6 +116,10 @@ type Reader interface {
 	// (default-allowed ∪ active non-expired grants) — the `granted` input for
 	// permcompile.Compile / LaunchArgs.
 	GrantedCapabilities(sessionID string) (map[string]bool, error)
+	// GrantedCapabilitiesForWorker is GrantedCapabilities scoped to one worker:
+	// default-allowed ∪ session-wide (worker_id NULL) ∪ this worker's own grants,
+	// excluding sibling workers' per-worker grants (issue-model isolation).
+	GrantedCapabilitiesForWorker(sessionID, workerID string) (map[string]bool, error)
 
 	// GetPool returns a provider pool by id.
 	GetPool(id string) (ProviderPool, error)
@@ -181,6 +185,9 @@ type Tx interface {
 	AttachWorker(sessionID, workerID string) error
 
 	Grant(sessionID, capability, grantedBy string, e Event) (newPermRev int64, err error)
+	// GrantWorker is Grant scoped to a single worker (issue-model isolation);
+	// workerID "" is identical to a session-wide Grant.
+	GrantWorker(sessionID, workerID, capability, grantedBy string, e Event) (newPermRev int64, err error)
 	Revoke(sessionID, capability string, e Event) (newPermRev int64, err error)
 
 	// OpenEscalation opens a question/confirm. One pending escalation per worker:

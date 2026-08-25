@@ -388,6 +388,21 @@ func (t *txn) AttachWorker(sessionID, workerID string) error {
 // Grant adds an active standing grant, bumps the session perm_rev, and appends
 // the event — all in one tx. Rejected on the protected pool session.
 func (t *txn) Grant(sessionID, capability, grantedBy string, e core.Event) (int64, error) {
+	return t.grant(sessionID, "", capability, grantedBy, e)
+}
+
+// GrantWorker is Grant scoped to a single WORKER (issue-model isolation): the
+// standing grant applies only to workerID, not every worker in the session — so
+// an "always" approval for one aspect doesn't authorize the others. workerID ""
+// falls back to a session-wide grant (identical to Grant).
+func (t *txn) GrantWorker(sessionID, workerID, capability, grantedBy string, e core.Event) (int64, error) {
+	return t.grant(sessionID, workerID, capability, grantedBy, e)
+}
+
+// grant inserts a standing capability grant. workerID "" = session-wide (worker_id
+// NULL, the shared baseline every worker in the session inherits); a set workerID
+// = per-worker (only that worker's spawn snapshot picks it up).
+func (t *txn) grant(sessionID, workerID, capability, grantedBy string, e core.Event) (int64, error) {
 	s, err := t.GetSession(sessionID)
 	if err != nil {
 		return 0, err
@@ -400,22 +415,27 @@ func (t *txn) Grant(sessionID, capability, grantedBy string, e core.Event) (int6
 	} else if !ok {
 		return 0, fmt.Errorf("ledger: unknown capability %q", capability)
 	}
-	// Idempotent: an existing active grant is a no-op (no duplicate row, no
-	// perm_rev churn that would force needless worker recompiles).
+	// Idempotent PER (session, worker-bucket, capability): a session-wide grant and
+	// a per-worker grant for the same cap are independent, so COALESCE(worker_id,'')
+	// keys the dedup (matching the unique index).
 	var existing int
 	if err := t.q.QueryRowContext(context.Background(),
-		`SELECT COUNT(1) FROM session_grants WHERE session_id=? AND capability=? AND status='active'`,
-		sessionID, capability).Scan(&existing); err != nil {
+		`SELECT COUNT(1) FROM session_grants WHERE session_id=? AND capability=? AND status='active' AND COALESCE(worker_id,'')=?`,
+		sessionID, capability, workerID).Scan(&existing); err != nil {
 		return 0, err
 	}
 	if existing > 0 {
 		return s.PermRev, nil
 	}
+	var wid any // NULL for session-wide
+	if workerID != "" {
+		wid = workerID
+	}
 	newRev := s.PermRev + 1
 	_, err = t.q.ExecContext(context.Background(),
-		`INSERT INTO session_grants (id,session_id,capability,status,scope,granted_by,created_perm_rev,created_at)
-		 VALUES (?,?,?,'active','session',?,?,?)`,
-		ulid.Make().String(), sessionID, capability, grantedBy, newRev, t.now())
+		`INSERT INTO session_grants (id,session_id,worker_id,capability,status,scope,granted_by,created_perm_rev,created_at)
+		 VALUES (?,?,?,?,'active','session',?,?,?)`,
+		ulid.Make().String(), sessionID, wid, capability, grantedBy, newRev, t.now())
 	if err != nil {
 		return 0, err
 	}
