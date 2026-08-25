@@ -108,6 +108,16 @@ func (s *fakeStore) GetSession(id string) (core.Session, error) {
 	defer s.mu.Unlock()
 	return s.sessions[id], nil
 }
+func (s *fakeStore) GetWorker(id string) (core.Worker, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, w := range s.workers {
+		if w.ID == id {
+			return w, nil
+		}
+	}
+	return core.Worker{}, errNotFound
+}
 func (s *fakeStore) GetEscalation(id string) (core.Escalation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

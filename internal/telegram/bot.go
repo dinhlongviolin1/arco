@@ -59,6 +59,7 @@ type Actions interface {
 // whole core.Reader/core.Tx).
 type Store interface {
 	GetSession(id string) (core.Session, error)
+	GetWorker(id string) (core.Worker, error)
 	GetEscalation(id string) (core.Escalation, error)
 	ListWorkers(f core.WorkerFilter) ([]core.Worker, error)
 	ListSessions(f core.SessionFilter) ([]core.Session, error)
