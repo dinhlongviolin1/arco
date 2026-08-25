@@ -92,11 +92,19 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 
 // cmdDispatch spawns a worker: "/dispatch <repo> <task…>".
 func (b *Bot) cmdDispatch(ctx context.Context, arg string) string {
+	arg = strings.TrimSpace(arg)
+	// optional leading "--vm <name>" chooses which VM the agent runs on
+	vm := ""
+	if strings.HasPrefix(arg, "--vm ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(arg, "--vm "))
+		vm, arg, _ = strings.Cut(rest, " ")
+		arg = strings.TrimSpace(arg)
+	}
 	repo, task, ok := strings.Cut(arg, " ")
 	if !ok || strings.TrimSpace(repo) == "" || strings.TrimSpace(task) == "" {
-		return "usage: /dispatch <repo> <task>\ne.g. /dispatch /srv/git/app.git add a health endpoint"
+		return "usage: /dispatch [--vm <name>] <repo> <task>\ne.g. /dispatch /srv/git/app.git add a health endpoint"
 	}
-	wid, sid, err := b.actions.Dispatch(ctx, strings.TrimSpace(repo), strings.TrimSpace(task))
+	wid, sid, err := b.actions.Dispatch(ctx, strings.TrimSpace(repo), strings.TrimSpace(task), vm)
 	if err != nil {
 		return "dispatch failed: " + err.Error()
 	}

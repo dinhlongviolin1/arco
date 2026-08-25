@@ -94,6 +94,9 @@ type DispatchReq struct {
 	// (commit-ish; "" = repo tip). Empty Repo keeps the prompt-based path.
 	Repo string `json:"repo"`
 	Base string `json:"base"`
+	// Vm (optional, spawn path): the VM the worker runs on ("" = engine default).
+	// Lets one session hold agents on different VMs.
+	Vm string `json:"vm"`
 }
 type DispatchResp struct {
 	SessionID string `json:"session_id"`
@@ -457,7 +460,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	var res reconcile.DispatchResult
 	var err error
 	if req.Repo != "" {
-		res, err = s.eng.Spawn(r.Context(), req.Session, req.Task, newSession, req.Repo, req.Base)
+		res, err = s.eng.Spawn(r.Context(), req.Session, req.Task, newSession, req.Repo, req.Base, req.Vm)
 	} else {
 		res, err = s.eng.Dispatch(r.Context(), req.Session, req.Task, newSession)
 	}

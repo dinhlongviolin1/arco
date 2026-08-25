@@ -25,7 +25,7 @@ func TestSpawn_HandsOffDerivedIntakeKeyAsFile(t *testing.T) {
 	e.IntakeMaster = "master-secret"
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 
@@ -49,7 +49,7 @@ func TestSpawn_NoMasterNoIntakeKeyFile(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.NoFileExists(t, filepath.Join(e.ConfigDir, res.WorkerID, "creds", "intake_key"),

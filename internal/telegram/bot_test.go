@@ -223,10 +223,14 @@ func (a *fakeActions) Resume(context.Context) error {
 	return nil
 }
 func (a *fakeActions) Paused() bool { return a.paused }
-func (a *fakeActions) Dispatch(_ context.Context, repo, task string) (string, string, error) {
+func (a *fakeActions) Dispatch(_ context.Context, repo, task, vm string) (string, string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.dispatches = append(a.dispatches, repo+" | "+task)
+	rec := repo + " | " + task
+	if vm != "" {
+		rec += " | vm=" + vm
+	}
+	a.dispatches = append(a.dispatches, rec)
 	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
 }
 func (a *fakeActions) Kill(_ context.Context, workerID string) error {

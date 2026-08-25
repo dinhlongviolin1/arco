@@ -63,7 +63,7 @@ func TestSpawnCreds_FileHandoffNotEnv(t *testing.T) {
 	seedPoolT23(t, s, "p1", "deepseek-1")
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 
@@ -106,7 +106,7 @@ func TestSpawnCreds_NoProfileNoPointer(t *testing.T) {
 	seedPoolT23(t, s, "p1", "") // pool without a clavis profile → resolver unused
 
 	repo, _ := localRepo(t)
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.NotContains(t, strings.Join(fake.Launched()[0].Env, " "), "CREDENTIALS_DIRECTORY=")

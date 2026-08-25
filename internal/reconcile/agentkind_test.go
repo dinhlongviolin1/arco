@@ -18,7 +18,7 @@ func TestSpawn_DefaultKindClaudeWithCompiledArgs(t *testing.T) {
 	e.AgentArgs = []string{"--extra-flag"}
 	repo, _ := localRepo(t)
 
-	_, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	_, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 
 	launched := fake.Launched()
@@ -36,7 +36,7 @@ func TestSpawn_NonClaudeKindLaunchesWithAgentArgsOnly(t *testing.T) {
 	e.AgentArgs = []string{"--profile", "work"}
 	repo, _ := localRepo(t)
 
-	_, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	_, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 
 	launched := fake.Launched()
@@ -52,7 +52,7 @@ func TestSpawn_KindRecordedOnRowMatchesLaunch(t *testing.T) {
 	e.AgentKind = "codex"
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 
 	w, err := s.Reader().GetWorker(res.WorkerID)

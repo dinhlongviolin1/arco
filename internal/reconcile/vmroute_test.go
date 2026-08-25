@@ -48,7 +48,7 @@ func TestVMRoute_SpawnLaunchesOnAssignedVM(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 
@@ -67,7 +67,7 @@ func TestVMRoute_SpawnUnknownVMFailsBeforeLaunch(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
 
-	_, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	_, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.Error(t, err, "with routing on, an unresolvable VM name refuses the spawn")
 	require.Empty(t, local.Launched(),
 		"a typo'd VM must never land the worker on the local client")
@@ -80,7 +80,7 @@ func TestVMRoute_NilRegistryKeepsLabelOnlyBehavior(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Len(t, local.Launched(), 1, "no registry → single-client behavior unchanged")
 	w, err := s.Reader().GetWorker(res.WorkerID)
