@@ -56,10 +56,11 @@ func (a engineActions) Resume(context.Context) error {
 
 func (a engineActions) Paused() bool { return a.eng.Paused() }
 
-func (a engineActions) Dispatch(ctx context.Context, repo, task, vm string) (string, string, error) {
+func (a engineActions) Dispatch(ctx context.Context, repo, task, vm, into string) (string, string, error) {
 	// The repo-based spawn path (a real worker on a fresh per-worker worktree),
 	// the same one `arco dispatch --repo` uses; vm picks the target ("" = default).
-	res, err := a.eng.Spawn(ctx, "", task, true, repo, "", vm)
+	// into = an existing session/issue to add the aspect to ("" = a new issue).
+	res, err := a.eng.Spawn(ctx, into, task, into == "", repo, "", vm)
 	if err != nil {
 		return "", "", err
 	}

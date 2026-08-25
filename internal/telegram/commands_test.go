@@ -21,13 +21,22 @@ func TestCmd_DispatchSpawnsWorker(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	b.handleMessage(context.Background(), &Message{Text: "/dispatch /srv/app.git add a health endpoint", From: &User{ID: allowedUID}})
 	require.Equal(t, []string{"/srv/app.git | add a health endpoint"}, act.dispatches)
-	require.Contains(t, lastSent(api), "dispatched")
+	require.Contains(t, lastSent(api), "started issue")
 }
 
 func TestCmd_DispatchWithVM(t *testing.T) {
 	b, _, _, act := newTestBot(t)
 	b.handleMessage(context.Background(), &Message{Text: "/dispatch --vm vm1 /srv/app.git write docs", From: &User{ID: allowedUID}})
 	require.Equal(t, []string{"/srv/app.git | write docs | vm=vm1"}, act.dispatches, "--vm picks the target VM; repo+task follow")
+}
+
+func TestCmd_DispatchIntoIssueTopic(t *testing.T) {
+	b, _, st, act := newTestBot(t)
+	topic := int64(7)
+	st.sessions["ISSUE1"] = core.Session{ID: "ISSUE1", Status: core.SessionActive, TGTopicID: &topic}
+	b.handleMessage(context.Background(), &Message{Text: "/dispatch /srv/app.git write docs", From: &User{ID: allowedUID}, MessageThreadID: topic})
+	require.Equal(t, []string{"/srv/app.git | write docs | into=ISSUE1"}, act.dispatches,
+		"dispatch inside an issue topic adds the aspect to that session")
 }
 
 func TestCmd_DispatchUsageOnMissingArgs(t *testing.T) {
