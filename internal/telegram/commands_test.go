@@ -24,6 +24,12 @@ func TestCmd_DispatchSpawnsWorker(t *testing.T) {
 	require.Contains(t, lastSent(api), "dispatched")
 }
 
+func TestCmd_DispatchWithVM(t *testing.T) {
+	b, _, _, act := newTestBot(t)
+	b.handleMessage(context.Background(), &Message{Text: "/dispatch --vm vm1 /srv/app.git write docs", From: &User{ID: allowedUID}})
+	require.Equal(t, []string{"/srv/app.git | write docs | vm=vm1"}, act.dispatches, "--vm picks the target VM; repo+task follow")
+}
+
 func TestCmd_DispatchUsageOnMissingArgs(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	b.handleMessage(context.Background(), &Message{Text: "/dispatch onlyrepo", From: &User{ID: allowedUID}})

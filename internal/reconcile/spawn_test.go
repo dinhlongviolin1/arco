@@ -40,7 +40,7 @@ func TestSpawn_ProvisionsCompilesLaunchesAndCorrelates(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, head := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "implement the feature", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "implement the feature", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 
@@ -71,7 +71,7 @@ func TestSpawn_ProvisionsCompilesLaunchesAndCorrelates(t *testing.T) {
 func TestSpawn_BadRepoMarksFailedAndCleansUp(t *testing.T) {
 	e, s, _ := newEngine(t)
 	e.ConfigDir = t.TempDir()
-	res, err := e.Spawn(context.Background(), "", "task", true, filepath.Join(t.TempDir(), "nonexistent-repo"), "")
+	res, err := e.Spawn(context.Background(), "", "task", true, filepath.Join(t.TempDir(), "nonexistent-repo"), "", "")
 	require.NoError(t, err) // Spawn returns the durable result, not the launch error
 	require.Equal(t, core.WorkerFailed, res.State, "provision failure → worker failed")
 	w, _ := s.Reader().GetWorker(res.WorkerID)
@@ -90,7 +90,7 @@ func TestSpawn_LaunchErrorButAgentAliveIsAdopted(t *testing.T) {
 	fake.LaunchAliveOnErr = true
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State, "half-spawned agent adopted running, not left terminal")
 	w, _ := s.Reader().GetWorker(res.WorkerID)
@@ -101,10 +101,10 @@ func TestSpawn_LaunchErrorButAgentAliveIsAdopted(t *testing.T) {
 
 func TestSpawn_RequiresRepoAndConfigDir(t *testing.T) {
 	e, _, _ := newEngine(t)
-	_, err := e.Spawn(context.Background(), "", "t", true, "", "")
+	_, err := e.Spawn(context.Background(), "", "t", true, "", "", "")
 	require.Error(t, err, "empty repo → use Dispatch")
 	e2, _, _ := newEngine(t) // ConfigDir unset
-	_, err = e2.Spawn(context.Background(), "", "t", true, "/some/repo", "")
+	_, err = e2.Spawn(context.Background(), "", "t", true, "/some/repo", "", "")
 	require.Error(t, err, "missing ConfigDir")
 }
 
@@ -122,7 +122,7 @@ func TestSpawn_AcquiresPoolLease(t *testing.T) {
 	require.NoError(t, err)
 	repo, _ := localRepo(t)
 
-	r1, err := e.Spawn(context.Background(), "", "t1", true, repo, "")
+	r1, err := e.Spawn(context.Background(), "", "t1", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, r1.State)
 	n, err := s.Reader().CountActiveLeases("p1")
@@ -130,7 +130,7 @@ func TestSpawn_AcquiresPoolLease(t *testing.T) {
 	require.Equal(t, 1, n, "lease acquired + bound to the worker")
 
 	// pool at capacity (max_active=1) → the next spawn is rejected before creating a worker
-	_, err = e.Spawn(context.Background(), "", "t2", true, repo, "")
+	_, err = e.Spawn(context.Background(), "", "t2", true, repo, "", "")
 	require.ErrorIs(t, err, core.ErrLeaseRejected)
 	n, _ = s.Reader().CountActiveLeases("p1")
 	require.Equal(t, 1, n, "rejected spawn admitted nothing (tx rolled back)")
@@ -150,7 +150,7 @@ func TestSpawn_FailedReleasesLease(t *testing.T) {
 	require.NoError(t, err)
 
 	// bad repo → provision fails in phase 2 → worker failed → lease released
-	res, err := e.Spawn(context.Background(), "", "t1", true, filepath.Join(t.TempDir(), "nope"), "")
+	res, err := e.Spawn(context.Background(), "", "t1", true, filepath.Join(t.TempDir(), "nope"), "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerFailed, res.State)
 	n, err := s.Reader().CountActiveLeases("p1")
@@ -159,7 +159,7 @@ func TestSpawn_FailedReleasesLease(t *testing.T) {
 
 	// the freed slot lets an immediate good spawn acquire (max_active=1)
 	repo, _ := localRepo(t)
-	r2, err := e.Spawn(context.Background(), "", "t2", true, repo, "")
+	r2, err := e.Spawn(context.Background(), "", "t2", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, r2.State)
 	n, _ = s.Reader().CountActiveLeases("p1")
@@ -174,7 +174,7 @@ func TestSpawn_DeliversInitialTaskToPane(t *testing.T) {
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "do the thing", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "do the thing", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	e.Exec.Wait() // initial delivery is async
@@ -206,7 +206,7 @@ func TestSpawn_LaunchErrorAdopted_DeliversNoTask(t *testing.T) {
 	fake.LaunchAliveOnErr = true
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State, "adopted by liveness")
 	w, _ := s.Reader().GetWorker(res.WorkerID)
@@ -222,7 +222,7 @@ func TestSpawn_InitialTaskDeliveryFailure_StaysRunning(t *testing.T) {
 	fake.PromptErr = errors.New("prompt boom")
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	e.Exec.Wait() // async delivery + its error event
@@ -244,7 +244,7 @@ func TestSpawn_ThenRunAgain_TargetsPane(t *testing.T) {
 	e, s, fake := newEngine(t)
 	e.ConfigDir = t.TempDir()
 	repo, _ := localRepo(t)
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	setMode(t, s, res.WorkerID, core.ModeAuto) // acting steps only execute in auto (D9)
 	w, _ := s.Reader().GetWorker(res.WorkerID)
@@ -292,7 +292,7 @@ func TestSpawn_InjectsPoolClavisCreds(t *testing.T) {
 	seedPool(t, s, "p1", "deepseek-1")
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Equal(t, "deepseek-1", fc.profile, "resolved the pool's clavis_profile")
@@ -321,7 +321,7 @@ func TestSpawn_NoProfileNoCredInjection(t *testing.T) {
 	seedPool(t, s, "p1", "") // no profile
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerRunning, res.State)
 	require.Empty(t, fc.profile, "EnvFor not called when the pool sets no profile")
@@ -341,7 +341,7 @@ func TestSpawn_CredResolveErrorFailsAndCleansUp(t *testing.T) {
 	seedPool(t, s, "p1", "deepseek-1")
 	repo, _ := localRepo(t)
 
-	res, err := e.Spawn(context.Background(), "", "task", true, repo, "")
+	res, err := e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.NoError(t, err)
 	require.Equal(t, core.WorkerFailed, res.State, "unauthenticated worker not launched")
 	require.Empty(t, fake.Launched(), "no launch on a credential-resolve failure")

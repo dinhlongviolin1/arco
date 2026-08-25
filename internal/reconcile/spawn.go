@@ -45,7 +45,7 @@ func (e *Engine) agentKind() string {
 	return e.AgentKind
 }
 
-func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession bool, repo, base string) (DispatchResult, error) {
+func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession bool, repo, base, vm string) (DispatchResult, error) {
 	if repo == "" {
 		return DispatchResult{}, fmt.Errorf("reconcile: Spawn requires a repo (use Dispatch for the prompt path)")
 	}
@@ -55,10 +55,17 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 	if e.Paused() {
 		return DispatchResult{}, core.ErrPaused
 	}
+	// The worker's VM: an explicit target (per-dispatch), else the engine default.
+	// Lets one session (issue) hold agents on different VMs — the sweep + admission
+	// are already per-worker.VM (vmroute.sweepGroups / admitVM).
+	chosen := vm
+	if chosen == "" {
+		chosen = e.DefaultVM
+	}
 	// Resolve the assigned VM's client BEFORE anything durable or external: with
 	// routing on, a typo'd VM refuses the spawn here — no worker row, no
 	// provisioning, and nothing ever launched anywhere (T3.3).
-	vmc, err := e.vmFor(e.DefaultVM)
+	vmc, err := e.vmFor(chosen)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -88,7 +95,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 			}
 			sessionID = s.ID
 		}
-		if err := e.admitVM(tx, e.DefaultVM); err != nil {
+		if err := e.admitVM(tx, chosen); err != nil {
 			return err
 		}
 		// Provider-pool concurrency lease, acquired BEFORE the intent (admission is
@@ -102,7 +109,7 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 			}
 		}
 		if err := tx.CreateWorker(core.Worker{
-			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting, VM: e.DefaultVM,
+			ID: workerID, OwnerSession: sessionID, State: core.WorkerStarting, VM: chosen,
 			Workspace: workspace, Task: task, RunReason: "spawn", AgentKind: kind,
 			IntakeUID: e.SpawnUID,
 		}); err != nil {

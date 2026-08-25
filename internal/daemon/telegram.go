@@ -56,10 +56,10 @@ func (a engineActions) Resume(context.Context) error {
 
 func (a engineActions) Paused() bool { return a.eng.Paused() }
 
-func (a engineActions) Dispatch(ctx context.Context, repo, task string) (string, string, error) {
+func (a engineActions) Dispatch(ctx context.Context, repo, task, vm string) (string, string, error) {
 	// The repo-based spawn path (a real worker on a fresh per-worker worktree),
-	// the same one `arco dispatch --repo` uses.
-	res, err := a.eng.Spawn(ctx, "", task, true, repo, "")
+	// the same one `arco dispatch --repo` uses; vm picks the target ("" = default).
+	res, err := a.eng.Spawn(ctx, "", task, true, repo, "", vm)
 	if err != nil {
 		return "", "", err
 	}

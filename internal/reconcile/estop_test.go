@@ -30,7 +30,7 @@ func TestEStop_RefusesAdmission(t *testing.T) {
 
 	_, err := e.Dispatch(context.Background(), "", "task", true)
 	require.ErrorIs(t, err, core.ErrPaused)
-	_, err = e.Spawn(context.Background(), "", "task", true, repo, "")
+	_, err = e.Spawn(context.Background(), "", "task", true, repo, "", "")
 	require.ErrorIs(t, err, core.ErrPaused)
 	require.Empty(t, fake.Launched(), "nothing may launch while paused")
 
