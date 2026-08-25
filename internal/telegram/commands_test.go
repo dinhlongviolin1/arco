@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
 func lastSent(api *fakeAPIRec) string {
@@ -82,6 +83,40 @@ func TestChat_InTopicWithPendingQuestionIsTheAnswer(t *testing.T) {
 	require.Equal(t, "E1", act.answers[0].escID)
 	require.Equal(t, "use postgres, not sqlite", act.answers[0].text)
 	require.Empty(t, act.chatPrompts, "did not fall through to brain chat")
+}
+
+func TestChat_SwipeReplyRoutesToThatCard(t *testing.T) {
+	b, _, st, act := newTestBot(t)
+	topic := int64(5)
+	st.sessions["S1"] = core.Session{ID: "S1", Status: core.SessionActive, TGTopicID: &topic}
+	st.escs["E1"] = core.Escalation{ID: "E1", SessionID: "S1", WorkerID: "WA", Kind: "question", Status: "pending"}
+	st.escs["E2"] = core.Escalation{ID: "E2", SessionID: "S1", WorkerID: "WB", Kind: "question", Status: "pending"}
+	// post E1's card so its message id is tracked
+	require.NoError(t, b.Send(context.Background(), notify.FormatEscalation(notify.EscalationCard{
+		EscalationID: "E1", Kind: "question", SessionID: "S1", WorkerID: "WA", Question: "?"})))
+	cardMsgID := b.escMsg["E1"]
+	require.NotZero(t, cardMsgID)
+
+	// swipe-reply to E1's card, even though E2 is also pending (and older/newer)
+	b.handleMessage(context.Background(), &Message{
+		Text: "use the v2 api", From: &User{ID: allowedUID}, MessageThreadID: topic,
+		ReplyToMessage: &Message{MessageID: cardMsgID},
+	})
+	require.Len(t, act.answers, 1)
+	require.Equal(t, "E1", act.answers[0].escID, "swipe-reply routes to the replied card, not another pending one")
+	require.Equal(t, "use the v2 api", act.answers[0].text)
+}
+
+func TestChat_MultiplePendingRefusesToGuess(t *testing.T) {
+	b, api, st, act := newTestBot(t)
+	topic := int64(5)
+	st.sessions["S1"] = core.Session{ID: "S1", Status: core.SessionActive, TGTopicID: &topic}
+	st.escs["E1"] = core.Escalation{ID: "E1", SessionID: "S1", WorkerID: "WA", Kind: "question", Status: "pending"}
+	st.escs["E2"] = core.Escalation{ID: "E2", SessionID: "S1", WorkerID: "WB", Kind: "question", Status: "pending"}
+	b.handleMessage(context.Background(), &Message{Text: "yes", From: &User{ID: allowedUID}, MessageThreadID: topic})
+	require.Empty(t, act.answers, "a bare answer with 2 agents waiting must NOT be guessed onto one")
+	require.Empty(t, act.chatPrompts, "and it's not sent to the brain")
+	require.Contains(t, lastSent(api), "several agents are waiting")
 }
 
 func TestChat_FallsThroughToBrain(t *testing.T) {

@@ -53,6 +53,9 @@ type Message struct {
 	From            *User       `json:"from,omitempty"`
 	Photo           []PhotoSize `json:"photo,omitempty"`    // present for a photo message (multiple sizes)
 	Document        *Document   `json:"document,omitempty"` // present for a file/document message
+	// ReplyToMessage is set when this message is a swipe-reply to another — used
+	// to route a typed answer to the specific escalation card it replies to.
+	ReplyToMessage *Message `json:"reply_to_message,omitempty"`
 }
 
 // PhotoSize is one size variant of a photo. Telegram sends several; the last is

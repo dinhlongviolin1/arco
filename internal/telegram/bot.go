@@ -95,6 +95,7 @@ type Bot struct {
 	lastEdit map[string]time.Time   // per-session status-card edit throttle
 	closed   map[string]bool        // sessions whose topic we've already closed (idempotence)
 	escMsg   map[string]int64       // escalation id → its card message id (to edit on resolve)
+	msgEsc   map[int64]string       // reverse: card message id → escalation id (swipe-reply routing)
 }
 
 // New builds a Bot from cfg.
@@ -115,6 +116,7 @@ func New(cfg Config) *Bot {
 		lastEdit: map[string]time.Time{},
 		closed:   map[string]bool{},
 		escMsg:   map[string]int64{},
+		msgEsc:   map[int64]string{},
 	}
 }
 
@@ -173,6 +175,7 @@ func (b *Bot) Send(ctx context.Context, c notify.Card) error {
 		// decision the operator must make.
 		b.mu.Lock()
 		b.escMsg[c.EscalationID] = m.MessageID
+		b.msgEsc[m.MessageID] = c.EscalationID
 		b.mu.Unlock()
 		if threadID != 0 {
 			_, _ = b.api.SendMessage(ctx, SendMessageReq{
@@ -205,8 +208,21 @@ func (b *Bot) editResolved(ctx context.Context, c notify.Card) bool {
 	}
 	b.mu.Lock()
 	delete(b.escMsg, c.EscalationID)
+	delete(b.msgEsc, mid)
 	b.mu.Unlock()
 	return true
+}
+
+// escForReplyTo returns the escalation id a swipe-reply targets (the card the
+// operator replied to), if it's a known open escalation card.
+func (b *Bot) escForReplyTo(m *Message) (string, bool) {
+	if m.ReplyToMessage == nil {
+		return "", false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	esc, ok := b.msgEsc[m.ReplyToMessage.MessageID]
+	return esc, ok
 }
 
 // sessionMutes reports whether a session's notify_level suppresses this card.
