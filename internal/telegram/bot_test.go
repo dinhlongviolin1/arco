@@ -21,16 +21,17 @@ type sentMsg struct {
 }
 
 type fakeAPIRec struct {
-	mu      sync.Mutex
-	sent    []sentMsg
-	edits   []EditMessageTextReq
-	created []string // topic names
-	closed  []int64
-	pinned  []int64
-	toasts  []string
-	photos  []SendPhotoReq
-	nextMsg int64
-	nextTop int64
+	mu       sync.Mutex
+	sent     []sentMsg
+	edits    []EditMessageTextReq
+	created  []string // topic names
+	closed   []int64
+	pinned   []int64
+	toasts   []string
+	photos   []SendPhotoReq
+	commands []BotCommand
+	nextMsg  int64
+	nextTop  int64
 }
 
 func (f *fakeAPIRec) SendMessage(_ context.Context, req SendMessageReq) (Message, error) {
@@ -84,6 +85,12 @@ func (f *fakeAPIRec) GetFile(_ context.Context, fileID string) (File, error) {
 }
 func (f *fakeAPIRec) DownloadFile(_ context.Context, _ string) ([]byte, error) {
 	return []byte("IMAGEBYTES"), nil
+}
+func (f *fakeAPIRec) SetMyCommands(_ context.Context, cmds []BotCommand) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commands = cmds
+	return nil
 }
 
 type fakeStore struct {

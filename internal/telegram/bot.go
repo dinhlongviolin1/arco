@@ -25,6 +25,8 @@ type api interface {
 	SendPhoto(ctx context.Context, req SendPhotoReq) (Message, error)
 	GetFile(ctx context.Context, fileID string) (File, error)
 	DownloadFile(ctx context.Context, filePath string) ([]byte, error)
+	// SetMyCommands registers the client-side command menu.
+	SetMyCommands(ctx context.Context, cmds []BotCommand) error
 }
 
 // Actions is the engine surface the bot drives from an inbound button tap or a

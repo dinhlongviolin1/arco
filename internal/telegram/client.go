@@ -289,3 +289,16 @@ func (c *Client) GetMe(ctx context.Context) (User, error) {
 	err := c.call(ctx, "getMe", map[string]any{}, &u)
 	return u, err
 }
+
+// BotCommand is one entry in the client-side command menu (the "/" autocomplete
+// + the Menu button). Command is the name WITHOUT the leading slash.
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// SetMyCommands registers the bot's command list so Telegram clients show them
+// in the command menu and autocomplete them as the operator types "/".
+func (c *Client) SetMyCommands(ctx context.Context, cmds []BotCommand) error {
+	return c.call(ctx, "setMyCommands", map[string]any{"commands": cmds}, nil)
+}
