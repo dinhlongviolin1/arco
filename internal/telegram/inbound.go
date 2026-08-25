@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
@@ -20,7 +21,26 @@ const (
 // Start runs the inbound long-poll loop until ctx is cancelled, and on a ticker
 // refreshes open sessions' status cards so they stay live even between cards.
 // Blocking; the daemon runs it in a goroutine joined to its shutdown ctx.
+// menuCommands is the client-side command menu (the "/" autocomplete + Menu
+// button), registered once at Start.
+var menuCommands = []BotCommand{
+	{"status", "fleet summary (estop, active workers, pending)"},
+	{"workers", "list active workers"},
+	{"sessions", "list active sessions"},
+	{"dispatch", "start a worker: /dispatch <repo> <task>"},
+	{"kill", "terminate a worker: /kill <worker>"},
+	{"diff", "show a worker's diff: /diff <worker>"},
+	{"pause", "engage the emergency stop"},
+	{"resume", "release the emergency stop"},
+	{"help", "show all commands"},
+}
+
 func (b *Bot) Start(ctx context.Context) {
+	// Register the command menu so clients autocomplete "/" and show the Menu
+	// button. Best-effort — a failure here must not stop the inbound loop.
+	if err := b.api.SetMyCommands(ctx, menuCommands); err != nil {
+		log.Printf("arco: telegram: setMyCommands: %v", err)
+	}
 	offset := 0
 	ticker := time.NewTicker(statusTickInterval)
 	defer ticker.Stop()
