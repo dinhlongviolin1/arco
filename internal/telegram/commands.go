@@ -100,7 +100,41 @@ func (b *Bot) cmdDispatch(ctx context.Context, arg string) string {
 	if err != nil {
 		return "dispatch failed: " + err.Error()
 	}
-	return fmt.Sprintf("🚀 dispatched worker %s (session %s) on %s\nwatch its topic for progress.", short(wid), short(sid), repo)
+	out := fmt.Sprintf("🚀 dispatched worker %s (session %s)\nrepo: %s", short(wid), short(sid), repo)
+	// Announce the running target — which VM + herdr workspace/pane — so it's
+	// never a mystery where a worker landed (fleet visibility), plus how to jump
+	// back into it from the CLI.
+	if w, err := b.store.GetWorker(wid); err == nil {
+		out += "\n▶ running on: " + vmLabel(w.VM)
+		if w.Workspace != "" {
+			out += "\nherdr workspace: " + w.Workspace
+			if w.AgentRef != "" {
+				out += " · pane " + w.AgentRef
+			}
+		}
+		out += "\nresume in CLI: " + resumeHint(w)
+	}
+	return out
+}
+
+// vmLabel is the human name of a worker's VM ("" = the local herdr on this box).
+func vmLabel(vm string) string {
+	if vm == "" {
+		return "local (this box)"
+	}
+	return vm
+}
+
+// resumeHint tells the operator how to open the worker's herdr pane from a shell.
+func resumeHint(w core.Worker) string {
+	base := "herdr"
+	if w.VM != "" {
+		base = "herdr --remote " + w.VM
+	}
+	if w.Workspace != "" {
+		return base + "  → focus workspace " + w.Workspace
+	}
+	return base
 }
 
 // cmdKill terminates a worker resolved by id prefix.
@@ -182,7 +216,15 @@ func (b *Bot) renderWorkers() string {
 	var b2 strings.Builder
 	fmt.Fprintf(&b2, "workers (%d active):\n", len(active))
 	for _, w := range active {
-		fmt.Fprintf(&b2, "• %s  [%s]  %s\n", short(w.ID), w.State, truncate(w.Task, 50))
+		vm := "local"
+		if w.VM != "" {
+			vm = w.VM
+		}
+		pane := w.AgentRef
+		if pane == "" {
+			pane = "—"
+		}
+		fmt.Fprintf(&b2, "• %s [%s] vm=%s pane=%s  %s\n", short(w.ID), w.State, vm, pane, truncate(w.Task, 40))
 	}
 	return strings.TrimRight(b2.String(), "\n")
 }

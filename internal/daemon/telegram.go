@@ -79,6 +79,7 @@ func (a engineActions) BrainReply(ctx context.Context, prompt string) (string, e
 type tgStore struct{ s core.Store }
 
 func (t tgStore) GetSession(id string) (core.Session, error) { return t.s.Reader().GetSession(id) }
+func (t tgStore) GetWorker(id string) (core.Worker, error)   { return t.s.Reader().GetWorker(id) }
 func (t tgStore) GetEscalation(id string) (core.Escalation, error) {
 	return t.s.Reader().GetEscalation(id)
 }
