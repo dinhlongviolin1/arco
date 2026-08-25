@@ -116,7 +116,9 @@ func (e *Engine) Spawn(ctx context.Context, sessionRef, task string, newSession 
 			return err
 		}
 		var gerr error
-		if granted, gerr = tx.GrantedCapabilities(sessionID); gerr != nil {
+		// Per-worker scoped set (issue-model isolation): session-wide baseline ∪ this
+		// worker's own grants, NOT sibling aspects' per-worker grants.
+		if granted, gerr = tx.GrantedCapabilitiesForWorker(sessionID, workerID); gerr != nil {
 			return gerr
 		}
 		cursor, _, _, err := tx.AppendEvent(core.Event{

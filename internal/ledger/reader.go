@@ -335,6 +335,41 @@ func (r *reader) GrantedCapabilities(sessionID string) (map[string]bool, error) 
 	return granted, nil
 }
 
+// GrantedCapabilitiesForWorker is GrantedCapabilities scoped to one worker
+// (issue model): default-allowed ∪ the session-wide baseline (worker_id NULL) ∪
+// this worker's OWN grants — and crucially NOT sibling workers' per-worker grants,
+// so an approval for one aspect doesn't leak into another. Used by the spawn path
+// to compile a worker's permission surface.
+func (r *reader) GrantedCapabilitiesForWorker(sessionID, workerID string) (map[string]bool, error) {
+	granted := map[string]bool{}
+	scan := func(rows *sql.Rows, err error) error {
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cap string
+			if err := rows.Scan(&cap); err != nil {
+				return err
+			}
+			granted[cap] = true
+		}
+		return rows.Err()
+	}
+	if err := scan(r.q.QueryContext(context.Background(),
+		`SELECT capability FROM capability_catalog WHERE default_allowed<>0`)); err != nil {
+		return nil, err
+	}
+	if err := scan(r.q.QueryContext(context.Background(),
+		`SELECT capability FROM session_grants
+		 WHERE session_id=? AND status='active' AND (expires_at IS NULL OR expires_at > ?)
+		   AND (worker_id IS NULL OR worker_id=?)`,
+		sessionID, nowRFC(), workerID)); err != nil {
+		return nil, err
+	}
+	return granted, nil
+}
+
 func scanCatalog(sc scanner) (core.CatalogRow, error) {
 	var c core.CatalogRow
 	var def, hb, cw int
