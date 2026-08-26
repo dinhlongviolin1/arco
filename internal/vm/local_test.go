@@ -100,7 +100,8 @@ func TestLocal_ListAgentsAndPrompt(t *testing.T) {
 	// result.agents, fields agent_status/workspace_id/terminal_id, states
 	// idle|working|blocked|done|unknown.
 	realList := `{"id":"cli:agent:list","result":{"type":"agent_list","agents":[` +
-		`{"agent":"claude","agent_status":"working","pane_id":"wB:p1","workspace_id":"wB","terminal_id":"term_aaa"},` +
+		`{"agent":"claude","agent_status":"working","pane_id":"wB:p1","workspace_id":"wB","terminal_id":"term_aaa",` +
+		`"cwd":"/home/op/arco","terminal_title_stripped":"review arco","agent_session":{"value":"3dca0eaf"}},` +
 		`{"agent":"claude","agent_status":"done","pane_id":"wC:p1","workspace_id":"wC","terminal_id":"term_bbb"}` +
 		`]}}`
 	log := fakeHerdr(t, realList)
@@ -113,6 +114,11 @@ func TestLocal_ListAgentsAndPrompt(t *testing.T) {
 	require.Equal(t, "term_aaa", agents[0].BootID, "terminal_id carries the identity/PID-reuse guard")
 	require.True(t, agents[0].Alive, "working → alive")
 	require.False(t, agents[1].Alive, "agent_status=done → not alive")
+	// enriched descriptive fields for /scan + /adopt
+	require.Equal(t, "claude", agents[0].Kind)
+	require.Equal(t, "/home/op/arco", agents[0].Cwd)
+	require.Equal(t, "review arco", agents[0].Title)
+	require.Equal(t, "3dca0eaf", agents[0].SessionID, "agent_session.value is the CLI resume handle")
 
 	require.NoError(t, l.Prompt(context.Background(), "wB:p1", "do X"))
 	b, err := os.ReadFile(log)

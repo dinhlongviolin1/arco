@@ -75,6 +75,32 @@ func (a engineActions) BrainReply(ctx context.Context, prompt string) (string, e
 	return a.eng.BrainReply(ctx, prompt)
 }
 
+// Scan lists live herdr agents across the fleet, converting the engine's scan
+// result into the telegram port's display shape.
+func (a engineActions) Scan(ctx context.Context) ([]telegram.ScannedAgent, error) {
+	scan, err := a.eng.ScanAgents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]telegram.ScannedAgent, 0, len(scan))
+	for _, s := range scan {
+		out = append(out, telegram.ScannedAgent{
+			VM: s.VM, Ref: s.Ref, Workspace: s.Workspace, Kind: s.Kind, Status: s.State,
+			Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Tracked: s.Tracked, WorkerID: s.WorkerID,
+		})
+	}
+	return out, nil
+}
+
+// Adopt registers an untracked herdr agent as a monitor-only worker.
+func (a engineActions) Adopt(ctx context.Context, ref string) (workerID, sessionID string, err error) {
+	res, err := a.eng.Adopt(ctx, ref)
+	if err != nil {
+		return "", "", err
+	}
+	return res.WorkerID, res.SessionID, nil
+}
+
 // tgStore adapts core.Store to telegram.Store: reads go through Reader(); the
 // topic-id binding runs in a one-statement write tx.
 type tgStore struct{ s core.Store }

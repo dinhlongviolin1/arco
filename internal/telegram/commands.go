@@ -15,6 +15,7 @@ const helpText = `arco — drive the fleet from Telegram
 read:
   /status                fleet summary (estop, active workers, pending)
   /vms                   the attached VMs (fleet hosts)
+  /scan                  live herdr agent sessions across the fleet
   /sessions              list active sessions + their topics
   /workers               list workers by state
   /diff <worker>         a worker's redacted diff (id prefix ok)
@@ -23,6 +24,7 @@ act:
   /dispatch <repo> <task>   spawn a worker on <repo> to do <task>
                             (in an issue's topic → adds an aspect to that issue;
                              in General → starts a new issue; --vm <name> to pick a VM)
+  /adopt [ref]              track an existing herdr session (no ref → all untracked)
   /kill <worker>            terminate a worker (id prefix ok)
   /pause  /resume           emergency stop on / off
 
@@ -46,6 +48,10 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 		b.reply(ctx, m, b.fleetStatus())
 	case "/vms":
 		b.reply(ctx, m, b.renderVMs())
+	case "/scan":
+		b.reply(ctx, m, b.cmdScan(ctx))
+	case "/adopt":
+		b.reply(ctx, m, b.cmdAdopt(ctx, arg))
 	case "/sessions":
 		b.reply(ctx, m, b.renderSessions())
 	case "/workers":
@@ -292,6 +298,82 @@ func (b *Bot) renderVMs() string {
 		fmt.Fprintf(&b2, "• %s\n", v)
 	}
 	return strings.TrimRight(b2.String(), "\n")
+}
+
+// cmdScan lists the live herdr agent sessions across the fleet, marking which
+// arco already tracks and how to adopt the rest.
+func (b *Bot) cmdScan(ctx context.Context) string {
+	agents, err := b.actions.Scan(ctx)
+	if err != nil {
+		return "scan failed: " + err.Error()
+	}
+	if len(agents) == 0 {
+		return "no live agent sessions found on the fleet"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "live agent sessions (%d):\n", len(agents))
+	untracked := 0
+	for _, a := range agents {
+		mark := "🆓 untracked"
+		if a.Tracked {
+			mark = "✅ tracked " + short(a.WorkerID)
+		} else {
+			untracked++
+		}
+		fmt.Fprintf(&sb, "\n• %s [%s] on %s — %s\n", a.Kind, a.Status, vmLabel(a.VM), mark)
+		if a.Title != "" {
+			fmt.Fprintf(&sb, "  %s\n", truncate(a.Title, 60))
+		}
+		if a.Cwd != "" {
+			fmt.Fprintf(&sb, "  cwd: %s\n", a.Cwd)
+		}
+		fmt.Fprintf(&sb, "  pane: %s", a.Ref)
+		if a.SessionID != "" {
+			fmt.Fprintf(&sb, " · session %s", short(a.SessionID))
+		}
+		sb.WriteString("\n")
+	}
+	if untracked > 0 {
+		sb.WriteString("\nadopt with /adopt <pane> (or /adopt all to track every untracked one)")
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// cmdAdopt registers untracked herdr sessions as monitor-only arco workers.
+// No arg (or "all") adopts every untracked live agent; otherwise it adopts the
+// one whose pane/workspace/session-id matches the fragment.
+func (b *Bot) cmdAdopt(ctx context.Context, arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" || strings.EqualFold(arg, "all") {
+		agents, err := b.actions.Scan(ctx)
+		if err != nil {
+			return "adopt failed (scan): " + err.Error()
+		}
+		var refs []string
+		for _, a := range agents {
+			if !a.Tracked {
+				refs = append(refs, a.Ref)
+			}
+		}
+		if len(refs) == 0 {
+			return "nothing to adopt — every live agent is already tracked (/scan to see)"
+		}
+		var sb strings.Builder
+		for _, ref := range refs {
+			wid, sid, err := b.actions.Adopt(ctx, ref)
+			if err != nil {
+				fmt.Fprintf(&sb, "• %s — skipped: %s\n", ref, err.Error())
+				continue
+			}
+			fmt.Fprintf(&sb, "• %s — 👁 adopted as worker %s (session %s, monitor-only)\n", ref, short(wid), short(sid))
+		}
+		return strings.TrimRight(sb.String(), "\n")
+	}
+	wid, sid, err := b.actions.Adopt(ctx, arg)
+	if err != nil {
+		return "adopt failed: " + err.Error()
+	}
+	return fmt.Sprintf("👁 adopted %s as worker %s (session %s)\nmonitor-only (manual mode): arco tracks liveness + relays, but didn't launch it so it can't enforce grants.", arg, short(wid), short(sid))
 }
 
 // chatPrompt frames a conversational brain call with light fleet context.

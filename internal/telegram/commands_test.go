@@ -145,6 +145,39 @@ func TestCmd_HelpAndUnknown(t *testing.T) {
 	require.Contains(t, strings.ToLower(lastSent(api)), "unknown command")
 }
 
+func TestCmd_ScanListsLiveAgents(t *testing.T) {
+	b, api, _, act := newTestBot(t)
+	act.scanOut = []ScannedAgent{
+		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Title: "review arco", Cwd: "/home/op/arco", SessionID: "3dca0eaf", Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Title: "pull latest", Cwd: "/home/op/sysadmin", SessionID: "0d64f4be"},
+	}
+	b.handleMessage(context.Background(), &Message{Text: "/scan", From: &User{ID: allowedUID}})
+	last := lastSent(api)
+	require.Contains(t, last, "live agent sessions (2)")
+	require.Contains(t, last, "w5:p1")
+	require.Contains(t, last, "✅ tracked")
+	require.Contains(t, last, "🆓 untracked")
+	require.Contains(t, last, "/adopt")
+}
+
+func TestCmd_AdoptAll_OnlyUntracked(t *testing.T) {
+	b, api, _, act := newTestBot(t)
+	act.scanOut = []ScannedAgent{
+		{VM: "", Ref: "w1:p1", Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+		{VM: "", Ref: "w5:p1"},
+	}
+	b.handleMessage(context.Background(), &Message{Text: "/adopt", From: &User{ID: allowedUID}})
+	require.Equal(t, []string{"w5:p1"}, act.adopts, "only untracked agents are adopted")
+	require.Contains(t, lastSent(api), "adopted")
+}
+
+func TestCmd_AdoptByRef(t *testing.T) {
+	b, api, _, act := newTestBot(t)
+	b.handleMessage(context.Background(), &Message{Text: "/adopt w5:p1", From: &User{ID: allowedUID}})
+	require.Equal(t, []string{"w5:p1"}, act.adopts)
+	require.Contains(t, lastSent(api), "monitor-only")
+}
+
 func TestCmd_VMsListsFleet(t *testing.T) {
 	api := &fakeAPIRec{}
 	b := New(Config{

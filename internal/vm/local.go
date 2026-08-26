@@ -170,11 +170,16 @@ type herdrListResp struct {
 }
 
 type herdrAgent struct {
-	Agent       string `json:"agent"`        // agent kind, e.g. "claude"
-	AgentStatus string `json:"agent_status"` // idle|working|blocked|done|unknown
-	PaneID      string `json:"pane_id"`      // "wB:p1"
-	WorkspaceID string `json:"workspace_id"` // "wB"
-	TerminalID  string `json:"terminal_id"`  // stable per-pane identity (PID-reuse guard)
+	Agent        string `json:"agent"`        // agent kind, e.g. "claude"
+	AgentStatus  string `json:"agent_status"` // idle|working|blocked|done|unknown
+	PaneID       string `json:"pane_id"`      // "wB:p1"
+	WorkspaceID  string `json:"workspace_id"` // "wB"
+	TerminalID   string `json:"terminal_id"`  // stable per-pane identity (PID-reuse guard)
+	Cwd          string `json:"cwd"`          // the agent's working directory
+	TitleStrip   string `json:"terminal_title_stripped"`
+	AgentSession struct {
+		Value string `json:"value"` // herdr's own agent-session id (the CLI resume handle)
+	} `json:"agent_session"`
 }
 
 // ListAgents returns observed agents. Presence = alive unless the status is a
@@ -199,6 +204,7 @@ func (l *LocalVMClient) ListAgents(ctx context.Context) ([]core.AgentObs, error)
 		obs = append(obs, core.AgentObs{
 			Ref: a.PaneID, Workspace: a.WorkspaceID, BootID: a.TerminalID,
 			State: a.AgentStatus, Alive: !terminalHerdrStatus[a.AgentStatus],
+			Kind: a.Agent, Cwd: a.Cwd, Title: a.TitleStrip, SessionID: a.AgentSession.Value,
 		})
 	}
 	return obs, nil

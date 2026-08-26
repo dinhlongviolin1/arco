@@ -26,9 +26,11 @@ const (
 var menuCommands = []BotCommand{
 	{"status", "fleet summary (estop, active workers, pending)"},
 	{"vms", "list the attached VMs (fleet hosts)"},
+	{"scan", "live herdr agent sessions across the fleet"},
 	{"workers", "list active workers"},
 	{"sessions", "list active sessions"},
 	{"dispatch", "start a worker: /dispatch <repo> <task>"},
+	{"adopt", "track an existing herdr session: /adopt [ref]"},
 	{"kill", "terminate a worker: /kill <worker>"},
 	{"diff", "show a worker's diff: /diff <worker>"},
 	{"pause", "engage the emergency stop"},
