@@ -55,7 +55,16 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("telegram: download: http %d", resp.StatusCode)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
+	// Read one byte past the cap so an OVERSIZED file is rejected with an error
+	// rather than silently truncated into a corrupt image on disk (review round 5).
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("telegram: download: %w", err)
+	}
+	if len(b) > maxDownloadBytes {
+		return nil, fmt.Errorf("telegram: download exceeds %d bytes — refusing to write a truncated file", maxDownloadBytes)
+	}
+	return b, nil
 }
 
 // SendPhotoReq uploads a local image file as a photo (compressed preview) into a

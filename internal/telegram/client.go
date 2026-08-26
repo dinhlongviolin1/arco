@@ -281,6 +281,12 @@ func (c *Client) GetUpdates(ctx context.Context, offset, timeoutSec int) ([]Upda
 		"offset":          offset,
 		"timeout":         timeoutSec,
 		"allowed_updates": []string{"message", "callback_query"},
+		// Bound the batch so it can't exceed call()'s 1 MiB response cap: an
+		// oversized batch would truncate → JSON-unmarshal fail → the poll loop
+		// re-fetches the SAME offset forever (it can't advance past updates it
+		// couldn't parse). 50 * a max ~8 KB update stays well under 1 MiB; extra
+		// updates just arrive on the next poll (review round 5, poison-update stall).
+		"limit": 50,
 	}
 	err := c.call(ctx, "getUpdates", body, &ups)
 	return ups, err
