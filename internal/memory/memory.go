@@ -46,10 +46,26 @@ func (s *Store) LoadUserMemory() (userMD, indexMD string) {
 	return
 }
 
+// maxMemoryFileBytes caps a single always-hot memory file pulled into the brain
+// prompt — generous for prose, bounded against a huge/binary symlink target.
+const maxMemoryFileBytes = 64 * 1024
+
 func (s *Store) readFile(rel string) string {
-	b, err := os.ReadFile(filepath.Join(s.Dir, rel))
+	p := filepath.Join(s.Dir, rel)
+	// Same guard as Read() (the topic path): the always-hot USER.md/MEMORY.md are
+	// pulled into EVERY brain prompt, so a symlinked file here could exfiltrate an
+	// arbitrary file (~/.ssh/id_rsa, /etc/passwd) into brain context. Only read a
+	// REGULAR file whose resolved path stays under Dir, and cap the size.
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() || s.assertContained(p) != nil {
+		return ""
+	}
+	b, err := os.ReadFile(p)
 	if err != nil {
 		return ""
+	}
+	if len(b) > maxMemoryFileBytes {
+		b = b[:maxMemoryFileBytes]
 	}
 	return string(b)
 }
