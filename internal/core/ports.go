@@ -313,6 +313,12 @@ type AgentObs struct {
 	PIDStartTime string
 	State        string // backend agent status (herdr: idle|working|blocked|done|unknown)
 	Alive        bool
+	// Descriptive fields for operator-facing SCAN/adopt (herdr agent list carries
+	// them); the sweep ignores these — it correlates purely on Ref/Workspace/BootID.
+	Kind      string // agent kind, e.g. "claude"
+	Cwd       string // the agent's working directory
+	Title     string // terminal title (the agent's current task line)
+	SessionID string // backend's own agent-session id (herdr agent_session.value) — the CLI resume handle
 }
 
 // Diff is a base→head git diff summary.

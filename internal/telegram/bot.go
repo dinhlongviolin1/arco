@@ -52,6 +52,29 @@ type Actions interface {
 	Kill(ctx context.Context, workerID string) error
 	// BrainReply is a conversational reply from arco's brain (free-text chat).
 	BrainReply(ctx context.Context, prompt string) (string, error)
+	// Scan lists the LIVE herdr agent sessions across the fleet, marking which arco
+	// already tracks (the /scan command — arco as orchestrator/monitor).
+	Scan(ctx context.Context) ([]ScannedAgent, error)
+	// Adopt registers an untracked herdr agent (by ref/workspace/session id) as a
+	// monitor-only arco worker so arco tracks it internally (the /adopt command),
+	// returning the new worker + session ids.
+	Adopt(ctx context.Context, ref string) (workerID, sessionID string, err error)
+}
+
+// ScannedAgent is one live herdr agent for the /scan + /adopt display. Mirrors
+// reconcile.ScannedAgent across the port so the telegram package needn't import
+// reconcile (the daemon adapter converts).
+type ScannedAgent struct {
+	VM        string
+	Ref       string // herdr pane id (the adopt handle)
+	Workspace string
+	Kind      string
+	Status    string
+	Cwd       string
+	Title     string
+	SessionID string // herdr agent-session id (CLI resume handle)
+	Tracked   bool
+	WorkerID  string
 }
 
 // Store is the narrow ledger surface the bot reads/writes — just the session/

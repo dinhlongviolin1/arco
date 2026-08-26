@@ -193,6 +193,8 @@ type fakeActions struct {
 	kills       []string
 	chatPrompts []string
 	chatReply   string
+	scanOut     []ScannedAgent
+	adopts      []string
 }
 
 func (a *fakeActions) AnswerQuestion(_ context.Context, escID, text string, scope core.Scope) error {
@@ -250,6 +252,17 @@ func (a *fakeActions) BrainReply(_ context.Context, prompt string) (string, erro
 		return "ok", nil
 	}
 	return a.chatReply, nil
+}
+func (a *fakeActions) Scan(context.Context) ([]ScannedAgent, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.scanOut, nil
+}
+func (a *fakeActions) Adopt(_ context.Context, ref string) (string, string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.adopts = append(a.adopts, ref)
+	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
 }
 
 type fakeScrubber struct{}
