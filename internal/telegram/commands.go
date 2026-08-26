@@ -153,25 +153,36 @@ func (b *Bot) cmdDispatch(ctx context.Context, m *Message, arg string) string {
 	if err != nil {
 		return "dispatch failed: " + err.Error()
 	}
-	verb := "🚀 started issue — worker"
-	if into != "" {
-		verb = "➕ added aspect to this issue — worker"
-	}
-	out := fmt.Sprintf("%s %s (session %s)\nrepo: %s", verb, short(wid), short(sid), repo)
-	// Announce the running target — which VM + herdr workspace/pane — so it's
-	// never a mystery where a worker landed (fleet visibility), plus how to jump
-	// back into it from the CLI.
+	// Announce the running target — which VM + herdr workspace/pane — so it's never
+	// a mystery where a worker landed (fleet visibility), plus how to resume in CLI.
+	detail := "repo: " + repo
 	if w, err := b.store.GetWorker(wid); err == nil {
-		out += "\n▶ running on: " + vmLabel(w.VM)
+		detail += "\n▶ running on: " + vmLabel(w.VM)
 		if w.Workspace != "" {
-			out += "\nherdr workspace: " + w.Workspace
+			detail += "\nherdr workspace: " + w.Workspace
 			if w.AgentRef != "" {
-				out += " · pane " + w.AgentRef
+				detail += " · pane " + w.AgentRef
 			}
 		}
-		out += "\nresume in CLI: " + resumeHint(w)
+		detail += "\nresume in CLI: " + resumeHint(w)
 	}
-	return out
+	// Adding an aspect INTO an existing issue: the command came from that issue's
+	// topic, so the confirmation lands there alongside the issue's other work.
+	if into != "" {
+		return fmt.Sprintf("➕ added aspect to this issue — worker %s (session %s)\n%s", short(wid), short(sid), detail)
+	}
+	// New issue: open its topic NOW rather than waiting for the first escalation —
+	// "a topic owns the issue", so the issue must have its home the moment it starts
+	// (the operator asked to spawn into a new topic). Post the starter card there +
+	// pin the status card; reply in the origin channel with a pointer.
+	tid, terr := b.ensureTopic(ctx, sid)
+	if terr != nil {
+		return fmt.Sprintf("🚀 started issue — worker %s (session %s)\n%s\n(couldn't open its topic: %v)", short(wid), short(sid), detail, terr)
+	}
+	b.refreshStatus(ctx, sid, tid)
+	_, _ = b.api.SendMessage(ctx, SendMessageReq{ChatID: b.groupID, MessageThreadID: tid,
+		Text: fmt.Sprintf("🚀 issue started — worker %s\ntask: %s\n%s", short(wid), truncate(task, 200), detail)})
+	return fmt.Sprintf("🚀 started issue %s — opened its topic ⤴ (worker %s)", short(sid), short(wid))
 }
 
 // vmLabel is the human name of a worker's VM ("" = the local herdr on this box).
