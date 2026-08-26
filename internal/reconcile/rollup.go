@@ -13,8 +13,8 @@ import (
 // Supersession rollup (build-guide-rev6 PASS-3, plan Decision B). When a
 // delegated child completes, its parent ("root") is re-driven by a short-lived
 // brain call that summarizes the children's results — but COALESCED to at most
-// one rollup per session per RollupInterval (a 100-child root would otherwise
-// storm the brain). The rollup summary is ADVISORY (M19 injection closure): it
+// one rollup per PARENT worker per RollupInterval (CountRecentRollups keys on the
+// parent id; a 100-child root would otherwise storm the brain). The rollup summary is ADVISORY (M19 injection closure): it
 // is marked tainted + call_kind=rollup for provenance, and — like every brain
 // StepResult — can never promote a grant or decide a confirm (those require a
 // human via the escalation decide path), so a child result can't launder
