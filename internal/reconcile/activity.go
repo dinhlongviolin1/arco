@@ -145,6 +145,32 @@ func (e *Engine) backOffSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// SetSessionMode applies an OPERATOR's explicit supervision-mode change and
+// ends any activity back-off claim on the session. The human's choice is
+// authoritative, so the auto-restore (restoreActivityBackoff) must never later
+// "undo" it — but that restore can only see the current mode, and can't tell an
+// operator's assist from the back-off's own demotion. The distinguishing signal
+// lives HERE: an explicit operator mode-set drops the in-memory demotion claim,
+// so a stale claim can't promote an operator's standing assist back to auto
+// (D9 safety — core review). Returns the resolved session id.
+func (e *Engine) SetSessionMode(ctx context.Context, sessionRef string, m core.SupervisionMode, actor string) (string, error) {
+	var sid string
+	if err := e.Store.WithTx(ctx, func(tx core.Tx) error {
+		s, err := tx.ResolveSession(sessionRef)
+		if err != nil {
+			return err
+		}
+		sid = s.ID
+		return tx.SetSessionMode(s.ID, m, actor)
+	}); err != nil {
+		return "", err
+	}
+	e.mu.Lock()
+	delete(e.activityDemoted, sid) // operator override: end the back-off's ownership
+	e.mu.Unlock()
+	return sid, nil
+}
+
 // restoreActivityBackoff returns to auto every session the back-off itself
 // demoted whose pane has been quiet for ActivityRestoreAfter. Only OUR
 // demotions are eligible: an operator's explicit assist is a standing decision

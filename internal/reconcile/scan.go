@@ -31,17 +31,28 @@ func (e *Engine) ScanAgents(ctx context.Context) ([]ScannedAgent, error) {
 		return nil, err
 	}
 	// Index the non-terminal workers so a scanned agent can be marked tracked by
-	// either its backend ref (arco-launched) or its workspace (fallback).
+	// either its backend ref (arco-launched) or its workspace (fallback). herdr
+	// pane/workspace ids are PER-HOST, so the key includes the VM whenever routing
+	// is on — exactly as the sweep scopes correlation per-VM (vmroute.sweepGroups):
+	// a same-ref agent on a different host is someone else's. With routing off
+	// there is one VM, so the key is the bare id (today's behavior unchanged).
+	routing := e.VMs != nil
+	key := func(vm, id string) string {
+		if routing {
+			return vm + "\x00" + id
+		}
+		return id
+	}
 	byRef, byWS := map[string]string{}, map[string]string{}
 	for _, w := range workers {
 		if w.State.Terminal() {
 			continue
 		}
 		if w.AgentRef != "" {
-			byRef[w.AgentRef] = w.ID
+			byRef[key(w.VM, w.AgentRef)] = w.ID
 		}
 		if w.Workspace != "" {
-			byWS[w.Workspace] = w.ID
+			byWS[key(w.VM, w.Workspace)] = w.ID
 		}
 	}
 	var out []ScannedAgent
@@ -58,9 +69,9 @@ func (e *Engine) ScanAgents(ctx context.Context) ([]ScannedAgent, error) {
 			if !a.Alive {
 				continue
 			}
-			wid := byRef[a.Ref]
+			wid := byRef[key(vmName, a.Ref)]
 			if wid == "" {
-				wid = byWS[a.Workspace]
+				wid = byWS[key(vmName, a.Workspace)]
 			}
 			out = append(out, ScannedAgent{AgentObs: a, VM: vmName, Tracked: wid != "", WorkerID: wid})
 		}
@@ -110,14 +121,20 @@ func (e *Engine) Adopt(ctx context.Context, ref string) (DispatchResult, error) 
 		return DispatchResult{}, err
 	}
 	var found *ScannedAgent
+	matches := 0
 	for i := range scan {
 		if a := &scan[i]; a.Ref == ref || a.Workspace == ref || a.SessionID == ref {
 			found = a
-			break
+			matches++
 		}
 	}
 	if found == nil {
 		return DispatchResult{}, fmt.Errorf("reconcile: no live agent matches %q", ref)
+	}
+	// herdr ids are per-host: with a fleet the same ref can exist on two VMs.
+	// Refuse rather than adopt the wrong host's agent — the operator can requalify.
+	if matches > 1 {
+		return DispatchResult{}, fmt.Errorf("reconcile: %q matches %d agents across VMs — use a VM-unique handle (herdr agent-session id)", ref, matches)
 	}
 	if found.Tracked {
 		return DispatchResult{WorkerID: found.WorkerID, State: core.WorkerRunning},

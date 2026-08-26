@@ -124,7 +124,8 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 	// (a same-ref agent on a different VM is someone else's), and GitHeads runs
 	// once per VM over that VM's worktrees. With no registry there is exactly one
 	// group on e.VM — today's single-client behavior unchanged.
-	for _, g := range e.sweepGroups(all, pendingEsc) {
+	groups := e.sweepGroups(all, pendingEsc)
+	for _, g := range groups {
 		if g.client == nil {
 			continue // registry gap (unknown VM): unobservable — never finalize on it
 		}
@@ -232,6 +233,21 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 			e.resetMiss(w.ID)
 		}
 	}
+	// Prune the misses map to the currently liveness-tracked set. A worker can
+	// accrue a sub-threshold miss and then leave g.live by ANOTHER path — paused
+	// by pool-TTL / escalation-timeout, killed by the operator, or finalized via
+	// ApplyEvent — before re-accruing to MissThreshold, so the liveness loop's
+	// resetMiss never runs for it again and its entry would persist forever
+	// (unbounded growth over a long-lived daemon — core review, sibling of the
+	// in-loop LOW-5 case). A still-suspect worker stays in g.live, so its miss
+	// count is preserved.
+	live := map[string]bool{}
+	for _, g := range groups {
+		for _, w := range g.live {
+			live[w.ID] = true
+		}
+	}
+	e.pruneMisses(live)
 	// Verification leg 1 (rev7/T3.1): poll CI check-runs for completed_candidate
 	// workers, after the liveness loop (a candidate's agent is expectedly gone —
 	// finalize already declines it above, so candidates are always still live-
@@ -240,6 +256,19 @@ func (e *Engine) Sweep(ctx context.Context) (SweepResult, error) {
 		e.pollCICheckRuns(ctx, all)
 	}
 	return res, nil
+}
+
+// pruneMisses drops miss counters for workers no longer in the liveness-tracked
+// set (terminal / paused / gone), bounding the in-memory map. Safe: a worker
+// still being observed is in `live` and keeps its count.
+func (e *Engine) pruneMisses(live map[string]bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for id := range e.misses {
+		if !live[id] {
+			delete(e.misses, id)
+		}
+	}
 }
 
 // redriveStaleBrainIntents re-submits brainClassify (off the write path) for
