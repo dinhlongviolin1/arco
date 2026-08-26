@@ -364,13 +364,11 @@ func (s *Server) setSessionMode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	if err := s.store.WithTx(r.Context(), func(tx core.Tx) error {
-		sess, err := tx.ResolveSession(r.PathValue("id"))
-		if err != nil {
-			return err
-		}
-		return tx.SetSessionMode(sess.ID, m, "operator")
-	}); err != nil {
+	// Route through the engine (not the store directly): an explicit operator
+	// mode-set must also clear the activity back-off's in-memory demotion claim,
+	// so the auto-restore can't later promote an operator's standing assist back
+	// to auto (D9 safety — core review).
+	if _, err := s.eng.SetSessionMode(r.Context(), r.PathValue("id"), m, "operator"); err != nil {
 		writeErr(w, errStatus(err), err)
 		return
 	}
