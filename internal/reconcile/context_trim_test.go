@@ -30,6 +30,18 @@ func TestAssembleContext_BudgetHoldsUnderQuoteEscaping(t *testing.T) {
 	require.Equal(t, a, assembleContext(w, s, events, evil, evil), "byte-stable under trimming")
 }
 
+// The editable classify.tmpl trailer (embedded since PR #123/#124) must stay
+// short enough that the fixed context sections fit UNDER contextBudget without
+// the fixedSectionFloor clamp engaging — the runtime successor to the old
+// compile-time budget proof (`const _ = uint(maxProse - fixedSectionFloor)`).
+// If a developer bloats the trailer, the clamp would silently push the assembled
+// prompt past the token ceiling; this fails at CI instead (review round 4).
+func TestClassifyInstruction_FitsContextBudget(t *testing.T) {
+	maxProse := contextBudget - len(classifyInstruction()) - eventFloor - len(truncMarker) - 1
+	require.GreaterOrEqual(t, maxProse, fixedSectionFloor,
+		"classify.tmpl trailer too long: the fixed context sections no longer fit under contextBudget without clamping")
+}
+
 // When the tail can't fit whole, the OLDEST events are dropped and the survivors
 // stay in oldest→newest order.
 func TestAssembleContext_DropsOldestEventsFirst(t *testing.T) {

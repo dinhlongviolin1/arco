@@ -1,6 +1,7 @@
 package reconcile
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -93,7 +94,12 @@ func (x *Exec) runOne(fn func()) {
 	x.sem <- struct{}{}
 	defer func() {
 		<-x.sem
-		_ = recover() // swallow: off-write-path work must not take down the process
+		if r := recover(); r != nil {
+			// Off-write-path work must not take down the process, but a swallowed
+			// panic (e.g. in brainClassify) would silently stall a worker with no
+			// trace — log it so the failure is diagnosable.
+			log.Printf("arco: exec: recovered panic in off-write-path work: %v", r)
+		}
 	}()
 	fn()
 }
