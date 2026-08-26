@@ -24,7 +24,6 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/mergeq"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/preflight"
-	"github.com/dinhlongviolin1/arco/internal/prompts"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
 	"github.com/dinhlongviolin1/arco/internal/telegram"
@@ -78,13 +77,6 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	}
 	defer store.Close()
 	store.SetScrubber(redact.New()) // write-time secret redaction (B4)
-
-	// Editable prompt wording: embedded defaults, overlaid by any *.tmpl the
-	// operator drops in <state>/prompts. A broken override fails startup loudly
-	// rather than silently falling back — so an edit can't half-apply unnoticed.
-	if err := prompts.Load(filepath.Join(filepath.Dir(cfg.DBPath), "prompts")); err != nil {
-		return fmt.Errorf("daemon: prompts: %w", err)
-	}
 	if err := store.Migrate(ctx); err != nil {
 		return err
 	}

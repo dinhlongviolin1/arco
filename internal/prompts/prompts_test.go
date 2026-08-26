@@ -1,8 +1,6 @@
 package prompts
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,25 +25,6 @@ func TestChatRender(t *testing.T) {
 	require.Contains(t, out, "Attached VMs: 1 — local")
 	require.Contains(t, out, "Pending decisions: 2")
 	require.Contains(t, out, `Operator says: "how many vms?"`)
-}
-
-func TestLoadOverride(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "rollup.tmpl"), []byte("CUSTOM ROLLUP DIRECTIVE\n"), 0o644))
-	require.NoError(t, Load(dir))
-	require.Equal(t, "CUSTOM ROLLUP DIRECTIVE", MustText("rollup.tmpl"), "an override file replaces the embedded default")
-	// embedded defaults not overridden are untouched
-	require.Contains(t, MustText("classify.tmpl"), "JSON StepResult")
-	// restore embedded for the rest of the suite
-	require.NoError(t, Load(""))
-	require.Contains(t, MustText("rollup.tmpl"), "Given these sub-worker results")
-}
-
-func TestLoad_BadOverrideFailsLoud(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "chat.tmpl"), []byte("{{ .Unclosed "), 0o644))
-	require.Error(t, Load(dir), "a malformed override must fail Load, not silently fall back")
-	require.NoError(t, Load("")) // restore
 }
 
 func TestRender_UnknownTemplate(t *testing.T) {
