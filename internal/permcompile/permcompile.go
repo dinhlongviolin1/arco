@@ -236,7 +236,7 @@ fi
 # best-effort (high_blast caps are never compiled + arco's Allowed() is the gate);
 # cover space- and colon/plus-refspec forms of main/master.
 case "$input" in
-  *'push'*' main'* | *'push'*' master'* | *'push'*':main'* | *'push'*':master'* | *'push'*'+main'* | *'push'*'+master'* | *'--force'* | *'push'*' -f'* ) deny "blocked git push" ;;
+  *'push'*' main'* | *'push'*' master'* | *'push'*':main'* | *'push'*':master'* | *'push'*'+main'* | *'push'*'+master'* | *'push'*'heads/main'* | *'push'*'heads/master'* | *'--force'* | *'push'*' -f'* ) deny "blocked git push" ;;
   *'.env'* | *'.ssh/'* | *'sudo '* | *'rm -rf'* ) deny "blocked" ;;
 esac
 exit 0

@@ -849,6 +849,8 @@ func errStatus(err error) int {
 	switch {
 	case errors.Is(err, core.ErrNotFound):
 		return http.StatusNotFound
+	case errors.Is(err, core.ErrUnknownVM):
+		return http.StatusBadRequest // a typo'd --vm is client input, not a server fault (review MED-1)
 	case errors.Is(err, core.ErrProtectedPool):
 		return http.StatusConflict
 	case errors.Is(err, core.ErrIllegalTransition), errors.Is(err, core.ErrRevMismatch),

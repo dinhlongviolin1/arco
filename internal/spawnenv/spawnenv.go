@@ -42,6 +42,11 @@ var secretSuffixes = []string{
 // notably DB passwords and connection URLs that embed user:pass@host (opus
 // review). Matched case-insensitively.
 var secretNames = map[string]bool{
+	// Bare (un-suffixed) secret names the "_TOKEN"/"_SECRET"/… suffix shapes miss —
+	// a worker inheriting a plain `TOKEN=…`/`PASSWORD=…` would otherwise get it
+	// (review LOW-4). Not bare "KEY" (too generic → over-strips benign vars).
+	"TOKEN": true, "PASSWORD": true, "PASSWD": true, "SECRET": true,
+	"APIKEY": true, "API_KEY": true, "ACCESS_KEY": true, "SECRET_KEY": true, "PRIVATE_KEY": true,
 	"PGPASSWORD": true, "MYSQL_PWD": true,
 	"DATABASE_URL": true, "REDIS_URL": true, "MONGODB_URI": true, "MONGO_URL": true,
 	"AMQP_URL": true, "CELERY_BROKER_URL": true, "SENTRY_DSN": true, "KUBECONFIG": true,
