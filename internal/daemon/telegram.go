@@ -124,5 +124,26 @@ func buildTelegramBot(ctx context.Context, cfg config.Config, eng *reconcile.Eng
 		Actions:  engineActions{eng: eng, estopPath: cfg.EStopPath()},
 		Allowed:  cfg.Telegram.AllowedUserIDs,
 		Redact:   eng.Redact,
+		VMs:      vmLines(cfg),
 	}), nil
+}
+
+// vmLines renders the attached fleet for the /vms command + chat context, from
+// config: the [[vms]] entries, or the local herdr when none are configured.
+func vmLines(cfg config.Config) []string {
+	if len(cfg.VMs) == 0 {
+		return []string{"local (default · this box, use_local_vm)"}
+	}
+	var out []string
+	for _, v := range cfg.VMs {
+		line := v.Name + " (host " + v.Host + ")"
+		if v.Name == cfg.DefaultVM {
+			line += " · default"
+		}
+		out = append(out, line)
+	}
+	if cfg.DefaultVM == "" {
+		out = append(out, "local (default · this box)")
+	}
+	return out
 }
