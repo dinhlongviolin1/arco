@@ -25,6 +25,7 @@ const (
 // button), registered once at Start.
 var menuCommands = []BotCommand{
 	{"status", "fleet summary (estop, active workers, pending)"},
+	{"vms", "list the attached VMs (fleet hosts)"},
 	{"workers", "list active workers"},
 	{"sessions", "list active sessions"},
 	{"dispatch", "start a worker: /dispatch <repo> <task>"},

@@ -144,3 +144,16 @@ func TestCmd_HelpAndUnknown(t *testing.T) {
 	b.handleMessage(context.Background(), &Message{Text: "/frobnicate", From: &User{ID: allowedUID}})
 	require.Contains(t, strings.ToLower(lastSent(api)), "unknown command")
 }
+
+func TestCmd_VMsListsFleet(t *testing.T) {
+	api := &fakeAPIRec{}
+	b := New(Config{
+		API: api, Store: newFakeStore(), GroupID: -1, MinLevel: notify.LevelInfo,
+		Actions: &fakeActions{}, Allowed: []int64{allowedUID},
+		VMs: []string{"local (default · this box)", "vm1 (host vm1)"},
+	})
+	b.handleMessage(context.Background(), &Message{Text: "/vms", From: &User{ID: allowedUID}})
+	last := api.sent[len(api.sent)-1].text
+	require.Contains(t, last, "attached VMs (2)")
+	require.Contains(t, last, "vm1 (host vm1)")
+}

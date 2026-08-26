@@ -77,6 +77,10 @@ type Config struct {
 	Actions  Actions
 	Allowed  []int64
 	Redact   core.Scrubber // scrubs diffs before they leave for Telegram (nil = no scrub)
+	// VMs are display lines for the attached fleet (e.g. "local (default · this
+	// box)", "vm1 (host vm1)"), for the /vms command + chat context. The daemon
+	// builds them from config so factual fleet questions aren't brain-guessed.
+	VMs []string
 }
 
 // Bot is the Telegram forum notifier + inbound driver. It implements
@@ -89,6 +93,7 @@ type Bot struct {
 	actions Actions
 	allowed map[int64]bool
 	redact  core.Scrubber
+	vms     []string
 
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex // per-session lock serializing topic create/status edit
@@ -112,6 +117,7 @@ func New(cfg Config) *Bot {
 		actions:  cfg.Actions,
 		allowed:  allowed,
 		redact:   cfg.Redact,
+		vms:      cfg.VMs,
 		locks:    map[string]*sync.Mutex{},
 		lastEdit: map[string]time.Time{},
 		closed:   map[string]bool{},

@@ -13,6 +13,7 @@ const helpText = `arco — drive the fleet from Telegram
 
 read:
   /status                fleet summary (estop, active workers, pending)
+  /vms                   the attached VMs (fleet hosts)
   /sessions              list active sessions + their topics
   /workers               list workers by state
   /diff <worker>         a worker's redacted diff (id prefix ok)
@@ -42,6 +43,8 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 		b.reply(ctx, m, helpText)
 	case "/status":
 		b.reply(ctx, m, b.fleetStatus())
+	case "/vms":
+		b.reply(ctx, m, b.renderVMs())
 	case "/sessions":
 		b.reply(ctx, m, b.renderSessions())
 	case "/workers":
@@ -276,6 +279,20 @@ func (b *Bot) renderWorkers() string {
 	return strings.TrimRight(b2.String(), "\n")
 }
 
+// renderVMs lists the attached fleet — the deterministic answer to "how many
+// VMs", not a brain guess.
+func (b *Bot) renderVMs() string {
+	if len(b.vms) == 0 {
+		return "no VMs configured"
+	}
+	var b2 strings.Builder
+	fmt.Fprintf(&b2, "attached VMs (%d):\n", len(b.vms))
+	for _, v := range b.vms {
+		fmt.Fprintf(&b2, "• %s\n", v)
+	}
+	return strings.TrimRight(b2.String(), "\n")
+}
+
 // chatPrompt frames a conversational brain call with light fleet context.
 func (b *Bot) chatPrompt(text string) string {
 	workers, _ := b.store.ListWorkers(core.WorkerFilter{})
@@ -288,11 +305,16 @@ func (b *Bot) chatPrompt(text string) string {
 	if escs, err := b.store.ListEscalations(core.EscalationFilter{Status: "pending"}); err == nil {
 		pending = len(escs)
 	}
-	return fmt.Sprintf(`You are arco, a supervisor daemon for a fleet of coding-agent workers, replying to your operator over Telegram. Be concise and practical.
-Fleet right now: %d active worker(s), %d pending decision(s).
-To START work the operator uses: /dispatch <repo> <task>. Other commands: /status /sessions /workers /kill /diff /pause /resume. If they're asking to do something that maps to a command, tell them the exact command to send.
+	vms := "none configured"
+	if len(b.vms) > 0 {
+		vms = fmt.Sprintf("%d — %s", len(b.vms), strings.Join(b.vms, "; "))
+	}
+	return fmt.Sprintf(`You are arco, a supervisor daemon for a fleet of coding-agent workers, replying to your operator over Telegram. Be concise and practical. Answer ONLY from the facts below; do not invent fleet state.
+Attached VMs: %s.
+Active workers: %d. Pending decisions: %d.
+To START work the operator uses: /dispatch <repo> <task>. Other commands: /vms /status /sessions /workers /kill /diff /pause /resume. If they're asking to do something that maps to a command, tell them the exact command to send.
 Operator says: %q
-Reply:`, active, pending, text)
+Reply:`, vms, active, pending, text)
 }
 
 // resolveWorker finds the single worker whose id contains the given fragment
