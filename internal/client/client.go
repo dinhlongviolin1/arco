@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/api"
 	"github.com/dinhlongviolin1/arco/internal/intakekey"
@@ -29,9 +30,13 @@ type Client struct {
 	intakeKey    string // the worker's own key (from its cred file); wins over derivation
 }
 
-// New returns a Client dialing the given unix socket.
+// New returns a Client dialing the given unix socket. A generous overall Timeout
+// bounds every call so a CLI command can't hang forever on a wedged daemon (one
+// that accepts the socket connection but never responds) — 5 min comfortably
+// covers a slow repo-spawn dispatch while still capping a true deadlock (review).
 func New(socket string) *Client {
 	return &Client{hc: &http.Client{
+		Timeout: 5 * time.Minute,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, "unix", socket)

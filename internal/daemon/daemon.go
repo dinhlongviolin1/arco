@@ -190,6 +190,11 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 		}
 	}
 	eng.Exec = reconcile.NewExec(cfg.MaxBrainCalls)
+	// Drain off-write-path brain work before the entry store.Close on EVERY return
+	// path — registered HERE (before Recover, which submits brainClassify for
+	// dangling intents) so an early failure like a failed net.Listen can't let a
+	// Recover-queued tx run after the store is closed (review: use-after-close).
+	defer eng.Exec.Stop()
 	eng.BgCtx = ctx // off-write-path brain work observes daemon shutdown
 	// Enable the short-lived decision brain only when a profile is configured;
 	// otherwise the reconciler stays deterministic-only (ambiguous states wait
@@ -308,7 +313,6 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 	sweepCtx, sweepCancel := context.WithCancel(ctx)
 	var sweepWG sync.WaitGroup
 	sweepWG.Add(1)
-	defer eng.Exec.Stop()
 	defer sweepWG.Wait()
 	defer sweepCancel()
 	go func() {
@@ -318,27 +322,38 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			case <-sweepCtx.Done():
 				return
 			case <-ticker.C:
-				start := time.Now()
-				if _, err := eng.Sweep(sweepCtx); err != nil && sweepCtx.Err() == nil {
-					// Surface a sweep failure (e.g. a herdr outage making the
-					// authoritative loop a silent no-op). Skip logging on our own
-					// shutdown cancel, which is expected, not an outage.
-					log.Printf("arco: sweep: %v", err)
-				}
-				metrics.SweepDone(time.Since(start))
-				// Drain the merge queue strictly one item at a time on the sweep
-				// cadence (rev7/T3.2) — an error leaves the item pending for the
-				// next tick rather than looping hot.
-				for mq != nil && !eng.Paused() { // estop: no merges while paused
-					ok, err := mq.ProcessNext(sweepCtx)
-					if err != nil {
-						log.Printf("arco: mergeq: %v", err)
-						break
+				// One tick is isolated: a panic in the synchronous Sweep body or the
+				// merge queue must NOT take down the daemon (the async Exec work is
+				// already panic-guarded; this covers the ticker goroutine's own stack).
+				// The loop continues to the next tick — never crash-loop (review).
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("arco: sweep panic recovered: %v", r)
+						}
+					}()
+					start := time.Now()
+					if _, err := eng.Sweep(sweepCtx); err != nil && sweepCtx.Err() == nil {
+						// Surface a sweep failure (e.g. a herdr outage making the
+						// authoritative loop a silent no-op). Skip logging on our own
+						// shutdown cancel, which is expected, not an outage.
+						log.Printf("arco: sweep: %v", err)
 					}
-					if !ok {
-						break
+					metrics.SweepDone(time.Since(start))
+					// Drain the merge queue strictly one item at a time on the sweep
+					// cadence (rev7/T3.2) — an error leaves the item pending for the
+					// next tick rather than looping hot.
+					for mq != nil && !eng.Paused() { // estop: no merges while paused
+						ok, err := mq.ProcessNext(sweepCtx)
+						if err != nil {
+							log.Printf("arco: mergeq: %v", err)
+							break
+						}
+						if !ok {
+							break
+						}
 					}
-				}
+				}()
 			}
 		}
 	}()

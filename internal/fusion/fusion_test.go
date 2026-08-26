@@ -16,6 +16,10 @@ func TestResolve(t *testing.T) {
 	}{
 		{"blocked+alive", core.WorkerRunning, Signals{HerdrState: "blocked", Alive: true}, core.WorkerBlocked, false},
 		{"idle+headchanged->candidate", core.WorkerRunning, Signals{HerdrState: "idle", Alive: true, HeadChanged: true}, core.WorkerCompletedCandidate, false},
+		// idle but ALIVE with no progress is the normal between-turns state — it must
+		// NOT finalize a live worker `failed` (push-vs-sweep consistency); keep the
+		// current state and flag ambiguous so the brain classifies.
+		{"idle+alive+nohead->ambiguous keeps running", core.WorkerRunning, Signals{HerdrState: "idle", Alive: true}, core.WorkerRunning, true},
 		{"done+nohead->failed", core.WorkerRunning, Signals{HerdrState: "done", Alive: true}, core.WorkerFailed, false},
 		{"dead+nohead->failed", core.WorkerRunning, Signals{Alive: false}, core.WorkerFailed, false},
 		{"waiting input->waiting_for_user", core.WorkerRunning, Signals{HerdrState: "idle", Alive: true, WaitingInput: true}, core.WorkerWaitingForUser, false},

@@ -25,6 +25,25 @@ func TestLoadUserMemory(t *testing.T) {
 	require.Equal(t, "", idx) // missing MEMORY.md → ""
 }
 
+// A symlinked always-hot file must NOT be followed — else a planted symlink
+// (USER.md → ~/.ssh/id_rsa) would exfiltrate an arbitrary file into every brain
+// prompt.
+func TestLoadUserMemory_RejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(secret, []byte("BEGIN PRIVATE KEY"), 0o600))
+	require.NoError(t, os.Symlink(secret, filepath.Join(dir, "USER.md")))
+	u, _ := New(dir).LoadUserMemory()
+	require.Equal(t, "", u, "a symlinked USER.md is not followed into the brain prompt")
+}
+
+func TestLoadUserMemory_CapsSize(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "MEMORY.md", string(make([]byte, maxMemoryFileBytes+5000)))
+	_, idx := New(dir).LoadUserMemory()
+	require.LessOrEqual(t, len(idx), maxMemoryFileBytes, "oversized memory file is capped")
+}
+
 func TestRead_OutLinksAndBackLinks(t *testing.T) {
 	dir := t.TempDir()
 	// the motivating case: an external OSS project informs my project

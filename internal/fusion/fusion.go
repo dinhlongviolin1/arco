@@ -31,8 +31,21 @@ func Resolve(cur core.WorkerState, s Signals) (target core.WorkerState, ambiguou
 			return core.WorkerRunning, false
 		}
 		return finished(s)
-	case s.HerdrState == "idle" || s.HerdrState == "done" || !s.Alive:
+	case s.HerdrState == "done" || !s.Alive:
+		// Truly terminal: the agent reported done, or liveness says it's gone.
 		return finished(s)
+	case s.HerdrState == "idle":
+		// idle but ALIVE is the normal between-turns / awaiting-input state, NOT a
+		// terminal one — the sweep's liveness treats idle as alive too (only `done`
+		// is terminal). Lumping idle with done/dead here finalized a live worker
+		// `failed` on the push stream the moment it paused between turns (review:
+		// push-vs-sweep inconsistency). If it committed, that's a candidate; else
+		// it's ambiguous — keep the current state and let the brain classify (the
+		// designed handling), never an unconditional failed.
+		if s.HeadChanged {
+			return core.WorkerCompletedCandidate, false
+		}
+		return cur, true
 	default:
 		return cur, true // signals inconclusive
 	}
