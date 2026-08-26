@@ -145,6 +145,25 @@ func TestCmd_HelpAndUnknown(t *testing.T) {
 	require.Contains(t, strings.ToLower(lastSent(api)), "unknown command")
 }
 
+// A new-issue /dispatch from General opens the issue's topic immediately (not
+// lazily on the first escalation) and posts the starter card INTO that topic.
+func TestCmd_DispatchNewIssueOpensTopic(t *testing.T) {
+	b, api, _, _ := newTestBot(t)
+	b.handleMessage(context.Background(), &Message{Text: "/dispatch /srv/app.git add health endpoint", From: &User{ID: allowedUID}})
+
+	require.NotEmpty(t, api.created, "a forum topic is created for the new issue")
+	// the origin-channel reply points to the opened topic
+	require.Contains(t, lastSent(api), "opened its topic")
+	// a starter card was posted into a topic thread (thread != 0)
+	var starterInTopic bool
+	for _, m := range api.sent {
+		if m.thread != 0 && strings.Contains(m.text, "issue started") {
+			starterInTopic = true
+		}
+	}
+	require.True(t, starterInTopic, "the 🚀 starter card lands in the issue's topic")
+}
+
 func TestCmd_ScanListsLiveAgents(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{
