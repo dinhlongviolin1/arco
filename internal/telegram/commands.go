@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/prompts"
 )
 
 const helpText = `arco — drive the fleet from Telegram
@@ -309,12 +310,15 @@ func (b *Bot) chatPrompt(text string) string {
 	if len(b.vms) > 0 {
 		vms = fmt.Sprintf("%d — %s", len(b.vms), strings.Join(b.vms, "; "))
 	}
-	return fmt.Sprintf(`You are arco, a supervisor daemon for a fleet of coding-agent workers, replying to your operator over Telegram. Be concise and practical. Answer ONLY from the facts below; do not invent fleet state.
-Attached VMs: %s.
-Active workers: %d. Pending decisions: %d.
-To START work the operator uses: /dispatch <repo> <task>. Other commands: /vms /status /sessions /workers /kill /diff /pause /resume. If they're asking to do something that maps to a command, tell them the exact command to send.
-Operator says: %q
-Reply:`, vms, active, pending, text)
+	// Wording lives in the editable prompts/defaults/chat.tmpl; code supplies the
+	// facts. On a (build-time) template error, fall back so chat never hard-fails.
+	out, err := prompts.Render("chat.tmpl", map[string]any{
+		"VMs": vms, "Active": active, "Pending": pending, "Message": text,
+	})
+	if err != nil {
+		return "You are arco, a fleet supervisor. Be concise. Operator says: " + text
+	}
+	return out
 }
 
 // resolveWorker finds the single worker whose id contains the given fragment
