@@ -17,7 +17,7 @@ import (
 )
 
 func newDispatchCmd() *cobra.Command {
-	var session, repo, base string
+	var session, repo, base, vm string
 	var newSession bool
 	cmd := &cobra.Command{
 		Use:   "dispatch <task>",
@@ -30,13 +30,16 @@ func newDispatchCmd() *cobra.Command {
 			if base != "" && repo == "" {
 				return fmt.Errorf("--base requires --repo (base is only used on the repo-spawn path)")
 			}
+			if vm != "" && repo == "" {
+				return fmt.Errorf("--vm requires --repo (VM targeting is only on the repo-spawn path)")
+			}
 			c, err := newClient()
 			if err != nil {
 				return err
 			}
 			res, err := c.Dispatch(context.Background(), api.DispatchReq{
 				Task: args[0], Session: session, New: newSession || session == "",
-				Repo: repo, Base: base,
+				Repo: repo, Base: base, Vm: vm,
 			})
 			if err != nil {
 				return err
@@ -49,6 +52,7 @@ func newDispatchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&newSession, "new", false, "force a new session")
 	cmd.Flags().StringVar(&repo, "repo", "", "clone this repo per-worker and take the spawn path (else the prompt path)")
 	cmd.Flags().StringVar(&base, "base", "", "commit-ish to check out (with --repo; default repo tip)")
+	cmd.Flags().StringVar(&vm, "vm", "", "VM to run the worker on (with --repo; \"\" = engine default)")
 	return cmd
 }
 
