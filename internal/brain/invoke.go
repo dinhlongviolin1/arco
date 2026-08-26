@@ -13,9 +13,14 @@ import (
 // so tests never shell out. DefaultRunner shells out to clavis.
 type Runner func(ctx context.Context, name string, args ...string) (stdout []byte, err error)
 
-// DefaultRunner runs the command for real (used by the daemon).
+// DefaultRunner runs the command for real (used by the daemon). WaitDelay bounds
+// the wait after ctx expires: clavis wraps the model CLI, and a grandchild that
+// inherited the stdout pipe would otherwise keep Output()'s Wait blocked past the
+// timeout — WaitDelay force-kills the group and closes the pipes (review Rank-2).
 func DefaultRunner(ctx context.Context, name string, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 10 * time.Second
+	return cmd.Output()
 }
 
 // Config selects the clavis profile + model for a brain call.
@@ -59,11 +64,18 @@ func Invoke(ctx context.Context, cfg Config, prompt string, run Runner) InvokeRe
 		}
 		return InvokeResult{Raw: raw, Err: err}
 	}
-	if isBilling(raw) {
-		return InvokeResult{Raw: raw, Billing: true}
-	}
+	// Parse FIRST on the success path. A VALID StepResult is authoritative even if
+	// its instruction/reason happens to mention a billing needle ("fix the billing
+	// module", a reason with "402") — checking isBilling(raw) before the parse
+	// would wrongly classify that as a wall and PARK a real step (review Rank-1).
 	step, perr := ParseStep(raw)
 	if perr != nil {
+		// Unparseable exit-0 stdout: a billing/quota wall clavis printed with a
+		// zero exit looks like this — classify it here, where it can't shadow a
+		// valid step.
+		if isBilling(raw) {
+			return InvokeResult{Raw: raw, Billing: true}
+		}
 		return InvokeResult{Raw: raw, Malformed: true, Err: perr}
 	}
 	return InvokeResult{Step: step, Raw: raw}

@@ -210,7 +210,11 @@ func (q *Queue) integrate(ctx context.Context, it Item, worktree string) (reason
 		// build/test scripts, so also strip the operator's SSH agent / GPG keyring
 		// (SSH_AUTH_SOCK/GNUPGHOME) — else a hostile Makefile could push/sign/ssh
 		// AS the operator.
-		cmd.Env = append(spawnenv.ScrubWorker(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+		// Neuter host gitconfig for any git the worker's build/test shells out to —
+		// else the operator's global config (url.insteadOf redirect, filters,
+		// aliases) applies to worker-controlled code (review mergeq-3). Mirrors git().
+		cmd.Env = append(spawnenv.ScrubWorker(os.Environ()), "GIT_TERMINAL_PROMPT=0",
+			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return "test gate failed", string(out)
 		}

@@ -82,3 +82,19 @@ func TestInvoke_BillingInStdoutOnly(t *testing.T) {
 	res := Invoke(context.Background(), Config{Profile: "p", Model: "m"}, "x", run)
 	require.True(t, res.Billing)
 }
+
+// A VALID StepResult whose content mentions a billing needle must NOT be
+// misclassified as a wall (review Rank-1) — else a real step is parked.
+func TestInvoke_ValidStepMentioningBillingIsNotBilling(t *testing.T) {
+	for _, body := range []string{
+		`{"kind":"dispatch","worker":"w1","instruction":"fix the billing module"}`,
+		`{"kind":"run_again","instruction":"retry","reason":"process 402 records then stop"}`,
+		`{"kind":"question","instruction":"which quota exceeded path?"}`,
+	} {
+		run := func(_ context.Context, _ string, _ ...string) ([]byte, error) { return []byte(body), nil }
+		res := Invoke(context.Background(), Config{Profile: "p", Model: "m"}, "x", run)
+		require.False(t, res.Billing, "valid step must not be billing: %s", body)
+		require.NoError(t, res.Err)
+		require.NotEmpty(t, res.Step.Kind)
+	}
+}
