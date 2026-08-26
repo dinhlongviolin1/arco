@@ -1,9 +1,9 @@
 // Package prompts holds arco's model-facing prompt TEXT as editable template
 // files, separate from code — so the wording (the brain's decision instruction,
-// the operator chat persona, the rollup directive) can be tuned without touching
-// or recompiling Go. Defaults are embedded (the binary is self-contained); an
-// operator can override any of them by dropping a same-named file in the prompts
-// override dir (see Load), picked up on the next daemon start.
+// the operator chat persona, the rollup directive) can be tuned in the codebase
+// without threading string literals through Go. The files are embedded at build
+// time, so the production binary is self-contained: to change wording you edit
+// the .tmpl and rebuild.
 //
 // Code keeps the LOGIC (what data to gather, budget/trim, ordering, redaction);
 // these files keep the WORDING. A template may use {{.Field}} placeholders for
@@ -14,78 +14,33 @@ import (
 	"bytes"
 	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"text/template"
 )
 
 //go:embed defaults/*.tmpl
 var defaultsFS embed.FS
 
-var (
-	mu     sync.RWMutex
-	active *template.Template // parsed set: embedded defaults, optionally overlaid by Load
-)
+// tmpl is the parsed embedded set. Set once at init and read-only thereafter, so
+// Render needs no lock.
+var tmpl *template.Template
 
 func init() {
-	t, err := parseEmbedded()
+	t, err := template.New("prompts").ParseFS(defaultsFS, "defaults/*.tmpl")
 	if err != nil {
 		panic("prompts: embedded defaults failed to parse: " + err.Error())
 	}
-	active = t
-}
-
-func parseEmbedded() (*template.Template, error) {
-	return template.New("prompts").ParseFS(defaultsFS, "defaults/*.tmpl")
-}
-
-// Load re-parses the embedded defaults and overlays any *.tmpl in dir (each
-// overriding the embedded default of the same base name), making prompt wording
-// editable at runtime without a recompile. An empty dir, or a dir that doesn't
-// exist, is fine — defaults stand. A malformed override file is an error (fail
-// loud rather than silently ignore a broken edit).
-func Load(dir string) error {
-	t, err := parseEmbedded()
-	if err != nil {
-		return err
-	}
-	if dir != "" {
-		entries, derr := os.ReadDir(dir)
-		if derr != nil && !os.IsNotExist(derr) {
-			return fmt.Errorf("prompts: read override dir %q: %w", dir, derr)
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".tmpl") {
-				continue
-			}
-			b, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
-			if rerr != nil {
-				return fmt.Errorf("prompts: read override %q: %w", e.Name(), rerr)
-			}
-			if _, perr := t.New(e.Name()).Parse(string(b)); perr != nil {
-				return fmt.Errorf("prompts: parse override %q: %w", e.Name(), perr)
-			}
-		}
-	}
-	mu.Lock()
-	active = t
-	mu.Unlock()
-	return nil
+	tmpl = t
 }
 
 // Render executes the named template (e.g. "chat.tmpl") with data and returns
 // the text. Unknown name is an error.
 func Render(name string, data any) (string, error) {
-	mu.RLock()
-	t := active
-	mu.RUnlock()
-	if t.Lookup(name) == nil {
+	if tmpl.Lookup(name) == nil {
 		return "", fmt.Errorf("prompts: no template %q", name)
 	}
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, name, data); err != nil {
+	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		return "", fmt.Errorf("prompts: render %q: %w", name, err)
 	}
 	return buf.String(), nil
