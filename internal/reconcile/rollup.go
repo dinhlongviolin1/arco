@@ -7,6 +7,7 @@ import (
 
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/prompts"
 )
 
 // Supersession rollup (build-guide-rev6 PASS-3, plan Decision B). When a
@@ -164,7 +165,6 @@ func assembleRollupContext(parent core.Worker, s core.Session, children []core.W
 		fmt.Fprintf(&b, "  - %s state=%s task=%q summary=%q\n",
 			c.ID, c.State, truncate(c.Task, eventPayloadCap), truncate(c.Summary, eventPayloadCap))
 	}
-	b.WriteString("Given these sub-worker results, decide the parent's next step and reply with a JSON StepResult " +
-		`{"kind":"run_again|dispatch|handoff|final_output|question|confirm","instruction":"...","reason":"..."}.`)
+	b.WriteString(prompts.MustText("rollup.tmpl"))
 	return b.String()
 }

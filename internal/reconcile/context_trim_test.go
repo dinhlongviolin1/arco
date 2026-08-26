@@ -26,7 +26,7 @@ func TestAssembleContext_BudgetHoldsUnderQuoteEscaping(t *testing.T) {
 
 	require.LessOrEqual(t, len(a), contextBudget)
 	require.Contains(t, a, "newest_event")
-	require.True(t, strings.HasSuffix(a, stepInstruction), "trailer is never trimmed")
+	require.True(t, strings.HasSuffix(a, classifyInstruction()), "trailer is never trimmed")
 	require.Equal(t, a, assembleContext(w, s, events, evil, evil), "byte-stable under trimming")
 }
 

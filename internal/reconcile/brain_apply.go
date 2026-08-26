@@ -13,6 +13,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/brain"
 	"github.com/dinhlongviolin1/arco/internal/core"
 	"github.com/dinhlongviolin1/arco/internal/notify"
+	"github.com/dinhlongviolin1/arco/internal/prompts"
 )
 
 // brainClassify runs a short-lived brain call for an ambiguous worker OFF the
@@ -173,26 +174,21 @@ const (
 
 	truncMarker = "…(truncated)"
 
-	// stepInstruction is the trailer that tells the brain what to emit. It is
-	// never trimmed — a prompt without it is a wasted call.
-	stepInstruction = "Decide the next step and reply with a JSON StepResult " +
-		`{"kind":"run_again|dispatch|handoff|final_output|question|confirm","instruction":"...","reason":"..."}.`
-
-	// maxProse bounds the whole pre-events region. The fixed per-section caps
-	// below already sum well under it; this is the backstop for the one input
-	// whose ENCODED size isn't statically bounded by its cap (a %q-quoted task
-	// full of escapes), so the budget holds no matter what the ledger holds.
-	// truncMarker+1 covers what the backstop truncate itself may append.
-	maxProse = contextBudget - len(stepInstruction) - eventFloor - len(truncMarker) - 1
-
 	eventsHeader = "Recent events (oldest→newest):\n"
 )
 
-// Compile-time proof that the fixed per-section caps (plus slack for the section
-// labels and the worker header's id/state/lineage) fit inside maxProse: if they
-// ever stop fitting, this constant goes negative and fails to compile as a uint
-// rather than silently starting to truncate the memory tier at runtime.
-const _ = uint(maxProse - (4*(fieldCap+len(truncMarker)) + 2*(memoryCap+len(truncMarker)) + 512))
+// fixedSectionFloor is the byte room the fixed prose sections (4 fieldCap blocks
+// + 2 memory blocks + slack for labels and the worker header) need inside
+// maxProse. assembleContext asserts maxProse stays above it — the runtime
+// successor to the old compile-time proof, now that the step instruction
+// (hence maxProse) is loaded from an editable prompt file, not a const.
+const fixedSectionFloor = 4*(fieldCap+len(truncMarker)) + 2*(memoryCap+len(truncMarker)) + 512
+
+// classifyInstruction is the trailer that tells the brain what to emit — the
+// StepResult output contract. Its WORDING lives in prompts/defaults/classify.tmpl
+// (editable), but it is coupled to the prompt budget below, so it is rendered
+// here rather than free prose. Never trimmed: a prompt without it is a wasted call.
+func classifyInstruction() string { return prompts.MustText("classify.tmpl") }
 
 // assembleContext builds the side-effect-free decision prompt from the worker,
 // its owning session (goal + durable Facts/ContextSummary), the always-hot
@@ -208,6 +204,14 @@ const _ = uint(maxProse - (4*(fieldCap+len(truncMarker)) + 2*(memoryCap+len(trun
 // then events fill the remainder NEWEST-first (dropping the oldest that don't
 // fit) and are emitted oldest→newest.
 func assembleContext(w core.Worker, s core.Session, events []core.Event, userMD, indexMD string) string {
+	// The step instruction (output contract) is loaded from the editable prompt
+	// file; maxProse — the pre-events budget — is derived from its length, exactly
+	// as the old const did. Guard against an over-long override eating the floor.
+	stepInstruction := classifyInstruction()
+	maxProse := contextBudget - len(stepInstruction) - eventFloor - len(truncMarker) - 1
+	if maxProse < fixedSectionFloor {
+		maxProse = fixedSectionFloor // degrade safely rather than truncate below the fixed sections
+	}
 	var p strings.Builder
 	fmt.Fprintf(&p, "Worker %s state=%s task=%q", w.ID, w.State, truncate(w.Task, fieldCap))
 	if w.DelegationDepth > 0 {
