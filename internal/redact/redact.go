@@ -30,7 +30,11 @@ var patterns = []pattern{
 	{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`)},
 	{"anthropic-key", regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_-]{20,}\b`)},
 	// OpenAI: legacy sk-… and current sk-proj-/sk-svcacct-/sk-admin-… (opus P2-2).
-	{"openai-key", regexp.MustCompile(`sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`)},
+	// The leading \b stops a mid-word "sk-" in benign kebab prose (e.g.
+	// "task-force-alpha-bravo-…") from being mangled — a real key is always at a
+	// word boundary (review P3).
+	{"openai-key", regexp.MustCompile(`\bsk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}`)},
+	{"google-api-key", regexp.MustCompile(`\bAIza[A-Za-z0-9_-]{35}\b`)},
 	{"aws-access-key", regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`)},
 	{"slack-token", regexp.MustCompile(`\bxox[abceprs]-[A-Za-z0-9-]{10,}\b`)}, // incl. modern xoxc- (browser) / xoxe- (refresh)
 	{"private-key", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)},

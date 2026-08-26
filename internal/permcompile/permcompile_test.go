@@ -172,6 +172,12 @@ func TestCompile_HookBlocksRefspecPush(t *testing.T) {
 	}
 	require.Contains(t, run(`{"tool":"Bash","command":"git push origin HEAD:main"}`), `"deny"`)
 	require.Contains(t, run(`{"tool":"Bash","command":"git push origin +master"}`), `"deny"`)
+	// Full-ref refspec form — the bypass the space/colon/plus globs missed (review
+	// HIGH-1): `git push origin refs/heads/main` has no " main"/":main"/"+main".
+	require.Contains(t, run(`{"tool":"Bash","command":"git push origin refs/heads/main"}`), `"deny"`)
+	require.Contains(t, run(`{"tool":"Bash","command":"git push origin HEAD:refs/heads/master"}`), `"deny"`)
+	// A legitimately-named feature branch must NOT be over-blocked.
+	require.NotContains(t, run(`{"tool":"Bash","command":"git push origin feature/login"}`), `"deny"`)
 }
 
 // ManagedSettings is the deny-only, non-overridable layer (P3): it must contain

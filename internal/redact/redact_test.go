@@ -17,6 +17,9 @@ func TestScrub_GoldenCorpus(t *testing.T) {
 		{"anthropic", "ANTHROPIC=sk-ant-api03-abcdefghijklmnop1234567890 x", "sk-ant-api03-abcdefghijklmnop1234567890"},
 		{"openai", "key sk-abcdefghijklmnopqrstuvwxyz012345 done", "sk-abcdefghijklmnopqrstuvwxyz012345"},
 		{"aws", "AKIAIOSFODNN7EXAMPLE creds", "AKIAIOSFODNN7EXAMPLE"},
+		// AIza + exactly 35 body chars; concatenated so the literal isn't a
+		// contiguous google-key token (push-protection false-positive).
+		{"google-api-key", "key AI" + "za" + "SyA1234567890abcdefghijklmnopqrstuv end", "AI" + "za" + "SyA1234567890abcdefghijklmnopqrstuv"},
 		{"openai-proj", "key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890 done", "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"},
 		// Modern OpenAI key SHAPE: base64url body with `_` and `-` — the shapes
 		// the old `[A-Za-z0-9]{20,}\b` pattern silently failed on (rev20 #19).
@@ -63,6 +66,9 @@ func TestScrub_NoFalsePositives(t *testing.T) {
 		`{"deadline":"1700000000:abcdefghijklmnopqrstuvwxyz01234"}`,
 		"clone ssh://git@github.com/x/y.git",
 		"remote git@github.com:org/repo.git",
+		// benign kebab-case prose with a mid-word "sk-": the \b anchor must stop
+		// the openai-key pattern from mangling it (review P3).
+		"task-force-alpha-bravo-charlie-delta-echo-foxtrot",
 	} {
 		out, n := New().Scrub(in)
 		require.Equal(t, 0, n, "benign input redacted: %q", in)
