@@ -110,7 +110,7 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 		}
 	}
 	// (3) conversational brain reply.
-	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(text))
+	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(ctx, text))
 	if err != nil {
 		b.reply(ctx, m, "🤖 chat unavailable ("+err.Error()+") — try /help for commands")
 		return
@@ -387,8 +387,12 @@ func (b *Bot) cmdAdopt(ctx context.Context, arg string) string {
 	return fmt.Sprintf("👁 adopted %s as worker %s (session %s)\nmonitor-only (manual mode): arco tracks liveness + relays, but didn't launch it so it can't enforce grants.", arg, short(wid), short(sid))
 }
 
-// chatPrompt frames a conversational brain call with light fleet context.
-func (b *Bot) chatPrompt(text string) string {
+// chatPrompt frames a conversational brain call with light fleet context. It
+// includes the LIVE herdr agent sessions (from /scan) so a natural-language
+// question like "how many claude sessions are running?" is answered from real
+// fleet state — not just arco's own ledger (which only counts workers arco
+// launched, and would wrongly say "0" while other herdr sessions run).
+func (b *Bot) chatPrompt(ctx context.Context, text string) string {
 	workers, _ := b.store.ListWorkers(core.WorkerFilter{})
 	active, pending := 0, 0
 	for _, w := range workers {
@@ -406,12 +410,37 @@ func (b *Bot) chatPrompt(text string) string {
 	// Wording lives in the editable prompts/defaults/chat.tmpl; code supplies the
 	// facts. On a (build-time) template error, fall back so chat never hard-fails.
 	out, err := prompts.Render("chat.tmpl", map[string]any{
-		"VMs": vms, "Active": active, "Pending": pending, "Message": text,
+		"VMs": vms, "Active": active, "Pending": pending,
+		"HerdrSessions": b.herdrSessionFacts(ctx), "Message": text,
 	})
 	if err != nil {
 		return "You are arco, a fleet supervisor. Be concise. Operator says: " + text
 	}
 	return out
+}
+
+// herdrSessionFacts summarizes the LIVE herdr agent sessions on the fleet (the
+// /scan data) for the chat context: kind, status, cwd, and whether arco tracks
+// it. This is what lets the brain answer "what claude sessions are running?"
+// including ones arco didn't launch (this very session, a sysadmin session, …).
+func (b *Bot) herdrSessionFacts(ctx context.Context) string {
+	agents, err := b.actions.Scan(ctx)
+	if err != nil {
+		return "unavailable (herdr scan failed: " + err.Error() + ")"
+	}
+	if len(agents) == 0 {
+		return "none detected"
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%d live —", len(agents))
+	for _, a := range agents {
+		track := "untracked by arco"
+		if a.Tracked {
+			track = "tracked as " + short(a.WorkerID)
+		}
+		fmt.Fprintf(&sb, " • %s [%s] on %s cwd=%s (%s)", a.Kind, a.Status, vmLabel(a.VM), a.Cwd, track)
+	}
+	return sb.String()
 }
 
 // resolveWorker finds the single worker whose id contains the given fragment
