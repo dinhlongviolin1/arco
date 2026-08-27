@@ -169,6 +169,21 @@ func TestLive_SpawnIntoNewTopic(t *testing.T) {
 	require.NotNil(t, sess.TGTopicID, "the issue's Telegram topic was opened on dispatch")
 }
 
+// TestLive_ChatKnowsHerdrSessions: the chat context must include the REAL live
+// herdr sessions (from /scan), so "how many claude sessions are running?" can be
+// answered — the gap the operator hit (chat said 0 because it only knew arco's
+// ledger). Also posts the real brain answer to General when a brain is set.
+func TestLive_ChatKnowsHerdrSessions(t *testing.T) {
+	bot, _, _, user := buildLiveBot(t)
+	p := bot.chatPrompt(context.Background(), "how many claude sessions are running?")
+	t.Logf("live chat context:\n%s", p)
+	require.Contains(t, p, "Live herdr agent sessions")
+	require.Contains(t, p, "live —", "the real running herdr sessions are injected into the chat context")
+	if os.Getenv("ARCO_BRAIN_PROFILE") != "" {
+		bot.handleMessage(context.Background(), &Message{Text: "how many claude/herdr sessions are running right now?", From: &User{ID: user}})
+	}
+}
+
 // TestLive_ManualTopicThenAct: manually create a topic, bind it to a session,
 // then drive a /status command inside that topic (operator working within a
 // pre-made topic).

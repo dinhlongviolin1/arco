@@ -164,6 +164,23 @@ func TestCmd_DispatchNewIssueOpensTopic(t *testing.T) {
 	require.True(t, starterInTopic, "the 🚀 starter card lands in the issue's topic")
 }
 
+// A natural-language chat question gets the LIVE herdr sessions in its context
+// (not just arco's own ledger), so "how many claude sessions are running?" can
+// be answered even when arco launched 0 workers.
+func TestChat_IncludesLiveHerdrSessions(t *testing.T) {
+	b, _, _, act := newTestBot(t)
+	act.scanOut = []ScannedAgent{
+		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Cwd: "/home/op/arco"},
+		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Cwd: "/home/op/sysadmin"},
+	}
+	b.handleMessage(context.Background(), &Message{Text: "how many claude sessions are running?", From: &User{ID: allowedUID}})
+	require.NotEmpty(t, act.chatPrompts, "chat routed to the brain")
+	p := act.chatPrompts[0]
+	require.Contains(t, p, "Live herdr agent sessions")
+	require.Contains(t, p, "2 live")
+	require.Contains(t, p, "/home/op/sysadmin", "the real herdr session cwds are in the brain context")
+}
+
 func TestCmd_ScanListsLiveAgents(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{
