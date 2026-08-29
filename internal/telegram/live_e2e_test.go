@@ -52,7 +52,7 @@ func (a liveEngineActions) Scan(ctx context.Context) ([]ScannedAgent, error) {
 	out := make([]ScannedAgent, 0, len(scan))
 	for _, s := range scan {
 		out = append(out, ScannedAgent{VM: s.VM, Ref: s.Ref, Workspace: s.Workspace, Kind: s.Kind,
-			Status: s.State, Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Tracked: s.Tracked, WorkerID: s.WorkerID})
+			Status: s.State, Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Alive: s.Alive, Tracked: s.Tracked, WorkerID: s.WorkerID})
 	}
 	return out, nil
 }
@@ -178,7 +178,7 @@ func TestLive_ChatKnowsHerdrSessions(t *testing.T) {
 	p := bot.chatPrompt(context.Background(), "how many claude sessions are running?")
 	t.Logf("live chat context:\n%s", p)
 	require.Contains(t, p, "Live herdr agent sessions")
-	require.Contains(t, p, "live —", "the real running herdr sessions are injected into the chat context")
+	require.Contains(t, p, " total (", "the real running herdr sessions are injected into the chat context")
 	if os.Getenv("ARCO_BRAIN_PROFILE") != "" {
 		bot.handleMessage(context.Background(), &Message{Text: "how many claude/herdr sessions are running right now?", From: &User{ID: user}})
 	}

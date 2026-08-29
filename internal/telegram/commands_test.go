@@ -170,40 +170,43 @@ func TestCmd_DispatchNewIssueOpensTopic(t *testing.T) {
 func TestChat_IncludesLiveHerdrSessions(t *testing.T) {
 	b, _, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Cwd: "/home/op/arco"},
-		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Cwd: "/home/op/sysadmin"},
+		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Cwd: "/home/op/arco", Alive: true},
+		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Cwd: "/home/op/sysadmin", Alive: true},
 	}
 	b.handleMessage(context.Background(), &Message{Text: "how many claude sessions are running?", From: &User{ID: allowedUID}})
 	require.NotEmpty(t, act.chatPrompts, "chat routed to the brain")
 	p := act.chatPrompts[0]
 	require.Contains(t, p, "Live herdr agent sessions")
-	require.Contains(t, p, "2 live")
+	require.Contains(t, p, "2 total (2 live")
 	require.Contains(t, p, "/home/op/sysadmin", "the real herdr session cwds are in the brain context")
 }
 
 func TestCmd_ScanListsLiveAgents(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Title: "review arco", Cwd: "/home/op/arco", SessionID: "3dca0eaf", Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
-		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Title: "pull latest", Cwd: "/home/op/sysadmin", SessionID: "0d64f4be"},
+		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Title: "review arco", Cwd: "/home/op/arco", SessionID: "3dca0eaf", Alive: true, Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Title: "pull latest", Cwd: "/home/op/sysadmin", SessionID: "0d64f4be", Alive: true},
+		{VM: "", Ref: "wQ:p1", Kind: "claude", Status: "done", Cwd: "/home/op/sysadmin"}, // finished pane
 	}
 	b.handleMessage(context.Background(), &Message{Text: "/scan", From: &User{ID: allowedUID}})
 	last := lastSent(api)
-	require.Contains(t, last, "live agent sessions (2)")
+	require.Contains(t, last, "herdr agent sessions (3 — 2 live, 1 done)")
 	require.Contains(t, last, "w5:p1")
 	require.Contains(t, last, "✅ tracked")
 	require.Contains(t, last, "🆓 untracked")
+	require.Contains(t, last, "🏁 finished")
 	require.Contains(t, last, "/adopt")
 }
 
 func TestCmd_AdoptAll_OnlyUntracked(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
-		{VM: "", Ref: "w5:p1"},
+		{VM: "", Ref: "w1:p1", Alive: true, Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
+		{VM: "", Ref: "w5:p1", Alive: true},
+		{VM: "", Ref: "wQ:p1", Status: "done"}, // finished — must be skipped by /adopt all
 	}
 	b.handleMessage(context.Background(), &Message{Text: "/adopt", From: &User{ID: allowedUID}})
-	require.Equal(t, []string{"w5:p1"}, act.adopts, "only untracked agents are adopted")
+	require.Equal(t, []string{"w5:p1"}, act.adopts, "only live untracked agents are adopted (done panes skipped)")
 	require.Contains(t, lastSent(api), "adopted")
 }
 

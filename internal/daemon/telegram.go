@@ -86,7 +86,7 @@ func (a engineActions) Scan(ctx context.Context) ([]telegram.ScannedAgent, error
 	for _, s := range scan {
 		out = append(out, telegram.ScannedAgent{
 			VM: s.VM, Ref: s.Ref, Workspace: s.Workspace, Kind: s.Kind, Status: s.State,
-			Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Tracked: s.Tracked, WorkerID: s.WorkerID,
+			Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Alive: s.Alive, Tracked: s.Tracked, WorkerID: s.WorkerID,
 		})
 	}
 	return out, nil
