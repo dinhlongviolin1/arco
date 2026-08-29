@@ -73,6 +73,7 @@ type ScannedAgent struct {
 	Cwd       string
 	Title     string
 	SessionID string // herdr agent-session id (CLI resume handle)
+	Alive     bool   // false = a finished (herdr "done") agent, shown but not adoptable
 	Tracked   bool
 	WorkerID  string
 }

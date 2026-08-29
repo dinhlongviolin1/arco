@@ -319,17 +319,30 @@ func (b *Bot) cmdScan(ctx context.Context) string {
 		return "scan failed: " + err.Error()
 	}
 	if len(agents) == 0 {
-		return "no live agent sessions found on the fleet"
+		return "no herdr agent sessions found on the fleet"
+	}
+	live, done, adoptable := 0, 0, 0
+	for _, a := range agents {
+		if a.Alive {
+			live++
+		} else {
+			done++
+		}
+		if a.Alive && !a.Tracked {
+			adoptable++
+		}
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "live agent sessions (%d):\n", len(agents))
-	untracked := 0
+	// Count matches what the operator sees in herdr (all panes), with live vs done
+	// broken out — a herdr "done" agent is a finished pane, still listed but inert.
+	fmt.Fprintf(&sb, "herdr agent sessions (%d — %d live, %d done):\n", len(agents), live, done)
 	for _, a := range agents {
 		mark := "🆓 untracked"
-		if a.Tracked {
+		switch {
+		case !a.Alive:
+			mark = "🏁 finished (pane lingering)"
+		case a.Tracked:
 			mark = "✅ tracked " + short(a.WorkerID)
-		} else {
-			untracked++
 		}
 		fmt.Fprintf(&sb, "\n• %s [%s] on %s — %s\n", a.Kind, a.Status, vmLabel(a.VM), mark)
 		if a.Title != "" {
@@ -344,8 +357,8 @@ func (b *Bot) cmdScan(ctx context.Context) string {
 		}
 		sb.WriteString("\n")
 	}
-	if untracked > 0 {
-		sb.WriteString("\nadopt with /adopt <pane> (or /adopt all to track every untracked one)")
+	if adoptable > 0 {
+		sb.WriteString("\nadopt with /adopt <pane> (or /adopt all to track every live untracked one)")
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
@@ -362,7 +375,7 @@ func (b *Bot) cmdAdopt(ctx context.Context, arg string) string {
 		}
 		var refs []string
 		for _, a := range agents {
-			if !a.Tracked {
+			if a.Alive && !a.Tracked { // skip finished (done) panes — nothing to monitor
 				refs = append(refs, a.Ref)
 			}
 		}
@@ -431,8 +444,14 @@ func (b *Bot) herdrSessionFacts(ctx context.Context) string {
 	if len(agents) == 0 {
 		return "none detected"
 	}
+	live := 0
+	for _, a := range agents {
+		if a.Alive {
+			live++
+		}
+	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%d live —", len(agents))
+	fmt.Fprintf(&sb, "%d total (%d live, %d finished/done) —", len(agents), live, len(agents)-live)
 	for _, a := range agents {
 		track := "untracked by arco"
 		if a.Tracked {

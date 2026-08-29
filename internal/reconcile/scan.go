@@ -66,9 +66,11 @@ func (e *Engine) ScanAgents(ctx context.Context) ([]ScannedAgent, error) {
 			continue // best-effort per VM
 		}
 		for _, a := range agents {
-			if !a.Alive {
-				continue
-			}
+			// Include TERMINAL (herdr "done") agents too, not just live ones: the
+			// operator counts every herdr pane, so hiding a finished-but-lingering
+			// agent makes /scan disagree with what they see in herdr ("I have three,
+			// it says two"). The scanned agent carries its status + Alive so the
+			// display can label it [done] and Adopt can refuse a non-live one.
 			wid := byRef[key(vmName, a.Ref)]
 			if wid == "" {
 				wid = byWS[key(vmName, a.Workspace)]
@@ -139,6 +141,11 @@ func (e *Engine) Adopt(ctx context.Context, ref string) (DispatchResult, error) 
 	if found.Tracked {
 		return DispatchResult{WorkerID: found.WorkerID, State: core.WorkerRunning},
 			fmt.Errorf("reconcile: agent %q is already tracked by worker %s", ref, found.WorkerID)
+	}
+	// A finished (herdr "done") agent has nothing left to monitor — refuse rather
+	// than register a "running" worker for an agent that already exited.
+	if !found.Alive {
+		return DispatchResult{}, fmt.Errorf("reconcile: agent %q is %s (finished) — nothing to adopt", ref, found.State)
 	}
 
 	sessionID := ulid.Make().String()

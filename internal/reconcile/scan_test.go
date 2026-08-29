@@ -61,11 +61,18 @@ func TestAdopt_UnknownRef(t *testing.T) {
 	require.Error(t, err)
 }
 
-// A dead (terminal-status) agent is not offered by scan — nothing to monitor.
-func TestScan_SkipsDeadAgents(t *testing.T) {
+// A finished (herdr "done") agent IS listed by scan — the operator counts every
+// herdr pane, so hiding it makes the count disagree with herdr ("I have three,
+// it says two"). It carries Alive=false so the UI labels it and Adopt refuses it.
+func TestScan_IncludesDeadAgentsButRefusesAdopt(t *testing.T) {
 	e, _, fake := newEngine(t)
-	fake.Agents = []core.AgentObs{{Ref: "w9:p1", Workspace: "w9", State: "done", Alive: false}}
+	fake.Agents = []core.AgentObs{{Ref: "w9:p1", Workspace: "w9", State: "done", Alive: false, Kind: "claude"}}
 	scan, err := e.ScanAgents(context.Background())
 	require.NoError(t, err)
-	require.Empty(t, scan)
+	require.Len(t, scan, 1)
+	require.False(t, scan[0].Alive, "a done agent is listed but marked not-alive")
+
+	_, err = e.Adopt(context.Background(), "w9:p1")
+	require.Error(t, err, "a finished agent has nothing to monitor")
+	require.Contains(t, err.Error(), "nothing to adopt")
 }
