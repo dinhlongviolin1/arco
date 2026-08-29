@@ -20,7 +20,7 @@ func TestRollupDefault(t *testing.T) {
 }
 
 func TestChatRender(t *testing.T) {
-	out, err := Render("chat.tmpl", map[string]any{"VMs": "1 — local", "Active": 0, "Pending": 2, "HerdrSessions": "2 live — claude [working]", "Message": "how many vms?"})
+	out, err := Render("chat.tmpl", map[string]any{"VMs": "1 — local", "Active": 0, "Pending": 2, "HerdrSessions": "2 live — claude [working]", "History": "none yet", "Message": "how many vms?"})
 	require.NoError(t, err)
 	require.Contains(t, out, "Attached VMs: 1 — local")
 	require.Contains(t, out, "Pending decisions: 2")

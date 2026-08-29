@@ -181,6 +181,29 @@ func TestChat_IncludesLiveHerdrSessions(t *testing.T) {
 	require.Contains(t, p, "/home/op/sysadmin", "the real herdr session cwds are in the brain context")
 }
 
+func TestCmd_PeekSummarizesSession(t *testing.T) {
+	b, api, _, act := newTestBot(t)
+	act.peekOut = "$ go test ./...\nok  arco/internal/reconcile"
+	b.handleMessage(context.Background(), &Message{Text: "/peek w5:p1", From: &User{ID: allowedUID}})
+	require.Equal(t, []string{"w5:p1"}, act.peeks)
+	require.Contains(t, lastSent(api), "peek w5:p1")
+	// the brain was asked to summarize the pane tail
+	require.NotEmpty(t, act.chatPrompts)
+	require.Contains(t, act.chatPrompts[len(act.chatPrompts)-1], "go test ./...")
+}
+
+// Chat carries short per-thread memory: the second turn's brain prompt includes
+// the first exchange, so a follow-up ("peek into it") can resolve.
+func TestChat_RemembersRecentTurns(t *testing.T) {
+	b, _, _, act := newTestBot(t)
+	act.chatReply = "There are 2 sessions in ~/arco and ~/sysadmin."
+	b.handleMessage(context.Background(), &Message{Text: "what sessions are running?", From: &User{ID: allowedUID}})
+	b.handleMessage(context.Background(), &Message{Text: "peek into it", From: &User{ID: allowedUID}})
+	require.Len(t, act.chatPrompts, 2)
+	require.Contains(t, act.chatPrompts[1], "what sessions are running?", "prior operator turn is in context")
+	require.Contains(t, act.chatPrompts[1], "~/sysadmin", "prior arco reply is in context")
+}
+
 func TestCmd_ScanListsLiveAgents(t *testing.T) {
 	b, api, _, act := newTestBot(t)
 	act.scanOut = []ScannedAgent{

@@ -195,6 +195,8 @@ type fakeActions struct {
 	chatReply   string
 	scanOut     []ScannedAgent
 	adopts      []string
+	peeks       []string
+	peekOut     string
 }
 
 func (a *fakeActions) AnswerQuestion(_ context.Context, escID, text string, scope core.Scope) error {
@@ -263,6 +265,15 @@ func (a *fakeActions) Adopt(_ context.Context, ref string) (string, string, erro
 	defer a.mu.Unlock()
 	a.adopts = append(a.adopts, ref)
 	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
+}
+func (a *fakeActions) Peek(_ context.Context, ref string) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.peeks = append(a.peeks, ref)
+	if a.peekOut == "" {
+		return "recent terminal output for " + ref, nil
+	}
+	return a.peekOut, nil
 }
 
 type fakeScrubber struct{}

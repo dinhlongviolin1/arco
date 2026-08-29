@@ -101,6 +101,42 @@ func (e *Engine) vmNames() []string {
 	return names
 }
 
+// PeekAgent returns the recent terminal output of a herdr agent's pane (a
+// read-only look at what a session is doing), resolving the agent + its VM by a
+// fresh scan so a bare pane ref / workspace / session-id all work. The raw
+// (scrubbed) pane text is returned for the caller to summarize.
+func (e *Engine) PeekAgent(ctx context.Context, ref string, lines int) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("reconcile: PeekAgent requires an agent ref")
+	}
+	scan, err := e.ScanAgents(ctx)
+	if err != nil {
+		return "", err
+	}
+	var found *ScannedAgent
+	for i := range scan {
+		if a := &scan[i]; a.Ref == ref || a.Workspace == ref || a.SessionID == ref {
+			found = a
+			break
+		}
+	}
+	if found == nil {
+		return "", fmt.Errorf("reconcile: no agent matches %q", ref)
+	}
+	c, err := e.vmFor(found.VM)
+	if err != nil || c == nil {
+		return "", fmt.Errorf("reconcile: peek: unresolvable VM for %q", ref)
+	}
+	out, err := c.ReadPane(ctx, found.Ref, lines)
+	if err != nil {
+		return "", err
+	}
+	if e.Redact != nil {
+		out, _ = e.Redact.Scrub(out) // a peeked pane may echo a secret — scrub before it leaves
+	}
+	return out, nil
+}
+
 // Adopt registers an existing, arco-UNMANAGED herdr agent as a MONITOR-ONLY
 // worker so arco tracks it internally — "the session is the same". ref is the
 // agent's backend handle (herdr pane id), its workspace id, or its agent-session

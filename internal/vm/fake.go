@@ -23,6 +23,8 @@ type Fake struct {
 	// Statuses maps a target to the AgentStatus the Fake reports ("" = unknown).
 	// Lets tests drive the busy-agent guard on redeliver.
 	Statuses map[string]string
+	// PaneReads maps a pane ref to canned terminal output for ReadPane (peek).
+	PaneReads map[string]string
 	// AliveOnPrompt models "the agent spawned but Prompt still returned an error"
 	// (ambiguous launch): a prompted workspace is thereafter reported alive.
 	AliveOnPrompt bool
@@ -93,6 +95,16 @@ func (f *Fake) AgentStatus(_ context.Context, target string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.Statuses[target], nil
+}
+
+// PaneReads maps a ref to canned terminal output for ReadPane (tests).
+func (f *Fake) ReadPane(_ context.Context, ref string, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.PaneReads == nil {
+		return "", nil
+	}
+	return f.PaneReads[ref], nil
 }
 
 func (f *Fake) Prompts() []Prompted {

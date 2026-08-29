@@ -16,6 +16,7 @@ read:
   /status                fleet summary (estop, active workers, pending)
   /vms                   the attached VMs (fleet hosts)
   /scan                  live herdr agent sessions across the fleet
+  /peek <pane>           summarize what a session is doing (reads its terminal)
   /sessions              list active sessions + their topics
   /workers               list workers by state
   /diff <worker>         a worker's redacted diff (id prefix ok)
@@ -52,6 +53,8 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 		b.reply(ctx, m, b.cmdScan(ctx))
 	case "/adopt":
 		b.reply(ctx, m, b.cmdAdopt(ctx, arg))
+	case "/peek":
+		b.reply(ctx, m, b.cmdPeek(ctx, arg))
 	case "/sessions":
 		b.reply(ctx, m, b.renderSessions())
 	case "/workers":
@@ -109,12 +112,14 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 			}
 		}
 	}
-	// (3) conversational brain reply.
-	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(ctx, text))
+	// (3) conversational brain reply — with short per-thread memory so follow-ups
+	// ("peek into it") resolve against the prior turns.
+	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(ctx, m.MessageThreadID, text))
 	if err != nil {
 		b.reply(ctx, m, "🤖 chat unavailable ("+err.Error()+") — try /help for commands")
 		return
 	}
+	b.recordChatTurn(m.MessageThreadID, text, reply)
 	b.reply(ctx, m, reply)
 }
 
@@ -311,6 +316,44 @@ func (b *Bot) renderVMs() string {
 	return strings.TrimRight(b2.String(), "\n")
 }
 
+// cmdPeek reads a herdr agent's recent terminal output and asks the brain to
+// summarize what the session is doing — "peek into it and get an idea". With no
+// arg, it peeks the single live agent (if exactly one).
+func (b *Bot) cmdPeek(ctx context.Context, arg string) string {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		agents, err := b.actions.Scan(ctx)
+		if err != nil {
+			return "peek failed (scan): " + err.Error()
+		}
+		var live []ScannedAgent
+		for _, a := range agents {
+			if a.Alive {
+				live = append(live, a)
+			}
+		}
+		if len(live) == 1 {
+			arg = live[0].Ref
+		} else {
+			return "usage: /peek <pane> — several live sessions, name one (see /scan)"
+		}
+	}
+	out, err := b.actions.Peek(ctx, arg)
+	if err != nil {
+		return "peek failed: " + err.Error()
+	}
+	if strings.TrimSpace(out) == "" {
+		return "peeked " + arg + " — pane is empty / no recent output"
+	}
+	// Ask the brain to summarize the terminal tail; fall back to the raw tail if
+	// the brain is unavailable so /peek still gives the operator something.
+	summary, berr := b.actions.BrainReply(ctx, "This is the recent terminal output of a coding-agent session. In 2-4 sentences, say what it appears to be working on and its current state. Do not invent details.\n\n"+truncate(out, 6000))
+	if berr != nil || strings.TrimSpace(summary) == "" {
+		return "peek " + arg + " (raw tail):\n\n" + truncate(out, tgMessageCap-40)
+	}
+	return "👁 peek " + arg + ":\n" + summary
+}
+
 // cmdScan lists the live herdr agent sessions across the fleet, marking which
 // arco already tracks and how to adopt the rest.
 func (b *Bot) cmdScan(ctx context.Context) string {
@@ -405,7 +448,7 @@ func (b *Bot) cmdAdopt(ctx context.Context, arg string) string {
 // question like "how many claude sessions are running?" is answered from real
 // fleet state — not just arco's own ledger (which only counts workers arco
 // launched, and would wrongly say "0" while other herdr sessions run).
-func (b *Bot) chatPrompt(ctx context.Context, text string) string {
+func (b *Bot) chatPrompt(ctx context.Context, threadID int64, text string) string {
 	workers, _ := b.store.ListWorkers(core.WorkerFilter{})
 	active, pending := 0, 0
 	for _, w := range workers {
@@ -424,12 +467,40 @@ func (b *Bot) chatPrompt(ctx context.Context, text string) string {
 	// facts. On a (build-time) template error, fall back so chat never hard-fails.
 	out, err := prompts.Render("chat.tmpl", map[string]any{
 		"VMs": vms, "Active": active, "Pending": pending,
-		"HerdrSessions": b.herdrSessionFacts(ctx), "Message": text,
+		"HerdrSessions": b.herdrSessionFacts(ctx), "History": b.chatHistory(threadID), "Message": text,
 	})
 	if err != nil {
 		return "You are arco, a fleet supervisor. Be concise. Operator says: " + text
 	}
 	return out
+}
+
+// chatHistory renders the recent per-thread conversation for the brain context
+// ("none yet" when the thread is fresh) so a follow-up resolves against it.
+func (b *Bot) chatHistory(threadID int64) string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	turns := b.chatHist[threadID]
+	if len(turns) == 0 {
+		return "none yet"
+	}
+	var sb strings.Builder
+	for _, t := range turns {
+		fmt.Fprintf(&sb, "\n  operator: %s\n  arco: %s", truncate(t.user, 300), truncate(t.bot, 400))
+	}
+	return sb.String()
+}
+
+// recordChatTurn appends an exchange to the thread's history, capped at
+// maxChatTurns (oldest dropped). In-memory; resets on daemon restart.
+func (b *Bot) recordChatTurn(threadID int64, user, bot string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	h := append(b.chatHist[threadID], chatTurn{user: user, bot: bot})
+	if len(h) > maxChatTurns {
+		h = h[len(h)-maxChatTurns:]
+	}
+	b.chatHist[threadID] = h
 }
 
 // herdrSessionFacts summarizes the LIVE herdr agent sessions on the fleet (the
