@@ -59,6 +59,9 @@ type Actions interface {
 	// monitor-only arco worker so arco tracks it internally (the /adopt command),
 	// returning the new worker + session ids.
 	Adopt(ctx context.Context, ref string) (workerID, sessionID string, err error)
+	// Peek returns the recent terminal output of a herdr agent's pane (the /peek
+	// command — a read-only look at what a session is doing).
+	Peek(ctx context.Context, ref string) (string, error)
 }
 
 // ScannedAgent is one live herdr agent for the /scan + /adopt display. Mirrors
@@ -125,7 +128,16 @@ type Bot struct {
 	closed   map[string]bool        // sessions whose topic we've already closed (idempotence)
 	escMsg   map[string]int64       // escalation id → its card message id (to edit on resolve)
 	msgEsc   map[int64]string       // reverse: card message id → escalation id (swipe-reply routing)
+	chatHist map[int64][]chatTurn   // per-thread recent chat turns (conversational memory)
 }
+
+// chatTurn is one operator↔arco exchange, kept per thread so a follow-up like
+// "peek into it" resolves against the prior turn (the brain is otherwise
+// stateless — each call is one-shot).
+type chatTurn struct{ user, bot string }
+
+// maxChatTurns bounds the per-thread history fed back into the brain prompt.
+const maxChatTurns = 5
 
 // New builds a Bot from cfg.
 func New(cfg Config) *Bot {
@@ -147,6 +159,7 @@ func New(cfg Config) *Bot {
 		closed:   map[string]bool{},
 		escMsg:   map[string]int64{},
 		msgEsc:   map[int64]string{},
+		chatHist: map[int64][]chatTurn{},
 	}
 }
 

@@ -27,6 +27,7 @@ var menuCommands = []BotCommand{
 	{"status", "fleet summary (estop, active workers, pending)"},
 	{"vms", "list the attached VMs (fleet hosts)"},
 	{"scan", "live herdr agent sessions across the fleet"},
+	{"peek", "summarize what a session is doing: /peek <pane>"},
 	{"workers", "list active workers"},
 	{"sessions", "list active sessions"},
 	{"dispatch", "start a worker: /dispatch <repo> <task>"},

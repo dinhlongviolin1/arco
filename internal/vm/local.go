@@ -256,6 +256,24 @@ func (l *LocalVMClient) Kill(ctx context.Context, target string) error {
 	return err
 }
 
+// ReadPane returns the recent terminal output of a pane (`herdr pane read`), a
+// read-only peek. Plain text (ANSI stripped), most-recent `lines` rows. herdr's
+// `pane read` prints the snapshot directly (not a JSON envelope), so the bytes
+// are returned as-is.
+func (l *LocalVMClient) ReadPane(ctx context.Context, ref string, lines int) (string, error) {
+	if ref == "" {
+		return "", fmt.Errorf("vm: ReadPane requires a pane ref")
+	}
+	if lines <= 0 {
+		lines = 60
+	}
+	out, err := l.herdrRun(ctx, "pane", "read", ref, "--source", "recent", "--lines", strconv.Itoa(lines), "--format", "text")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // PromptReady delivers the initial prompt to a JUST-LAUNCHED agent reliably.
 // `herdr agent prompt --wait` requires an observed state change (the agent
 // reacting) within the timeout, else returns agent_prompt_stalled — so a prompt

@@ -60,6 +60,9 @@ func (a liveEngineActions) Adopt(ctx context.Context, ref string) (string, strin
 	res, err := a.e.Adopt(ctx, ref)
 	return res.WorkerID, res.SessionID, err
 }
+func (a liveEngineActions) Peek(ctx context.Context, ref string) (string, error) {
+	return a.e.PeekAgent(ctx, ref, 80)
+}
 
 // liveStore adapts a real ledger store to telegram.Store.
 type liveStore struct{ s core.Store }
@@ -175,7 +178,7 @@ func TestLive_SpawnIntoNewTopic(t *testing.T) {
 // ledger). Also posts the real brain answer to General when a brain is set.
 func TestLive_ChatKnowsHerdrSessions(t *testing.T) {
 	bot, _, _, user := buildLiveBot(t)
-	p := bot.chatPrompt(context.Background(), "how many claude sessions are running?")
+	p := bot.chatPrompt(context.Background(), 0, "how many claude sessions are running?")
 	t.Logf("live chat context:\n%s", p)
 	require.Contains(t, p, "Live herdr agent sessions")
 	require.Contains(t, p, " total (", "the real running herdr sessions are injected into the chat context")

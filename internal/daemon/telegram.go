@@ -101,6 +101,11 @@ func (a engineActions) Adopt(ctx context.Context, ref string) (workerID, session
 	return res.WorkerID, res.SessionID, nil
 }
 
+// Peek reads a herdr agent's recent terminal output (read-only).
+func (a engineActions) Peek(ctx context.Context, ref string) (string, error) {
+	return a.eng.PeekAgent(ctx, ref, 80)
+}
+
 // tgStore adapts core.Store to telegram.Store: reads go through Reader(); the
 // topic-id binding runs in a one-statement write tx.
 type tgStore struct{ s core.Store }

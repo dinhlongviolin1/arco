@@ -347,6 +347,10 @@ type VMClient interface {
 	// "" as unknown and decide themselves.
 	AgentStatus(ctx context.Context, target string) (string, error)
 	Kill(ctx context.Context, workspace string) error
+	// ReadPane returns the recent terminal output of an agent's pane (herdr `pane
+	// read`), up to lines rows — a READ-ONLY peek used to summarize what a session
+	// is doing. Best-effort: "" + error when the backend can't read it.
+	ReadPane(ctx context.Context, ref string, lines int) (string, error)
 	// Launch starts a NEW agent per spec and returns the backend's agent handle
 	// (herdr pane_id, the ref for sweep correlation) AND its stable identity
 	// (bootID = herdr terminal_id) captured at launch, so the identity guard is
