@@ -31,14 +31,11 @@ const (
 	Operator Access = iota
 	// BrainSafe tools are read-only / idempotent: always brain-callable.
 	BrainSafe
-	// BrainAct tools mutate fleet or ledger state. The INTENDED contract is that a
-	// host degrades a disallowed BrainAct call to an operator escalation (never
-	// silently executed, never silently hidden). NOTE: the only host today is the
-	// read-only text-protocol loop (internal/toolloop), which does NOT expose or
-	// execute BrainAct — it is reserved for a native-tool-use host with a grant +
-	// escalation path (a later phase). So declaring a tool BrainAct today makes it
-	// invisible to chat, not escalatable. Port read-only features as BrainSafe; a
-	// mutating feature (adopt/kill/dispatch) waits on that host.
+	// BrainAct tools mutate fleet or ledger state. The brain may PROPOSE them, but
+	// whether one runs is the operator's per-feature policy ([Gate.Mode], default
+	// confirm): auto runs it, off refuses it, confirm posts a Telegram ✅/❌ card and
+	// runs it only on the operator's approval. The read-only tool-loop never
+	// executes a BrainAct tool without that gate.
 	BrainAct
 )
 
@@ -50,6 +47,30 @@ func (a Access) String() string {
 		return "brain-act"
 	default:
 		return "operator"
+	}
+}
+
+// Mode is the operator-configured execution policy for a mutating (BrainAct)
+// tool when the brain proposes it in chat. Read-only tools ignore it.
+type Mode string
+
+const (
+	// ModeAuto executes the proposed action immediately.
+	ModeAuto Mode = "auto"
+	// ModeConfirm posts a Telegram card and executes only on the operator's ✅.
+	ModeConfirm Mode = "confirm"
+	// ModeOff refuses: the operator must run the slash command themselves.
+	ModeOff Mode = "off"
+)
+
+// ParseMode maps a config string to a Mode, defaulting to def for empty/unknown
+// input (so a typo fails safe toward the caller's default, not toward auto).
+func ParseMode(s string, def Mode) Mode {
+	switch Mode(s) {
+	case ModeAuto, ModeConfirm, ModeOff:
+		return Mode(s)
+	default:
+		return def
 	}
 }
 
@@ -86,6 +107,17 @@ type Tool struct {
 	Schema json.RawMessage // JSON Schema for args (nil = takes no arguments)
 	Access Access
 	Call   func(ctx context.Context, args json.RawMessage) (result string, err error)
+}
+
+// Gate is the per-turn policy + confirmation channel for MUTATING (BrainAct)
+// tools, supplied by the surface that starts a brain conversation (Telegram). The
+// tool-loop consults Mode(name) for each proposed mutating tool: auto → run it,
+// off → refuse, confirm → hand it to Confirm (which posts an approval card and
+// returns the message to relay to the model; the action runs only when the
+// operator approves). A zero Gate (nil funcs) means all mutating tools are off.
+type Gate struct {
+	Mode    func(toolName string) Mode
+	Confirm func(ctx context.Context, t Tool, args json.RawMessage) (result string, err error)
 }
 
 // Feature is a struct of optional declarations — a bundle fills only the

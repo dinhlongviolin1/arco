@@ -195,7 +195,7 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 	// rather than arco pre-stuffing facts. With no registry/tools it falls back to
 	// the one-shot reply. Both keep the short per-thread memory so a follow-up
 	// ("peek into it") resolves against prior turns.
-	reply, err := b.chatReply(ctx, m.MessageThreadID, text)
+	reply, err := b.chatReply(ctx, m, text)
 	if err != nil {
 		b.reply(ctx, m, "🤖 chat unavailable ("+err.Error()+") — try /help for commands")
 		return
@@ -206,10 +206,12 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 
 // chatReply produces the conversational answer: the agentic tool-loop when brain
 // tools are registered, else the legacy one-shot brain call.
-func (b *Bot) chatReply(ctx context.Context, threadID int64, text string) (string, error) {
+func (b *Bot) chatReply(ctx context.Context, m *Message, text string) (string, error) {
+	threadID := m.MessageThreadID
 	if b.reg != nil {
 		if tools := b.reg.ForBrain(); len(tools) > 0 {
-			return b.actions.Converse(ctx, chatSystemPreamble, b.chatContext(threadID, text), b.chatSessionKey(threadID), tools)
+			return b.actions.Converse(ctx, chatSystemPreamble, b.chatContext(threadID, text),
+				b.chatSessionKey(threadID), tools, b.chatGate(m))
 		}
 	}
 	return b.actions.BrainReply(ctx, b.chatPrompt(ctx, threadID, text))

@@ -169,6 +169,29 @@ type Config struct {
 	Notify   Notify   `toml:"notify"`
 	Telegram Telegram `toml:"telegram"`
 	Sandbox  Sandbox  `toml:"sandbox"`
+	Features Features `toml:"features"`
+}
+
+// Features configures the per-capability execution policy for MUTATING tools the
+// chat brain may propose (adopt/dispatch/kill/create_topic/rename_title). Each is
+// auto | confirm | off; the default for any unset mutating feature is
+// DefaultMutating (itself defaulting to "confirm" — the brain proposes, the
+// operator taps ✅). Read-only tools (scan/peek/…) ignore this entirely.
+type Features struct {
+	DefaultMutating string            `toml:"default_mutating"` // auto | confirm | off  (default: confirm)
+	Modes           map[string]string `toml:"modes"`            // per-feature override, e.g. modes.adopt = "auto"
+}
+
+// Mode returns the configured execution mode for a mutating feature by name,
+// falling back to DefaultMutating and then to confirm.
+func (f Features) Mode(feature string) string {
+	if m, ok := f.Modes[feature]; ok && m != "" {
+		return m
+	}
+	if f.DefaultMutating != "" {
+		return f.DefaultMutating
+	}
+	return "confirm"
 }
 
 // Defaults returns a Config populated with the pinned build-guide defaults.

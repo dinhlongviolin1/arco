@@ -110,12 +110,18 @@ func (b *Bot) handleCallback(ctx context.Context, cq *CallbackQuery) {
 		_ = b.api.AnswerCallbackQuery(ctx, cq.ID, "not authorized")
 		return
 	}
-	act, escID, err := DecodeCallback(cq.Data)
+	act, id, err := DecodeCallback(cq.Data)
 	if err != nil {
 		_ = b.api.AnswerCallbackQuery(ctx, cq.ID, "unknown action")
 		return
 	}
-	toast := b.dispatchAction(ctx, act, escID)
+	// Approve/reject taps on a brain-proposed mutating action carry a pending id,
+	// not an escalation id — resolve them separately (no escalation lookup).
+	if act == ActApprove || act == ActReject {
+		_ = b.api.AnswerCallbackQuery(ctx, cq.ID, b.resolvePending(ctx, act, id))
+		return
+	}
+	toast := b.dispatchAction(ctx, act, id)
 	_ = b.api.AnswerCallbackQuery(ctx, cq.ID, toast)
 }
 

@@ -24,10 +24,19 @@ func (r *recordingAdopter) adopt(_ context.Context, ref string) (string, string,
 	return "01WORKER" + ref, "01SESSION" + ref, nil
 }
 
-func TestAdopt_IsCommandOnly(t *testing.T) {
+func TestAdopt_HasBrainActTool(t *testing.T) {
 	f := Adopt(fakeScanner{}, (&recordingAdopter{}).adopt)
 	require.NotNil(t, f.Command)
-	require.Nil(t, f.Tool, "adopt is mutating — not a brain tool")
+	require.NotNil(t, f.Tool)
+	require.Equal(t, feature.BrainAct, f.Tool.Access)
+}
+
+func TestAdopt_ToolExecutes(t *testing.T) {
+	ad := &recordingAdopter{}
+	out, err := Adopt(fakeScanner{}, ad.adopt).Tool.Call(context.Background(), []byte(`{"ref":"w5:p1"}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"w5:p1"}, ad.adopted)
+	require.Contains(t, out, "monitor-only")
 }
 
 func TestAdopt_AllOnlyLiveUntracked(t *testing.T) {
@@ -73,6 +82,29 @@ func TestAdopt_AllReportsPerRefFailures(t *testing.T) {
 	require.Equal(t, []string{"ok:1"}, ad.adopted)
 }
 
+func TestDispatch_ToolProposesAndExecutes(t *testing.T) {
+	var got struct{ repo, task string }
+	f := Dispatch(func(_ context.Context, repo, task string) (string, string, error) {
+		got.repo, got.task = repo, task
+		return "01WORKERAAA", "01SESSIONBBB", nil
+	})
+	require.Nil(t, f.Command, "dispatch is tool-only (the operator /dispatch keeps its own path)")
+	require.NotNil(t, f.Tool)
+	require.Equal(t, feature.BrainAct, f.Tool.Access)
+
+	out, err := f.Tool.Call(context.Background(), []byte(`{"repo":"/srv/app.git","task":"add health endpoint"}`))
+	require.NoError(t, err)
+	require.Equal(t, "/srv/app.git", got.repo)
+	require.Equal(t, "add health endpoint", got.task)
+	require.Contains(t, out, "started worker")
+
+	// missing args → guidance, no spawn
+	got = struct{ repo, task string }{}
+	out2, _ := f.Tool.Call(context.Background(), []byte(`{"repo":"/srv/app.git"}`))
+	require.Contains(t, out2, "provide")
+	require.Empty(t, got.repo)
+}
+
 type fakeKiller struct {
 	killed []string
 	err    error
@@ -83,10 +115,20 @@ func (f *fakeKiller) KillWorker(_ context.Context, id string) error {
 	return f.err
 }
 
-func TestKill_IsCommandOnly(t *testing.T) {
+func TestKill_HasBrainActTool(t *testing.T) {
 	f := Kill(&fakeKiller{}, fakeLedger{})
 	require.NotNil(t, f.Command)
-	require.Nil(t, f.Tool, "mutating actions are not brain-callable yet")
+	require.NotNil(t, f.Tool, "kill is brain-proposable (gated by the confirm/off policy)")
+	require.Equal(t, feature.BrainAct, f.Tool.Access, "mutating → BrainAct, not BrainSafe")
+}
+
+func TestKill_ToolExecutes(t *testing.T) {
+	k := &fakeKiller{}
+	l := workerLedger("01ABCWORKERXYZ")
+	out, err := Kill(k, l).Tool.Call(context.Background(), []byte(`{"worker":"WORKERXYZ"}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"01ABCWORKERXYZ"}, k.killed)
+	require.Contains(t, out, "killed worker")
 }
 
 func TestKill_ResolvesByFragmentAndTerminates(t *testing.T) {

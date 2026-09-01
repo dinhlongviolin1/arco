@@ -251,7 +251,7 @@ func (a *fakeActions) BrainReply(_ context.Context, prompt string) (string, erro
 	}
 	return a.chatReply, nil
 }
-func (a *fakeActions) Converse(_ context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error) {
+func (a *fakeActions) Converse(_ context.Context, system, prompt, sessionID string, tools []feature.Tool, _ feature.Gate) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.converseSystems = append(a.converseSystems, system)

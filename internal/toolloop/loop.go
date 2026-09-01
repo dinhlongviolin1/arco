@@ -5,12 +5,13 @@
 // arco executes the call through the feature registry and re-prompts, up to a
 // hard round cap.
 //
-// Scope is deliberately READ-ONLY: only BrainSafe tools are executed. A request
-// for a mutating (BrainAct) or Operator tool is refused in-loop and never
-// invoked — mutating fleet actions stay behind explicit operator approval, which
-// this emulated path does not grant. (This is the "EmulatedToolUse, read-only"
-// decision: it gives clavis real agentic inspection today without opening a
-// write path the provider can't gate.)
+// BrainSafe (read-only) tools always execute. MUTATING (BrainAct) tools are gated
+// by the injected Policy (per-feature auto | confirm | off, default confirm):
+// auto runs the tool, off refuses it, and confirm hands it to the injected Confirm
+// channel (which posts an operator approval card and returns a "queued" message —
+// the tool runs only when the operator approves, out-of-band). A nil Policy means
+// all BrainAct tools are off, so the zero loop is read-only by default. Operator
+// tools are never callable here.
 package toolloop
 
 import (
@@ -35,11 +36,35 @@ const DefaultMaxRounds = 3
 // differ by session/authz); it holds no cross-turn state.
 type Loop struct {
 	Invoke    Invoke
-	Tools     []feature.Tool // typically registry.ForBrain(); NON-BrainSafe entries are neither advertised nor executed (this host is read-only)
+	Tools     []feature.Tool // typically registry.ForBrain()
 	MaxRounds int            // <=0 uses DefaultMaxRounds
 	// System is an optional preamble describing arco to the model. A sensible
 	// default is used when empty.
 	System string
+	// Policy returns the execution mode for a MUTATING (BrainAct) tool by name.
+	// nil ⇒ all BrainAct tools are off (refused) — the safe read-only default.
+	// BrainSafe tools ignore this and always execute.
+	Policy func(toolName string) feature.Mode
+	// Confirm defers a confirm-mode BrainAct call to operator approval: it records
+	// the proposed action (e.g. posts a Telegram ✅/❌ card) and returns the text to
+	// relay to the model. nil ⇒ confirm degrades to off.
+	Confirm func(ctx context.Context, t feature.Tool, args json.RawMessage) (string, error)
+}
+
+// modeFor resolves a tool's effective mode: BrainSafe is always auto; BrainAct
+// consults Policy (nil ⇒ off); Operator tools are never callable here.
+func (l *Loop) modeFor(t feature.Tool) feature.Mode {
+	switch t.Access {
+	case feature.BrainSafe:
+		return feature.ModeAuto
+	case feature.BrainAct:
+		if l.Policy == nil {
+			return feature.ModeOff
+		}
+		return l.Policy(t.Name)
+	default:
+		return feature.ModeOff
+	}
 }
 
 // step is the one-object-per-round protocol: a tool call XOR a final answer.
@@ -132,14 +157,25 @@ func (l *Loop) callTool(ctx context.Context, name string, args json.RawMessage) 
 		if t.Name != name {
 			continue
 		}
-		if t.Access != feature.BrainSafe {
-			return fmt.Sprintf("refused: %q requires operator approval and cannot be called from chat", name)
+		switch l.modeFor(t) {
+		case feature.ModeAuto:
+			out, err := t.Call(ctx, args)
+			if err != nil {
+				return "tool error: " + err.Error()
+			}
+			return out
+		case feature.ModeConfirm:
+			if l.Confirm == nil {
+				return fmt.Sprintf("refused: %q needs operator approval and no approval channel is available — ask the operator to run /%s", name, name)
+			}
+			out, err := l.Confirm(ctx, t, args)
+			if err != nil {
+				return "couldn't request approval: " + err.Error()
+			}
+			return out
+		default: // off
+			return fmt.Sprintf("refused: %q is operator-only — ask the operator to run /%s", name, name)
 		}
-		out, err := t.Call(ctx, args)
-		if err != nil {
-			return "tool error: " + err.Error()
-		}
-		return out
 	}
 	return fmt.Sprintf("unknown tool %q — use one of the listed tools", name)
 }
@@ -154,16 +190,23 @@ func (l *Loop) render(userMsg string, results []toolResult, lastCall bool) strin
 	} else {
 		sb.WriteString("You are arco, a fleet supervisor. Answer the operator concisely and factually. Do not invent details.")
 	}
-	sb.WriteString("\n\nYou can call read-only tools to gather facts. Available tools:")
-	safe := 0
+	sb.WriteString("\n\nYou can call tools to gather facts or (with the operator's approval) act. Available tools:")
+	shown := 0
 	for _, t := range l.Tools {
-		if t.Access != feature.BrainSafe {
+		mode := l.modeFor(t)
+		if mode == feature.ModeOff {
 			continue // don't invite calls we will refuse
 		}
-		safe++
-		fmt.Fprintf(&sb, "\n  - %s: %s", t.Name, t.Desc)
+		shown++
+		note := ""
+		if t.Access == feature.BrainAct && mode == feature.ModeConfirm {
+			note = " (mutating — the operator must approve before it runs)"
+		} else if t.Access == feature.BrainAct {
+			note = " (mutating)"
+		}
+		fmt.Fprintf(&sb, "\n  - %s: %s%s", t.Name, t.Desc, note)
 	}
-	if safe == 0 {
+	if shown == 0 {
 		sb.WriteString("\n  (none available — answer from what you know)")
 	}
 	sb.WriteString("\n\nReply with EXACTLY ONE JSON object and nothing else.")

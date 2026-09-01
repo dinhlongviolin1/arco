@@ -92,17 +92,20 @@ func TestBuildRegistry_ServesScan(t *testing.T) {
 	for _, tl := range reg.ForBrain() {
 		brainTools[tl.Name] = true
 	}
-	// /kill and /adopt are Command-only mutating features: served as commands but
-	// NEVER brain tools (the read-only loop must not terminate/adopt a worker).
-	brainNames := map[string]bool{}
+	// /kill and /adopt are mutating features: served as commands AND exposed to the
+	// brain as BrainAct tools (so the brain can PROPOSE them) — but gated by the
+	// operator's confirm/off policy in the tool-loop, never executed unilaterally.
+	brainAccess := map[string]feature.Access{}
 	for _, tl := range reg.ForBrain() {
-		brainNames[tl.Name] = true
+		brainAccess[tl.Name] = tl.Access
 	}
 	for _, name := range []string{"kill", "adopt"} {
 		if _, ok := reg.Command(name); !ok {
 			t.Errorf("/%s is served by the registry", name)
 		}
-		require.False(t, brainNames[name], "mutating /%s must NOT be a brain tool", name)
+		acc, ok := brainAccess[name]
+		require.True(t, ok, "mutating /%s IS a brain tool (proposable)", name)
+		require.Equal(t, feature.BrainAct, acc, "mutating /%s must be BrainAct (policy-gated), not BrainSafe", name)
 	}
 	for _, name := range []string{"workers", "sessions", "status", "diff", "vms"} {
 		if _, ok := reg.Command(name); !ok {
