@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/config"
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/feature"
+	"github.com/dinhlongviolin1/arco/internal/features"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/telegram"
@@ -67,43 +70,67 @@ func (a engineActions) Dispatch(ctx context.Context, repo, task, vm, into string
 	return res.WorkerID, res.SessionID, nil
 }
 
-func (a engineActions) Kill(ctx context.Context, workerID string) error {
-	return a.eng.KillWorker(ctx, workerID)
-}
-
 func (a engineActions) BrainReply(ctx context.Context, prompt string) (string, error) {
 	return a.eng.BrainReply(ctx, prompt)
 }
 
-// Scan lists live herdr agents across the fleet, converting the engine's scan
-// result into the telegram port's display shape.
-func (a engineActions) Scan(ctx context.Context) ([]telegram.ScannedAgent, error) {
-	scan, err := a.eng.ScanAgents(ctx)
+func (a engineActions) Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error) {
+	return a.eng.Converse(ctx, system, prompt, sessionID, tools)
+}
+
+// Scan lists live herdr agents across the fleet. Engine and telegram now share
+// core.ScannedAgent, so this is a straight passthrough — no adapter conversion.
+func (a engineActions) Scan(ctx context.Context) ([]core.ScannedAgent, error) {
+	return a.eng.ScanAgents(ctx)
+}
+
+// contextStore adapts core.Store to telegram.ContextStore — durable, per-session
+// chat history. Appends run in a one-statement write tx (content scrubbed at the
+// ledger chokepoint); reads take the newest `limit` messages via the Reader.
+type contextStore struct{ s core.Store }
+
+func (c contextStore) AppendMessage(ctx context.Context, sessionID, role, content string) error {
+	return c.s.WithTx(ctx, func(tx core.Tx) error {
+		_, err := tx.AppendMessage(core.Message{SessionID: sessionID, Role: role, Content: content})
+		return err
+	})
+}
+
+// chatHistoryWindow bounds durable chat history to the recent past, so a channel
+// idle for days doesn't resurface stale context on the next message (the newest
+// `limit` still caps it). Uses the store's injected clock (test-controllable).
+const chatHistoryWindow = 72 * time.Hour
+
+func (c contextStore) RecentMessages(sessionID string, limit int) ([]telegram.ContextMessage, error) {
+	since := c.s.Now().Add(-chatHistoryWindow)
+	msgs, err := c.s.Reader().RecentMessages(sessionID, since, limit)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]telegram.ScannedAgent, 0, len(scan))
-	for _, s := range scan {
-		out = append(out, telegram.ScannedAgent{
-			VM: s.VM, Ref: s.Ref, Workspace: s.Workspace, Kind: s.Kind, Status: s.State,
-			Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Alive: s.Alive, Tracked: s.Tracked, WorkerID: s.WorkerID,
-		})
+	out := make([]telegram.ContextMessage, len(msgs))
+	for i, m := range msgs {
+		out[i] = telegram.ContextMessage{Role: m.Role, Content: m.Content}
 	}
 	return out, nil
 }
 
-// Adopt registers an untracked herdr agent as a monitor-only worker.
-func (a engineActions) Adopt(ctx context.Context, ref string) (workerID, sessionID string, err error) {
-	res, err := a.eng.Adopt(ctx, ref)
-	if err != nil {
-		return "", "", err
+// ensureConsoleSession idempotently creates the console sentinel session so
+// General-topic chat (which has no work session) can append durable history
+// despite brain_transcript_rows' FK to sessions. A plain `work` session at a fixed
+// well-known id — created once, skipped thereafter.
+func ensureConsoleSession(ctx context.Context, store core.Store) error {
+	if s, err := store.Reader().GetSession(core.ConsoleSessionID); err == nil && s.ID != "" {
+		return nil
 	}
-	return res.WorkerID, res.SessionID, nil
-}
-
-// Peek reads a herdr agent's recent terminal output (read-only).
-func (a engineActions) Peek(ctx context.Context, ref string) (string, error) {
-	return a.eng.PeekAgent(ctx, ref, 80)
+	return store.WithTx(ctx, func(tx core.Tx) error {
+		return tx.CreateSession(core.Session{
+			ID:     core.ConsoleSessionID,
+			Kind:   core.SessionKindWork,
+			Status: core.SessionActive,
+			Slug:   "console",
+			Title:  "Console (General chat)",
+		})
+	})
 }
 
 // tgStore adapts core.Store to telegram.Store: reads go through Reader(); the
@@ -147,16 +174,46 @@ func buildTelegramBot(ctx context.Context, cfg config.Config, eng *reconcile.Eng
 	if len(cfg.Telegram.AllowedUserIDs) == 0 {
 		log.Printf("arco: telegram: WARNING no allowed_user_ids — inbound is receive-nothing; button taps and console commands will be ignored")
 	}
+	// Durable chat history needs the console sentinel session (FK target for
+	// General-topic chat). Create it before wiring the store into the bot.
+	if err := ensureConsoleSession(ctx, eng.Store); err != nil {
+		return nil, fmt.Errorf("console session: %w", err)
+	}
 	return telegram.New(telegram.Config{
-		API:      client,
-		Store:    tgStore{s: eng.Store},
-		GroupID:  cfg.Telegram.GroupID,
-		MinLevel: min,
-		Actions:  engineActions{eng: eng, estopPath: cfg.EStopPath()},
-		Allowed:  cfg.Telegram.AllowedUserIDs,
-		Redact:   eng.Redact,
-		VMs:      vmLines(cfg),
+		API:          client,
+		Store:        tgStore{s: eng.Store},
+		GroupID:      cfg.Telegram.GroupID,
+		MinLevel:     min,
+		Actions:      engineActions{eng: eng, estopPath: cfg.EStopPath()},
+		Allowed:      cfg.Telegram.AllowedUserIDs,
+		Redact:       eng.Redact,
+		VMs:          vmLines(cfg),
+		Registry:     buildRegistry(eng, vmLines(cfg)),
+		ContextStore: contextStore{s: eng.Store},
 	}), nil
+}
+
+// buildRegistry assembles the pluggable features from the engine — the
+// composition root where a capability is wired once and bound to every surface.
+// Adding a feature is one line here plus its constructor; nothing else changes.
+func buildRegistry(eng *reconcile.Engine, vms []string) *feature.Registry {
+	r := feature.NewRegistry()
+	ledger := eng.Store.Reader()
+	r.MustRegister(
+		features.VMs(vms),
+		features.Scan(eng),
+		features.Peek(eng, eng.BrainReply),
+		features.Workers(ledger),
+		features.Sessions(ledger),
+		features.Status(ledger, eng.Paused),
+		features.Diff(eng, ledger),
+		features.Kill(eng, ledger),
+		features.Adopt(eng, func(ctx context.Context, ref string) (string, string, error) {
+			res, err := eng.Adopt(ctx, ref)
+			return res.WorkerID, res.SessionID, err
+		}),
+	)
+	return r
 }
 
 // vmLines renders the attached fleet for the /vms command + chat context, from

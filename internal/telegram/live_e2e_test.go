@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/feature"
 	"github.com/dinhlongviolin1/arco/internal/ledger"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
@@ -40,28 +41,14 @@ func (a liveEngineActions) Dispatch(ctx context.Context, repo, task, vmName, int
 	res, err := a.e.Spawn(ctx, into, task, into == "", repo, "", vmName)
 	return res.WorkerID, res.SessionID, err
 }
-func (a liveEngineActions) Kill(ctx context.Context, id string) error { return a.e.KillWorker(ctx, id) }
 func (a liveEngineActions) BrainReply(ctx context.Context, p string) (string, error) {
 	return a.e.BrainReply(ctx, p)
 }
-func (a liveEngineActions) Scan(ctx context.Context) ([]ScannedAgent, error) {
-	scan, err := a.e.ScanAgents(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]ScannedAgent, 0, len(scan))
-	for _, s := range scan {
-		out = append(out, ScannedAgent{VM: s.VM, Ref: s.Ref, Workspace: s.Workspace, Kind: s.Kind,
-			Status: s.State, Cwd: s.Cwd, Title: s.Title, SessionID: s.SessionID, Alive: s.Alive, Tracked: s.Tracked, WorkerID: s.WorkerID})
-	}
-	return out, nil
+func (a liveEngineActions) Converse(ctx context.Context, system, p, sessionID string, tools []feature.Tool) (string, error) {
+	return a.e.Converse(ctx, system, p, sessionID, tools)
 }
-func (a liveEngineActions) Adopt(ctx context.Context, ref string) (string, string, error) {
-	res, err := a.e.Adopt(ctx, ref)
-	return res.WorkerID, res.SessionID, err
-}
-func (a liveEngineActions) Peek(ctx context.Context, ref string) (string, error) {
-	return a.e.PeekAgent(ctx, ref, 80)
+func (a liveEngineActions) Scan(ctx context.Context) ([]core.ScannedAgent, error) {
+	return a.e.ScanAgents(ctx)
 }
 
 // liveStore adapts a real ledger store to telegram.Store.
@@ -161,7 +148,11 @@ func TestLive_SpawnIntoNewTopic(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, ws, "a worker row was created for the spawn")
 	w := ws[0]
-	t.Cleanup(func() { _ = bot.actions.Kill(context.Background(), w.ID) })
+	t.Cleanup(func() {
+		if la, ok := bot.actions.(liveEngineActions); ok {
+			_ = la.e.KillWorker(context.Background(), w.ID)
+		}
+	})
 
 	t.Logf("spawned worker %s state=%s workspace=%s ref=%s", w.ID, w.State, w.Workspace, w.AgentRef)
 	require.Contains(t, []core.WorkerState{core.WorkerRunning, core.WorkerFailed}, w.State,
@@ -203,7 +194,7 @@ func TestLive_ManualTopicThenAct(t *testing.T) {
 	require.NoError(t, s.WithTx(ctx, func(tx core.Tx) error { return tx.SetSessionTelegram(sid, &tid, nil) }))
 
 	// a bare message inside the topic with no pending question → brain chat; a
-	// command works too. Drive /status to prove in-topic command handling.
-	bot.handleMessage(ctx, &Message{Text: "/status", From: &User{ID: user}, MessageThreadID: tid})
+	// command works too. Drive /vms to prove in-topic command handling.
+	bot.handleMessage(ctx, &Message{Text: "/vms", From: &User{ID: user}, MessageThreadID: tid})
 	require.True(t, strings.Contains(strings.ToLower("ok"), "ok")) // reply is visible in the topic
 }

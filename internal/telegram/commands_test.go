@@ -47,30 +47,12 @@ func TestCmd_DispatchUsageOnMissingArgs(t *testing.T) {
 	require.Contains(t, lastSent(api), "usage:")
 }
 
-func TestCmd_KillResolvesByFragment(t *testing.T) {
-	b, _, st, act := newTestBot(t)
-	st.workers = []core.Worker{{ID: "01ABCWORKERXYZ", State: core.WorkerRunning}}
-	b.handleMessage(context.Background(), &Message{Text: "/kill WORKERXYZ", From: &User{ID: allowedUID}})
-	require.Equal(t, []string{"01ABCWORKERXYZ"}, act.kills, "resolves a worker by any id fragment")
-}
+// NOTE: /kill is now a registered feature (internal/features.Kill) — worker
+// resolution + termination are covered in internal/features/mutate_test.go.
 
-func TestCmd_KillAmbiguousIsRefused(t *testing.T) {
-	b, api, st, act := newTestBot(t)
-	st.workers = []core.Worker{{ID: "01AAABBB", State: core.WorkerRunning}, {ID: "01AAACCC", State: core.WorkerRunning}}
-	b.handleMessage(context.Background(), &Message{Text: "/kill 01AAA", From: &User{ID: allowedUID}})
-	require.Empty(t, act.kills, "an ambiguous fragment kills nothing")
-	require.Contains(t, lastSent(api), "matches 2 workers")
-}
-
-func TestCmd_WorkersAndSessionsRender(t *testing.T) {
-	b, api, st, _ := newTestBot(t)
-	seedSession(st, "S1", "fix-auth")
-	st.workers = []core.Worker{{ID: "01AAAA1111", OwnerSession: "S1", State: core.WorkerRunning, Task: "do the thing"}}
-	b.handleMessage(context.Background(), &Message{Text: "/workers", From: &User{ID: allowedUID}})
-	require.Contains(t, lastSent(api), "do the thing")
-	b.handleMessage(context.Background(), &Message{Text: "/sessions", From: &User{ID: allowedUID}})
-	require.Contains(t, lastSent(api), "fix-auth")
-}
+// NOTE: /workers, /sessions, /status are now registered ledger features
+// (internal/features.Workers/Sessions/Status) — their rendering is covered in
+// internal/features/fleet_test.go, and the registry wiring in internal/daemon.
 
 func TestChat_InTopicWithPendingQuestionIsTheAnswer(t *testing.T) {
 	b, _, st, act := newTestBot(t)
@@ -169,9 +151,9 @@ func TestCmd_DispatchNewIssueOpensTopic(t *testing.T) {
 // be answered even when arco launched 0 workers.
 func TestChat_IncludesLiveHerdrSessions(t *testing.T) {
 	b, _, _, act := newTestBot(t)
-	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Cwd: "/home/op/arco", Alive: true},
-		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Cwd: "/home/op/sysadmin", Alive: true},
+	act.scanOut = []core.ScannedAgent{
+		{AgentObs: core.AgentObs{Ref: "w1:p1", Kind: "claude", State: "working", Cwd: "/home/op/arco", Alive: true}},
+		{AgentObs: core.AgentObs{Ref: "w5:p1", Kind: "claude", State: "idle", Cwd: "/home/op/sysadmin", Alive: true}},
 	}
 	b.handleMessage(context.Background(), &Message{Text: "how many claude sessions are running?", From: &User{ID: allowedUID}})
 	require.NotEmpty(t, act.chatPrompts, "chat routed to the brain")
@@ -181,16 +163,8 @@ func TestChat_IncludesLiveHerdrSessions(t *testing.T) {
 	require.Contains(t, p, "/home/op/sysadmin", "the real herdr session cwds are in the brain context")
 }
 
-func TestCmd_PeekSummarizesSession(t *testing.T) {
-	b, api, _, act := newTestBot(t)
-	act.peekOut = "$ go test ./...\nok  arco/internal/reconcile"
-	b.handleMessage(context.Background(), &Message{Text: "/peek w5:p1", From: &User{ID: allowedUID}})
-	require.Equal(t, []string{"w5:p1"}, act.peeks)
-	require.Contains(t, lastSent(api), "peek w5:p1")
-	// the brain was asked to summarize the pane tail
-	require.NotEmpty(t, act.chatPrompts)
-	require.Contains(t, act.chatPrompts[len(act.chatPrompts)-1], "go test ./...")
-}
+// NOTE: /peek is now a registered feature (internal/features.Peek) — its command
+// (brain summary) + tool (raw tail) are covered in internal/features/peek_test.go.
 
 // Chat carries short per-thread memory: the second turn's brain prompt includes
 // the first exchange, so a follow-up ("peek into it") can resolve.
@@ -204,51 +178,14 @@ func TestChat_RemembersRecentTurns(t *testing.T) {
 	require.Contains(t, act.chatPrompts[1], "~/sysadmin", "prior arco reply is in context")
 }
 
-func TestCmd_ScanListsLiveAgents(t *testing.T) {
-	b, api, _, act := newTestBot(t)
-	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Kind: "claude", Status: "working", Title: "review arco", Cwd: "/home/op/arco", SessionID: "3dca0eaf", Alive: true, Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
-		{VM: "", Ref: "w5:p1", Kind: "claude", Status: "idle", Title: "pull latest", Cwd: "/home/op/sysadmin", SessionID: "0d64f4be", Alive: true},
-		{VM: "", Ref: "wQ:p1", Kind: "claude", Status: "done", Cwd: "/home/op/sysadmin"}, // finished pane
-	}
-	b.handleMessage(context.Background(), &Message{Text: "/scan", From: &User{ID: allowedUID}})
-	last := lastSent(api)
-	require.Contains(t, last, "herdr agent sessions (3 — 2 live, 1 done)")
-	require.Contains(t, last, "w5:p1")
-	require.Contains(t, last, "✅ tracked")
-	require.Contains(t, last, "🆓 untracked")
-	require.Contains(t, last, "🏁 finished")
-	require.Contains(t, last, "/adopt")
-}
+// NOTE: /scan is now a registered feature (internal/features.Scan) — its
+// rendering is covered in internal/features/scan_test.go, and the registry
+// wiring in internal/daemon. The telegram package only owns the coexistence
+// seam (feature_test.go), not the scan command itself.
 
-func TestCmd_AdoptAll_OnlyUntracked(t *testing.T) {
-	b, api, _, act := newTestBot(t)
-	act.scanOut = []ScannedAgent{
-		{VM: "", Ref: "w1:p1", Alive: true, Tracked: true, WorkerID: "01AAAAAAAAAAAAAAAAAAAAAAAA"},
-		{VM: "", Ref: "w5:p1", Alive: true},
-		{VM: "", Ref: "wQ:p1", Status: "done"}, // finished — must be skipped by /adopt all
-	}
-	b.handleMessage(context.Background(), &Message{Text: "/adopt", From: &User{ID: allowedUID}})
-	require.Equal(t, []string{"w5:p1"}, act.adopts, "only live untracked agents are adopted (done panes skipped)")
-	require.Contains(t, lastSent(api), "adopted")
-}
+// NOTE: /adopt is now a registered feature (internal/features.Adopt) — the
+// adopt-all/untracked-only logic and adopt-by-ref are covered in
+// internal/features/mutate_test.go.
 
-func TestCmd_AdoptByRef(t *testing.T) {
-	b, api, _, act := newTestBot(t)
-	b.handleMessage(context.Background(), &Message{Text: "/adopt w5:p1", From: &User{ID: allowedUID}})
-	require.Equal(t, []string{"w5:p1"}, act.adopts)
-	require.Contains(t, lastSent(api), "monitor-only")
-}
-
-func TestCmd_VMsListsFleet(t *testing.T) {
-	api := &fakeAPIRec{}
-	b := New(Config{
-		API: api, Store: newFakeStore(), GroupID: -1, MinLevel: notify.LevelInfo,
-		Actions: &fakeActions{}, Allowed: []int64{allowedUID},
-		VMs: []string{"local (default · this box)", "vm1 (host vm1)"},
-	})
-	b.handleMessage(context.Background(), &Message{Text: "/vms", From: &User{ID: allowedUID}})
-	last := api.sent[len(api.sent)-1].text
-	require.Contains(t, last, "attached VMs (2)")
-	require.Contains(t, last, "vm1 (host vm1)")
-}
+// NOTE: /vms is now a registered feature (internal/features.VMs) — its rendering
+// is covered in internal/features/fleet_test.go.

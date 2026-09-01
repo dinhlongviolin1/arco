@@ -69,6 +69,13 @@ const (
 // PoolSessionID is the fixed well-known ULID of the protected pool session.
 const PoolSessionID = "00000000000000000000000000"
 
+// ConsoleSessionID is the fixed well-known ULID of the console sentinel session —
+// the thread key for General-topic chat, which has no real work session. It backs
+// durable chat history (brain_transcript_rows.session_id has an FK to sessions),
+// so it is created idempotently at daemon startup. A plain `work` session (the
+// kind CHECK is ('work','pool'), no rewrite needed); distinct from the pool.
+const ConsoleSessionID = "00000000000000000000000001"
+
 // ActionClass and Tier classify a capability (assigned structurally from the
 // capability_catalog; NL/brain may only RAISE severity, never lower it).
 type ActionClass string

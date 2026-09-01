@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/feature"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
@@ -190,13 +191,14 @@ type fakeActions struct {
 	pauseHit    int
 	resHit      int
 	dispatches  []string
-	kills       []string
 	chatPrompts []string
 	chatReply   string
-	scanOut     []ScannedAgent
-	adopts      []string
-	peeks       []string
-	peekOut     string
+	scanOut     []core.ScannedAgent
+
+	converseSystems  []string
+	conversePrompts  []string
+	converseSessions []string
+	converseTools    []feature.Tool
 }
 
 func (a *fakeActions) AnswerQuestion(_ context.Context, escID, text string, scope core.Scope) error {
@@ -240,12 +242,6 @@ func (a *fakeActions) Dispatch(_ context.Context, repo, task, vm, into string) (
 	a.dispatches = append(a.dispatches, rec)
 	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
 }
-func (a *fakeActions) Kill(_ context.Context, workerID string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.kills = append(a.kills, workerID)
-	return nil
-}
 func (a *fakeActions) BrainReply(_ context.Context, prompt string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -255,25 +251,22 @@ func (a *fakeActions) BrainReply(_ context.Context, prompt string) (string, erro
 	}
 	return a.chatReply, nil
 }
-func (a *fakeActions) Scan(context.Context) ([]ScannedAgent, error) {
+func (a *fakeActions) Converse(_ context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.converseSystems = append(a.converseSystems, system)
+	a.conversePrompts = append(a.conversePrompts, prompt)
+	a.converseSessions = append(a.converseSessions, sessionID)
+	a.converseTools = tools
+	if a.chatReply == "" {
+		return "ok", nil
+	}
+	return a.chatReply, nil
+}
+func (a *fakeActions) Scan(context.Context) ([]core.ScannedAgent, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.scanOut, nil
-}
-func (a *fakeActions) Adopt(_ context.Context, ref string) (string, string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.adopts = append(a.adopts, ref)
-	return "01WORKERID000000000000000", "01SESSIONID00000000000000", nil
-}
-func (a *fakeActions) Peek(_ context.Context, ref string) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.peeks = append(a.peeks, ref)
-	if a.peekOut == "" {
-		return "recent terminal output for " + ref, nil
-	}
-	return a.peekOut, nil
 }
 
 type fakeScrubber struct{}
@@ -484,13 +477,3 @@ func TestMessage_ConsolePauseResumeAuth(t *testing.T) {
 	require.Equal(t, 1, act.resHit)
 }
 
-func TestMessage_StatusReportsEstopAndCounts(t *testing.T) {
-	b, api, st, act := newTestBot(t)
-	st.workers = []core.Worker{{ID: "W1", State: core.WorkerRunning}, {ID: "W2", State: core.WorkerRunning}}
-	act.paused = true
-	b.handleMessage(context.Background(), &Message{Text: "/status", From: &User{ID: allowedUID}})
-	require.NotEmpty(t, api.sent)
-	last := api.sent[len(api.sent)-1].text
-	require.Contains(t, last, "ESTOP ENGAGED")
-	require.Contains(t, last, "active workers: 2")
-}

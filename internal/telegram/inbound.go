@@ -2,9 +2,7 @@ package telegram
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"sort"
 	"strings"
 	"time"
 
@@ -24,25 +22,38 @@ const (
 // menuCommands is the client-side command menu (the "/" autocomplete + Menu
 // button), registered once at Start.
 var menuCommands = []BotCommand{
-	{"status", "fleet summary (estop, active workers, pending)"},
-	{"vms", "list the attached VMs (fleet hosts)"},
-	{"scan", "live herdr agent sessions across the fleet"},
-	{"peek", "summarize what a session is doing: /peek <pane>"},
-	{"workers", "list active workers"},
-	{"sessions", "list active sessions"},
 	{"dispatch", "start a worker: /dispatch <repo> <task>"},
-	{"adopt", "track an existing herdr session: /adopt [ref]"},
-	{"kill", "terminate a worker: /kill <worker>"},
-	{"diff", "show a worker's diff: /diff <worker>"},
 	{"pause", "engage the emergency stop"},
 	{"resume", "release the emergency stop"},
 	{"help", "show all commands"},
 }
 
+// menu is the client-side command menu: the static built-ins plus every
+// registered feature command (skipping any that duplicate a built-in name), so
+// the "/" autocomplete stays in sync with the registry without a hand-edit.
+func (b *Bot) menu() []BotCommand {
+	if b.reg == nil {
+		return menuCommands
+	}
+	out := append([]BotCommand(nil), menuCommands...)
+	for _, c := range b.reg.Commands() {
+		// Dedup against the canonical built-in set (which includes aliases the menu
+		// list omits) so a ported feature never double-lists, and — belt and braces
+		// with the assembly-time reject — a name the switch owns is never advertised.
+		if builtinCommands[c.Name] {
+			continue
+		}
+		out = append(out, BotCommand{Command: c.Name, Description: c.Help})
+	}
+	return out
+}
+
 func (b *Bot) Start(ctx context.Context) {
 	// Register the command menu so clients autocomplete "/" and show the Menu
-	// button. Best-effort — a failure here must not stop the inbound loop.
-	if err := b.api.SetMyCommands(ctx, menuCommands); err != nil {
+	// button. Registered feature commands are appended (generated, not hand-listed),
+	// so declaring a feature updates the menu automatically. Best-effort — a failure
+	// here must not stop the inbound loop.
+	if err := b.api.SetMyCommands(ctx, b.menu()); err != nil {
 		log.Printf("arco: telegram: setMyCommands: %v", err)
 	}
 	offset := 0
@@ -202,35 +213,6 @@ func (b *Bot) handleMessage(ctx context.Context, m *Message) {
 	b.handleChat(ctx, m, text)
 }
 
-// fleetStatus renders the /status reply: estop state + a by-state tally of
-// non-terminal workers + the pending-decision count.
-func (b *Bot) fleetStatus() string {
-	workers, _ := b.store.ListWorkers(core.WorkerFilter{})
-	pending, _ := b.store.ListEscalations(core.EscalationFilter{Status: "pending"})
-	counts := map[string]int{}
-	active := 0
-	for _, w := range workers {
-		if w.State.Terminal() {
-			continue
-		}
-		counts[string(w.State)]++
-		active++
-	}
-	var b2 strings.Builder
-	if b.actions.Paused() {
-		b2.WriteString("⛔ ESTOP ENGAGED\n")
-	} else {
-		b2.WriteString("▶️ running\n")
-	}
-	fmt.Fprintf(&b2, "active workers: %d\n", active)
-	if active > 0 {
-		b2.WriteString(tally(counts))
-		b2.WriteByte('\n')
-	}
-	fmt.Fprintf(&b2, "⏳ pending decisions: %d", len(pending))
-	return b2.String()
-}
-
 // refreshAllStatus re-renders the status card of every non-terminal, non-pool
 // session that already has a topic (the ticker's liveness sweep).
 func (b *Bot) refreshAllStatus(ctx context.Context) {
@@ -287,15 +269,3 @@ func (b *Bot) maybeCloseTopic(ctx context.Context, sessionID string, threadID in
 	_ = b.api.CloseForumTopic(ctx, b.groupID, threadID)
 }
 
-func tally(counts map[string]int) string {
-	states := make([]string, 0, len(counts))
-	for st := range counts {
-		states = append(states, st)
-	}
-	sort.Strings(states)
-	parts := make([]string, 0, len(states))
-	for _, st := range states {
-		parts = append(parts, fmt.Sprintf("%s×%d", st, counts[st]))
-	}
-	return strings.Join(parts, "  ")
-}
