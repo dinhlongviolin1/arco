@@ -74,8 +74,8 @@ func (a engineActions) BrainReply(ctx context.Context, prompt string) (string, e
 	return a.eng.BrainReply(ctx, prompt)
 }
 
-func (a engineActions) Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error) {
-	return a.eng.Converse(ctx, system, prompt, sessionID, tools)
+func (a engineActions) Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool, gate feature.Gate) (string, error) {
+	return a.eng.Converse(ctx, system, prompt, sessionID, tools, gate)
 }
 
 // Scan lists live herdr agents across the fleet. Engine and telegram now share
@@ -190,6 +190,10 @@ func buildTelegramBot(ctx context.Context, cfg config.Config, eng *reconcile.Eng
 		VMs:          vmLines(cfg),
 		Registry:     buildRegistry(eng, vmLines(cfg)),
 		ContextStore: contextStore{s: eng.Store},
+		FeatureMode: func(name string) feature.Mode {
+			// operator policy from [features] (default: confirm for any mutating tool)
+			return feature.ParseMode(cfg.Features.Mode(name), feature.ModeConfirm)
+		},
 	}), nil
 }
 
@@ -210,6 +214,10 @@ func buildRegistry(eng *reconcile.Engine, vms []string) *feature.Registry {
 		features.Kill(eng, ledger),
 		features.Adopt(eng, func(ctx context.Context, ref string) (string, string, error) {
 			res, err := eng.Adopt(ctx, ref)
+			return res.WorkerID, res.SessionID, err
+		}),
+		features.Dispatch(func(ctx context.Context, repo, task string) (string, string, error) {
+			res, err := eng.Spawn(ctx, "", task, true, repo, "", "") // new issue, default VM
 			return res.WorkerID, res.SessionID, err
 		}),
 	)

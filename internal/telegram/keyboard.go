@@ -18,11 +18,24 @@ const (
 	ActConfirmYes      Action = "cy" // approve a confirm
 	ActConfirmNo       Action = "cn" // reject a confirm
 	ActDiff            Action = "df" // show the worker's redacted diff
+	ActApprove         Action = "ap" // approve a brain-proposed mutating action (payload = pending id)
+	ActReject          Action = "rj" // reject a brain-proposed mutating action
 )
 
 var validActions = map[Action]bool{
 	ActQuestionOnce: true, ActQuestionSession: true, ActQuestionNo: true,
 	ActConfirmYes: true, ActConfirmNo: true, ActDiff: true,
+	ActApprove: true, ActReject: true,
+}
+
+// ApproveKeyboard is the inline keyboard for a brain-proposed mutating action:
+// [ ✅ approve ] [ ❌ reject ]. The payload carries the pending-action id, not an
+// escalation id.
+func ApproveKeyboard(pendingID string) InlineKeyboardMarkup {
+	return InlineKeyboardMarkup{InlineKeyboard: [][]InlineKeyboardButton{{
+		{Text: "✅ approve", CallbackData: EncodeCallback(ActApprove, pendingID)},
+		{Text: "❌ reject", CallbackData: EncodeCallback(ActReject, pendingID)},
+	}}}
 }
 
 // EncodeCallback builds the callback_data for a button: "<action>:<escID>".

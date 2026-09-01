@@ -44,8 +44,8 @@ func (a liveEngineActions) Dispatch(ctx context.Context, repo, task, vmName, int
 func (a liveEngineActions) BrainReply(ctx context.Context, p string) (string, error) {
 	return a.e.BrainReply(ctx, p)
 }
-func (a liveEngineActions) Converse(ctx context.Context, system, p, sessionID string, tools []feature.Tool) (string, error) {
-	return a.e.Converse(ctx, system, p, sessionID, tools)
+func (a liveEngineActions) Converse(ctx context.Context, system, p, sessionID string, tools []feature.Tool, gate feature.Gate) (string, error) {
+	return a.e.Converse(ctx, system, p, sessionID, tools, gate)
 }
 func (a liveEngineActions) Scan(ctx context.Context) ([]core.ScannedAgent, error) {
 	return a.e.ScanAgents(ctx)

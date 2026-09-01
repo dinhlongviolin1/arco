@@ -58,7 +58,7 @@ type Actions interface {
 	// answering, instead of arco pre-stuffing facts. system is the caller-owned
 	// preamble (persona + command hints + tool guidance). Used when the registry
 	// has brain tools; degrades to BrainReply otherwise.
-	Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error)
+	Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool, gate feature.Gate) (string, error)
 	// Scan lists the LIVE herdr agent sessions across the fleet, marking which arco
 	// already tracks. Speaks the shared core.ScannedAgent so no per-package mirror
 	// or adapter conversion is needed. (Used for chat fleet-context; /scan itself is
@@ -112,6 +112,10 @@ type Config struct {
 	Registry *feature.Registry
 	// ContextStore is the durable chat history (nil = in-memory fallback).
 	ContextStore ContextStore
+	// FeatureMode returns the operator's execution policy for a mutating feature
+	// the brain proposes (auto | confirm | off). nil ⇒ everything defaults to
+	// confirm (the brain proposes, you approve with a ✅).
+	FeatureMode func(feature string) feature.Mode
 }
 
 // Bot is the Telegram forum notifier + inbound driver. It implements
@@ -127,8 +131,11 @@ type Bot struct {
 	vms     []string
 	reg     *feature.Registry
 	cstore  ContextStore
+	fmode   func(feature string) feature.Mode
 
 	mu       sync.Mutex
+	pending  map[string]pendingAction // brain-proposed mutating actions awaiting a ✅ tap
+	pendSeq  int64
 	locks    map[string]*sync.Mutex // per-session lock serializing topic create/status edit
 	lastEdit map[string]time.Time   // per-session status-card edit throttle
 	closed   map[string]bool        // sessions whose topic we've already closed (idempotence)
@@ -171,6 +178,8 @@ func New(cfg Config) *Bot {
 		vms:      cfg.VMs,
 		reg:      cfg.Registry,
 		cstore:   cfg.ContextStore,
+		fmode:    cfg.FeatureMode,
+		pending:  map[string]pendingAction{},
 		locks:    map[string]*sync.Mutex{},
 		lastEdit: map[string]time.Time{},
 		closed:   map[string]bool{},

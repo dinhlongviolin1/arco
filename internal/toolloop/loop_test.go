@@ -100,8 +100,62 @@ func TestLoop_MutatingToolRefusedNotCalled(t *testing.T) {
 	out, err := l.Run(context.Background(), "kill w3")
 	require.NoError(t, err)
 	require.Equal(t, "ok", out)
-	require.Equal(t, 0, calls, "a mutating tool is never executed from the emulated loop")
-	require.Contains(t, s.prompts[1], "requires operator approval")
+	require.Equal(t, 0, calls, "a mutating tool with no policy (off) is never executed")
+	require.Contains(t, s.prompts[1], "operator-only")
+}
+
+func brainActTool(name string, calls *int, out string) feature.Tool {
+	return feature.Tool{Name: name, Desc: name + " mutates", Access: feature.BrainAct,
+		Call: func(context.Context, json.RawMessage) (string, error) { *calls++; return out, nil }}
+}
+
+// In auto mode, a BrainAct tool executes directly.
+func TestLoop_BrainActAutoExecutes(t *testing.T) {
+	var calls int
+	s := &scripted{replies: []string{`{"tool":"kill","args":{"id":"w3"}}`, `{"final":"killed"}`}}
+	l := &Loop{Invoke: s.invoke, Tools: []feature.Tool{brainActTool("kill", &calls, "killed w3")},
+		Policy: func(string) feature.Mode { return feature.ModeAuto }}
+	out, err := l.Run(context.Background(), "kill w3")
+	require.NoError(t, err)
+	require.Equal(t, "killed", out)
+	require.Equal(t, 1, calls, "auto mode executes the mutating tool")
+	require.Contains(t, s.prompts[1], "killed w3", "the result is fed back")
+	require.Contains(t, s.prompts[0], "kill", "an auto mutating tool is advertised")
+}
+
+// In confirm mode, the loop defers to the Confirm handler (does NOT execute) and
+// relays its message to the model.
+func TestLoop_BrainActConfirmDefers(t *testing.T) {
+	var calls, confirmed int
+	var gotArgs string
+	s := &scripted{replies: []string{`{"tool":"kill","args":{"id":"w3"}}`, `{"final":"queued for approval"}`}}
+	l := &Loop{Invoke: s.invoke, Tools: []feature.Tool{brainActTool("kill", &calls, "killed")},
+		Policy: func(string) feature.Mode { return feature.ModeConfirm },
+		Confirm: func(_ context.Context, tl feature.Tool, args json.RawMessage) (string, error) {
+			confirmed++
+			gotArgs = string(args)
+			return "Queued kill of w3 — tap ✅ to approve", nil
+		}}
+	out, err := l.Run(context.Background(), "kill w3")
+	require.NoError(t, err)
+	require.Equal(t, "queued for approval", out)
+	require.Equal(t, 0, calls, "confirm mode must NOT execute the tool directly")
+	require.Equal(t, 1, confirmed, "confirm handler was invoked")
+	require.Contains(t, gotArgs, "w3")
+	require.Contains(t, s.prompts[1], "Queued kill of w3", "the confirm message is relayed to the model")
+	require.Contains(t, s.prompts[0], "must approve", "a confirm tool is advertised as approval-gated")
+}
+
+// Confirm mode with no Confirm handler falls back to a refusal (never executes).
+func TestLoop_BrainActConfirmNoHandlerRefuses(t *testing.T) {
+	var calls int
+	s := &scripted{replies: []string{`{"tool":"kill","args":{}}`, `{"final":"ok"}`}}
+	l := &Loop{Invoke: s.invoke, Tools: []feature.Tool{brainActTool("kill", &calls, "x")},
+		Policy: func(string) feature.Mode { return feature.ModeConfirm }}
+	_, err := l.Run(context.Background(), "kill")
+	require.NoError(t, err)
+	require.Equal(t, 0, calls)
+	require.Contains(t, s.prompts[1], "no approval channel")
 }
 
 func TestLoop_MutatingToolNotAdvertised(t *testing.T) {

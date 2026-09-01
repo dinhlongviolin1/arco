@@ -25,7 +25,7 @@ import (
 //   - Only BrainSafe tools execute (the loop refuses the rest); estop/Paused is
 //     NOT a bar here because this path is read-only — the operator can still ask
 //     "what's running?" during an emergency stop.
-func (e *Engine) Converse(ctx context.Context, system, userMsg, sessionID string, tools []feature.Tool) (string, error) {
+func (e *Engine) Converse(ctx context.Context, system, userMsg, sessionID string, tools []feature.Tool, gate feature.Gate) (string, error) {
 	if !e.Brain.Enabled {
 		return "", fmt.Errorf("brain disabled")
 	}
@@ -36,8 +36,10 @@ func (e *Engine) Converse(ctx context.Context, system, userMsg, sessionID string
 		tools = append(append([]feature.Tool(nil), tools...), features.HistoryTool(e.Store.Reader(), sessionID))
 	}
 	loop := &toolloop.Loop{
-		System: system, // caller-owned preamble (persona + command hints + tool guidance)
-		Tools:  tools,
+		System:  system, // caller-owned preamble (persona + command hints + tool guidance)
+		Tools:   tools,
+		Policy:  gate.Mode,    // mutating-tool policy (auto/confirm/off); nil ⇒ off
+		Confirm: gate.Confirm, // confirm-mode approval channel; nil ⇒ confirm degrades to off
 		Invoke: func(ctx context.Context, prompt string) (string, error) {
 			if e.Redact != nil {
 				prompt, _ = e.Redact.Scrub(prompt)
