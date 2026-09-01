@@ -81,6 +81,20 @@ type SessionFilter struct {
 
 // Reader is the read side of the ledger (WAL concurrent reads). It never
 // exposes the storage engine.
+// Message is one durable conversation turn — the append-only, per-session chat
+// history the brain can query on demand (ADR 0003). Content is Scrub()'d at
+// AppendMessage (the write chokepoint), so no secret persists; Tainted marks
+// brain-sourced (untrusted) content. Stored in brain_transcript_rows and mirrored
+// into the transcript_fts FTS5 index.
+type Message struct {
+	ID        int64
+	SessionID string
+	Role      string // "operator" | "arco"
+	Content   string
+	Tainted   bool
+	CreatedAt time.Time
+}
+
 type Reader interface {
 	GetWorker(id string) (Worker, error)
 	ListWorkers(f WorkerFilter) ([]Worker, error)
@@ -133,6 +147,16 @@ type Reader interface {
 	// CountActiveWorkersOnVM returns how many NON-terminal workers are assigned to
 	// a VM (the per-VM concurrency-admission denominator).
 	CountActiveWorkersOnVM(vm string) (int, error)
+
+	// RecentMessages returns a session's durable conversation messages at or after
+	// `since`, bounded to the newest `limit`, in chronological (oldest-first) order
+	// — the restart-surviving chat-history tail fed into the brain context. Only
+	// active (non-compacted) rows. A hard server-side cap bounds limit so no caller
+	// can request an unbounded window.
+	RecentMessages(sessionID string, since time.Time, limit int) ([]Message, error)
+	// SearchMessages returns a session's messages whose content matches the FTS5
+	// query, newest-first, capped at limit — the brain's on-demand history fetch.
+	SearchMessages(sessionID, query string, limit int) ([]Message, error)
 }
 
 // Tx is a serialized single-writer transaction. It is arco-owned; the storage
@@ -144,6 +168,12 @@ type Tx interface {
 	CreateWorker(w Worker) error
 	TransitionWorker(id string, to WorkerState, expectedRev int64, e Event) error
 	AppendEvent(e Event) (cursor int64, deduped bool, conflict bool, err error)
+
+	// AppendMessage records one durable conversation turn (append-only, per
+	// session). Content is Scrub()'d here — the write chokepoint, exactly like
+	// event payloads — so a secret in chat never persists, and the row is mirrored
+	// into transcript_fts for search. Returns the new message id.
+	AppendMessage(m Message) (id int64, err error)
 
 	// ObserveWorker records liveness/HEAD observations (head_commit, last_seen_at,
 	// pid, boot_id) without a state change or rev bump — the sweep/intake truth.
@@ -319,6 +349,19 @@ type AgentObs struct {
 	Cwd       string // the agent's working directory
 	Title     string // terminal title (the agent's current task line)
 	SessionID string // backend's own agent-session id (herdr agent_session.value) — the CLI resume handle
+}
+
+// ScannedAgent is one live agent observed on a VM (its AgentObs) annotated with
+// the arco VM name and whether arco already tracks it. This is the SHARED shape
+// for /scan and /adopt across every layer — the engine that produces it, the
+// features that render it, and the telegram surface that displays it — so there
+// is one type on the contract leaf, not a mirror per package. Adopt turns an
+// untracked one into a monitored worker.
+type ScannedAgent struct {
+	AgentObs
+	VM       string // arco VM name ("" = the local box)
+	Tracked  bool   // already an arco worker
+	WorkerID string // the tracking worker, when Tracked
 }
 
 // Diff is a base→head git diff summary.

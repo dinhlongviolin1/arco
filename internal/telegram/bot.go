@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/feature"
 	"github.com/dinhlongviolin1/arco/internal/notify"
 )
 
@@ -48,37 +49,21 @@ type Actions interface {
 	// given VM ("" = engine default). into is the session/issue to add the agent
 	// to ("" = start a new issue), returning the new worker + session ids.
 	Dispatch(ctx context.Context, repo, task, vm, into string) (workerID, sessionID string, err error)
-	// Kill terminates a worker (the /kill command).
-	Kill(ctx context.Context, workerID string) error
-	// BrainReply is a conversational reply from arco's brain (free-text chat).
+	// BrainReply is a one-shot conversational reply from arco's brain (free-text
+	// chat) — used for the peek summary and as the fallback when no brain tools
+	// are registered.
 	BrainReply(ctx context.Context, prompt string) (string, error)
+	// Converse is the AGENTIC chat turn: the brain may call the given read-only
+	// tools (via the text-protocol loop) to gather live fleet state before
+	// answering, instead of arco pre-stuffing facts. system is the caller-owned
+	// preamble (persona + command hints + tool guidance). Used when the registry
+	// has brain tools; degrades to BrainReply otherwise.
+	Converse(ctx context.Context, system, prompt, sessionID string, tools []feature.Tool) (string, error)
 	// Scan lists the LIVE herdr agent sessions across the fleet, marking which arco
-	// already tracks (the /scan command — arco as orchestrator/monitor).
-	Scan(ctx context.Context) ([]ScannedAgent, error)
-	// Adopt registers an untracked herdr agent (by ref/workspace/session id) as a
-	// monitor-only arco worker so arco tracks it internally (the /adopt command),
-	// returning the new worker + session ids.
-	Adopt(ctx context.Context, ref string) (workerID, sessionID string, err error)
-	// Peek returns the recent terminal output of a herdr agent's pane (the /peek
-	// command — a read-only look at what a session is doing).
-	Peek(ctx context.Context, ref string) (string, error)
-}
-
-// ScannedAgent is one live herdr agent for the /scan + /adopt display. Mirrors
-// reconcile.ScannedAgent across the port so the telegram package needn't import
-// reconcile (the daemon adapter converts).
-type ScannedAgent struct {
-	VM        string
-	Ref       string // herdr pane id (the adopt handle)
-	Workspace string
-	Kind      string
-	Status    string
-	Cwd       string
-	Title     string
-	SessionID string // herdr agent-session id (CLI resume handle)
-	Alive     bool   // false = a finished (herdr "done") agent, shown but not adoptable
-	Tracked   bool
-	WorkerID  string
+	// already tracks. Speaks the shared core.ScannedAgent so no per-package mirror
+	// or adapter conversion is needed. (Used for chat fleet-context; /scan itself is
+	// a registered feature.)
+	Scan(ctx context.Context) ([]core.ScannedAgent, error)
 }
 
 // Store is the narrow ledger surface the bot reads/writes — just the session/
@@ -95,6 +80,18 @@ type Store interface {
 	SetSessionTelegram(ctx context.Context, sessionID string, topicID, statusMsgID *int64) error
 }
 
+// ContextStore is the durable, per-session chat history the bot reads/writes when
+// wired. nil = the in-memory fallback (bare bot / tests), preserving prior
+// behavior. The daemon adapts core.Store to it; content is scrubbed at the store's
+// write chokepoint.
+type ContextStore interface {
+	AppendMessage(ctx context.Context, sessionID, role, content string) error
+	RecentMessages(sessionID string, limit int) ([]ContextMessage, error)
+}
+
+// ContextMessage is one durable turn for history rendering.
+type ContextMessage struct{ Role, Content string }
+
 // Config builds a Bot.
 type Config struct {
 	API      api
@@ -108,6 +105,13 @@ type Config struct {
 	// box)", "vm1 (host vm1)"), for the /vms command + chat context. The daemon
 	// builds them from config so factual fleet questions aren't brain-guessed.
 	VMs []string
+	// Registry holds pluggable feature commands. nil (or empty) = the bot behaves
+	// exactly as before — the switch owns every command. A registered command is
+	// consulted only when the switch doesn't match, so old + new coexist during
+	// the migration and no command is served by both.
+	Registry *feature.Registry
+	// ContextStore is the durable chat history (nil = in-memory fallback).
+	ContextStore ContextStore
 }
 
 // Bot is the Telegram forum notifier + inbound driver. It implements
@@ -121,6 +125,8 @@ type Bot struct {
 	allowed map[int64]bool
 	redact  core.Scrubber
 	vms     []string
+	reg     *feature.Registry
+	cstore  ContextStore
 
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex // per-session lock serializing topic create/status edit
@@ -139,8 +145,17 @@ type chatTurn struct{ user, bot string }
 // maxChatTurns bounds the per-thread history fed back into the brain prompt.
 const maxChatTurns = 5
 
-// New builds a Bot from cfg.
+// New builds a Bot from cfg. It panics if a registered feature command collides
+// with a built-in the switch already owns — a wiring bug that must fail loud at
+// boot rather than surface as a menu entry that silently never executes.
 func New(cfg Config) *Bot {
+	if cfg.Registry != nil {
+		for _, c := range cfg.Registry.Commands() {
+			if builtinCommands[c.Name] {
+				panic("telegram: feature command /" + c.Name + " shadows a built-in — rename it or port the built-in")
+			}
+		}
+	}
 	allowed := make(map[int64]bool, len(cfg.Allowed))
 	for _, id := range cfg.Allowed {
 		allowed[id] = true
@@ -154,6 +169,8 @@ func New(cfg Config) *Bot {
 		allowed:  allowed,
 		redact:   cfg.Redact,
 		vms:      cfg.VMs,
+		reg:      cfg.Registry,
+		cstore:   cfg.ContextStore,
 		locks:    map[string]*sync.Mutex{},
 		lastEdit: map[string]time.Time{},
 		closed:   map[string]bool{},

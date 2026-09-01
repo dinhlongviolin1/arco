@@ -10,15 +10,11 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/core"
 )
 
-// ScannedAgent is one live agent observed on a VM, annotated with whether arco
-// already tracks it (a non-terminal worker whose ref/workspace matches). Adopt
-// turns an untracked one into a monitored worker.
-type ScannedAgent struct {
-	core.AgentObs
-	VM       string // arco VM name ("" = the local box)
-	Tracked  bool   // already an arco worker
-	WorkerID string // the tracking worker, when Tracked
-}
+// ScannedAgent is the shared scan shape, defined on the contract leaf (core) so
+// the engine, the feature bundles, and the telegram surface all speak one type.
+// Kept as an alias here so existing reconcile.ScannedAgent references still read
+// naturally.
+type ScannedAgent = core.ScannedAgent
 
 // ScanAgents lists LIVE agents across every known VM and marks which arco already
 // tracks. This is the orchestrator's window into herdr sessions arco did not

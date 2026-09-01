@@ -3,30 +3,21 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"sort"
+	"log"
+	"strconv"
 	"strings"
 
 	"github.com/dinhlongviolin1/arco/internal/core"
+	"github.com/dinhlongviolin1/arco/internal/feature"
 	"github.com/dinhlongviolin1/arco/internal/prompts"
 )
 
 const helpText = `arco — drive the fleet from Telegram
 
-read:
-  /status                fleet summary (estop, active workers, pending)
-  /vms                   the attached VMs (fleet hosts)
-  /scan                  live herdr agent sessions across the fleet
-  /peek <pane>           summarize what a session is doing (reads its terminal)
-  /sessions              list active sessions + their topics
-  /workers               list workers by state
-  /diff <worker>         a worker's redacted diff (id prefix ok)
-
 act:
   /dispatch <repo> <task>   spawn a worker on <repo> to do <task>
                             (in an issue's topic → adds an aspect to that issue;
                              in General → starts a new issue; --vm <name> to pick a VM)
-  /adopt [ref]              track an existing herdr session (no ref → all untracked)
-  /kill <worker>            terminate a worker (id prefix ok)
   /pause  /resume           emergency stop on / off
 
 answer:
@@ -36,6 +27,49 @@ answer:
 chat:
   type anything else and arco's brain replies.`
 
+// builtinCommands is the single source of truth for the command names the switch
+// in handleCommand owns — including the aliases the menu list omits (/new, /start).
+// A feature may NOT register any of these; New() rejects a collision at assembly
+// (fail loud), and both menu() and /help dedup against it. When a command is
+// PORTED to a feature, delete its case AND its entry here in the same change, so
+// this set always mirrors the switch.
+var builtinCommands = map[string]bool{
+	"help": true, "start": true,
+	"pause": true, "resume": true, "dispatch": true, "new": true,
+}
+
+// helpMessage is the built-in help plus a generated section for registered
+// feature commands, so a ported/added feature is documented without editing the
+// hardcoded text — the /help surface stays in sync with the registry, exactly
+// like the "/" menu does.
+func (b *Bot) helpMessage() string {
+	if b.reg == nil {
+		return helpText
+	}
+	var extra []feature.Command
+	for _, c := range b.reg.Commands() {
+		if !builtinCommands[c.Name] { // defensive: assembly already rejected collisions
+			extra = append(extra, c)
+		}
+	}
+	if len(extra) == 0 {
+		return helpText
+	}
+	var sb strings.Builder
+	sb.WriteString(helpText)
+	sb.WriteString("\n\nfeatures:")
+	for _, c := range extra {
+		sb.WriteString("\n  /" + c.Name)
+		if c.Usage != "" {
+			sb.WriteString(" " + c.Usage)
+		}
+		if c.Help != "" {
+			sb.WriteString("  — " + c.Help)
+		}
+	}
+	return sb.String()
+}
+
 // handleCommand runs a slash-command and replies in the same topic.
 func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 	fields := strings.Fields(text)
@@ -44,21 +78,7 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 
 	switch cmd {
 	case "/help", "/start":
-		b.reply(ctx, m, helpText)
-	case "/status":
-		b.reply(ctx, m, b.fleetStatus())
-	case "/vms":
-		b.reply(ctx, m, b.renderVMs())
-	case "/scan":
-		b.reply(ctx, m, b.cmdScan(ctx))
-	case "/adopt":
-		b.reply(ctx, m, b.cmdAdopt(ctx, arg))
-	case "/peek":
-		b.reply(ctx, m, b.cmdPeek(ctx, arg))
-	case "/sessions":
-		b.reply(ctx, m, b.renderSessions())
-	case "/workers":
-		b.reply(ctx, m, b.renderWorkers())
+		b.reply(ctx, m, b.helpMessage())
 	case "/pause":
 		if err := b.actions.Pause(ctx); err != nil {
 			b.reply(ctx, m, "pause failed: "+err.Error())
@@ -73,13 +93,71 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 		}
 	case "/dispatch", "/new":
 		b.reply(ctx, m, b.cmdDispatch(ctx, m, arg))
-	case "/kill":
-		b.reply(ctx, m, b.cmdKill(ctx, arg))
-	case "/diff":
-		b.cmdDiff(ctx, m, arg)
 	default:
+		// Coexistence seam: a command the switch doesn't own may be served by a
+		// registered feature. The switch is consulted first, so no command is ever
+		// handled by both, and an empty registry leaves behavior unchanged.
+		if b.runFeatureCommand(ctx, m, cmd, arg) {
+			return
+		}
 		b.reply(ctx, m, "unknown command "+cmd+" — /help for the list")
 	}
+}
+
+// runFeatureCommand dispatches to a registered feature command, returning true if
+// one handled it. It resolves the thread's session + the acting operator so the
+// feature closure gets its context without reaching back into the bot.
+func (b *Bot) runFeatureCommand(ctx context.Context, m *Message, cmd, arg string) bool {
+	if b.reg == nil {
+		return false
+	}
+	c, ok := b.reg.Command(cmd)
+	if !ok {
+		return false
+	}
+	sessionID := ""
+	if m.MessageThreadID != 0 {
+		if s, ok := b.sessionByTopic(m.MessageThreadID); ok {
+			sessionID = s.ID
+		}
+	}
+	reply, err := c.Run(ctx, feature.CmdInput{
+		Arg: arg, ThreadID: m.MessageThreadID, SessionID: sessionID, Actor: actorOf(m),
+	})
+	if err != nil {
+		usage := ""
+		if c.Usage != "" {
+			usage = "\nusage: /" + c.Name + " " + c.Usage
+		}
+		b.reply(ctx, m, truncate(b.scrub("⚠️ /"+c.Name+": "+err.Error()+usage), tgMessageCap))
+		return true
+	}
+	// Command chokepoint: SCRUB then TRUNCATE every feature reply before it leaves
+	// for Telegram. Scrub-before-truncate matters — a feature may surface a large
+	// raw patch/tail (e.g. /diff, /peek), and truncating first could split a secret
+	// so the scrubber misses it. Closures don't carry the scrubber, so redaction
+	// lives here, uniformly.
+	b.reply(ctx, m, truncate(b.scrub(reply), tgMessageCap))
+	return true
+}
+
+// scrub redacts a string with the bot's scrubber (identity if none is set) — the
+// single point every feature-command reply passes through before Telegram.
+func (b *Bot) scrub(s string) string {
+	if b.redact == nil {
+		return s
+	}
+	out, _ := b.redact.Scrub(s)
+	return out
+}
+
+// actorOf is the operator identity for authz/audit — the Telegram user id as a
+// string, or "" when the sender is unknown.
+func actorOf(m *Message) string {
+	if m == nil || m.From == nil {
+		return ""
+	}
+	return strconv.FormatInt(m.From.ID, 10)
 }
 
 // handleChat handles free text. Priority: (1) a swipe-reply to a specific
@@ -112,15 +190,53 @@ func (b *Bot) handleChat(ctx context.Context, m *Message, text string) {
 			}
 		}
 	}
-	// (3) conversational brain reply — with short per-thread memory so follow-ups
-	// ("peek into it") resolve against the prior turns.
-	reply, err := b.actions.BrainReply(ctx, b.chatPrompt(ctx, m.MessageThreadID, text))
+	// (3) conversational reply. When brain tools are registered, chat is AGENTIC:
+	// the brain can call read-only tools (scan, …) to check live state itself
+	// rather than arco pre-stuffing facts. With no registry/tools it falls back to
+	// the one-shot reply. Both keep the short per-thread memory so a follow-up
+	// ("peek into it") resolves against prior turns.
+	reply, err := b.chatReply(ctx, m.MessageThreadID, text)
 	if err != nil {
 		b.reply(ctx, m, "🤖 chat unavailable ("+err.Error()+") — try /help for commands")
 		return
 	}
-	b.recordChatTurn(m.MessageThreadID, text, reply)
+	b.recordChatTurn(ctx, m.MessageThreadID, text, reply)
 	b.reply(ctx, m, reply)
+}
+
+// chatReply produces the conversational answer: the agentic tool-loop when brain
+// tools are registered, else the legacy one-shot brain call.
+func (b *Bot) chatReply(ctx context.Context, threadID int64, text string) (string, error) {
+	if b.reg != nil {
+		if tools := b.reg.ForBrain(); len(tools) > 0 {
+			return b.actions.Converse(ctx, chatSystemPreamble, b.chatContext(threadID, text), b.chatSessionKey(threadID), tools)
+		}
+	}
+	return b.actions.BrainReply(ctx, b.chatPrompt(ctx, threadID, text))
+}
+
+// chatSystemPreamble carries the guidance the old chat.tmpl held, adapted for the
+// tool-loop: answer only from facts, CALL the scan tool for any fleet-state
+// question (the whole reason we stopped pre-stuffing it), and point the operator
+// at the exact command when they want to act.
+const chatSystemPreamble = `You are arco, a fleet supervisor chatting with the operator over Telegram. Be concise and answer ONLY from facts — never invent workers, sessions, or counts.
+For ANY question about what is running, sessions, agents, or fleet state, CALL the scan tool rather than guessing.
+If the operator wants to DO something, tell them the exact command: /dispatch <repo> <task> to start a worker, /kill <worker>, /peek <pane>, /adopt [ref], /pause and /resume for the emergency stop.`
+
+// chatContext frames an agentic chat turn: light operator context (attached VMs
+// + recent conversation) plus the message. It deliberately OMITS the pre-stuffed
+// live herdr scan — the brain fetches that itself via the scan tool when needed,
+// which is the whole point of the tool-loop (and avoids a scan on every message).
+func (b *Bot) chatContext(threadID int64, text string) string {
+	var sb strings.Builder
+	if len(b.vms) > 0 {
+		sb.WriteString("(attached VMs: " + strings.Join(b.vms, "; ") + ")\n")
+	}
+	if h := b.chatHistory(threadID); h != "none yet" {
+		sb.WriteString("(recent conversation:" + h + "\n)\n")
+	}
+	sb.WriteString(text)
+	return sb.String()
 }
 
 func (b *Bot) answerEsc(ctx context.Context, m *Message, escID, text string) {
@@ -210,239 +326,6 @@ func resumeHint(w core.Worker) string {
 	return base
 }
 
-// cmdKill terminates a worker resolved by id prefix.
-func (b *Bot) cmdKill(ctx context.Context, arg string) string {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		return "usage: /kill <worker-id> (a prefix is fine)"
-	}
-	w, err := b.resolveWorker(arg)
-	if err != nil {
-		return err.Error()
-	}
-	if err := b.actions.Kill(ctx, w.ID); err != nil {
-		return "kill failed: " + err.Error()
-	}
-	return "🛑 killed worker " + short(w.ID)
-}
-
-// cmdDiff posts a worker's redacted diff into the topic.
-func (b *Bot) cmdDiff(ctx context.Context, m *Message, arg string) {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		b.reply(ctx, m, "usage: /diff <worker-id> (a prefix is fine)")
-		return
-	}
-	w, err := b.resolveWorker(arg)
-	if err != nil {
-		b.reply(ctx, m, err.Error())
-		return
-	}
-	patch, err := b.actions.WorkerDiff(ctx, w.ID)
-	if err != nil {
-		b.reply(ctx, m, "diff error: "+err.Error())
-		return
-	}
-	if b.redact != nil {
-		patch, _ = b.redact.Scrub(patch)
-	}
-	if strings.TrimSpace(patch) == "" {
-		patch = "(no diff — base == head)"
-	}
-	b.reply(ctx, m, truncate("diff — "+short(w.ID)+"\n\n"+patch, tgMessageCap))
-}
-
-func (b *Bot) renderSessions() string {
-	sessions, _ := b.store.ListSessions(core.SessionFilter{})
-	var b2 strings.Builder
-	n := 0
-	for _, s := range sessions {
-		if s.Kind == core.SessionKindPool || s.Status == core.SessionDone || s.Status == core.SessionArchived {
-			continue
-		}
-		n++
-		label := firstNonEmpty(s.Slug, s.Title, truncate(s.Goal, 40), s.ID)
-		topic := "—"
-		if s.TGTopicID != nil && *s.TGTopicID != 0 {
-			topic = "topic set"
-		}
-		fmt.Fprintf(&b2, "• %s  [%s]  %s\n", label, s.Status, topic)
-	}
-	if n == 0 {
-		return "no active sessions — /dispatch <repo> <task> to start one"
-	}
-	return fmt.Sprintf("sessions (%d):\n%s", n, strings.TrimRight(b2.String(), "\n"))
-}
-
-func (b *Bot) renderWorkers() string {
-	workers, _ := b.store.ListWorkers(core.WorkerFilter{})
-	var active []core.Worker
-	for _, w := range workers {
-		if !w.State.Terminal() {
-			active = append(active, w)
-		}
-	}
-	if len(active) == 0 {
-		return "no active workers"
-	}
-	sort.Slice(active, func(i, j int) bool { return active[i].ID < active[j].ID })
-	var b2 strings.Builder
-	fmt.Fprintf(&b2, "workers (%d active):\n", len(active))
-	for _, w := range active {
-		vm := "local"
-		if w.VM != "" {
-			vm = w.VM
-		}
-		pane := w.AgentRef
-		if pane == "" {
-			pane = "—"
-		}
-		fmt.Fprintf(&b2, "• %s [%s] vm=%s pane=%s  %s\n", short(w.ID), w.State, vm, pane, truncate(w.Task, 40))
-	}
-	return strings.TrimRight(b2.String(), "\n")
-}
-
-// renderVMs lists the attached fleet — the deterministic answer to "how many
-// VMs", not a brain guess.
-func (b *Bot) renderVMs() string {
-	if len(b.vms) == 0 {
-		return "no VMs configured"
-	}
-	var b2 strings.Builder
-	fmt.Fprintf(&b2, "attached VMs (%d):\n", len(b.vms))
-	for _, v := range b.vms {
-		fmt.Fprintf(&b2, "• %s\n", v)
-	}
-	return strings.TrimRight(b2.String(), "\n")
-}
-
-// cmdPeek reads a herdr agent's recent terminal output and asks the brain to
-// summarize what the session is doing — "peek into it and get an idea". With no
-// arg, it peeks the single live agent (if exactly one).
-func (b *Bot) cmdPeek(ctx context.Context, arg string) string {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		agents, err := b.actions.Scan(ctx)
-		if err != nil {
-			return "peek failed (scan): " + err.Error()
-		}
-		var live []ScannedAgent
-		for _, a := range agents {
-			if a.Alive {
-				live = append(live, a)
-			}
-		}
-		if len(live) == 1 {
-			arg = live[0].Ref
-		} else {
-			return "usage: /peek <pane> — several live sessions, name one (see /scan)"
-		}
-	}
-	out, err := b.actions.Peek(ctx, arg)
-	if err != nil {
-		return "peek failed: " + err.Error()
-	}
-	if strings.TrimSpace(out) == "" {
-		return "peeked " + arg + " — pane is empty / no recent output"
-	}
-	// Ask the brain to summarize the terminal tail; fall back to the raw tail if
-	// the brain is unavailable so /peek still gives the operator something.
-	summary, berr := b.actions.BrainReply(ctx, "This is the recent terminal output of a coding-agent session. In 2-4 sentences, say what it appears to be working on and its current state. Do not invent details.\n\n"+truncate(out, 6000))
-	if berr != nil || strings.TrimSpace(summary) == "" {
-		return "peek " + arg + " (raw tail):\n\n" + truncate(out, tgMessageCap-40)
-	}
-	return "👁 peek " + arg + ":\n" + summary
-}
-
-// cmdScan lists the live herdr agent sessions across the fleet, marking which
-// arco already tracks and how to adopt the rest.
-func (b *Bot) cmdScan(ctx context.Context) string {
-	agents, err := b.actions.Scan(ctx)
-	if err != nil {
-		return "scan failed: " + err.Error()
-	}
-	if len(agents) == 0 {
-		return "no herdr agent sessions found on the fleet"
-	}
-	live, done, adoptable := 0, 0, 0
-	for _, a := range agents {
-		if a.Alive {
-			live++
-		} else {
-			done++
-		}
-		if a.Alive && !a.Tracked {
-			adoptable++
-		}
-	}
-	var sb strings.Builder
-	// Count matches what the operator sees in herdr (all panes), with live vs done
-	// broken out — a herdr "done" agent is a finished pane, still listed but inert.
-	fmt.Fprintf(&sb, "herdr agent sessions (%d — %d live, %d done):\n", len(agents), live, done)
-	for _, a := range agents {
-		mark := "🆓 untracked"
-		switch {
-		case !a.Alive:
-			mark = "🏁 finished (pane lingering)"
-		case a.Tracked:
-			mark = "✅ tracked " + short(a.WorkerID)
-		}
-		fmt.Fprintf(&sb, "\n• %s [%s] on %s — %s\n", a.Kind, a.Status, vmLabel(a.VM), mark)
-		if a.Title != "" {
-			fmt.Fprintf(&sb, "  %s\n", truncate(a.Title, 60))
-		}
-		if a.Cwd != "" {
-			fmt.Fprintf(&sb, "  cwd: %s\n", a.Cwd)
-		}
-		fmt.Fprintf(&sb, "  pane: %s", a.Ref)
-		if a.SessionID != "" {
-			fmt.Fprintf(&sb, " · session %s", short(a.SessionID))
-		}
-		sb.WriteString("\n")
-	}
-	if adoptable > 0 {
-		sb.WriteString("\nadopt with /adopt <pane> (or /adopt all to track every live untracked one)")
-	}
-	return strings.TrimRight(sb.String(), "\n")
-}
-
-// cmdAdopt registers untracked herdr sessions as monitor-only arco workers.
-// No arg (or "all") adopts every untracked live agent; otherwise it adopts the
-// one whose pane/workspace/session-id matches the fragment.
-func (b *Bot) cmdAdopt(ctx context.Context, arg string) string {
-	arg = strings.TrimSpace(arg)
-	if arg == "" || strings.EqualFold(arg, "all") {
-		agents, err := b.actions.Scan(ctx)
-		if err != nil {
-			return "adopt failed (scan): " + err.Error()
-		}
-		var refs []string
-		for _, a := range agents {
-			if a.Alive && !a.Tracked { // skip finished (done) panes — nothing to monitor
-				refs = append(refs, a.Ref)
-			}
-		}
-		if len(refs) == 0 {
-			return "nothing to adopt — every live agent is already tracked (/scan to see)"
-		}
-		var sb strings.Builder
-		for _, ref := range refs {
-			wid, sid, err := b.actions.Adopt(ctx, ref)
-			if err != nil {
-				fmt.Fprintf(&sb, "• %s — skipped: %s\n", ref, err.Error())
-				continue
-			}
-			fmt.Fprintf(&sb, "• %s — 👁 adopted as worker %s (session %s, monitor-only)\n", ref, short(wid), short(sid))
-		}
-		return strings.TrimRight(sb.String(), "\n")
-	}
-	wid, sid, err := b.actions.Adopt(ctx, arg)
-	if err != nil {
-		return "adopt failed: " + err.Error()
-	}
-	return fmt.Sprintf("👁 adopted %s as worker %s (session %s)\nmonitor-only (manual mode): arco tracks liveness + relays, but didn't launch it so it can't enforce grants.", arg, short(wid), short(sid))
-}
-
 // chatPrompt frames a conversational brain call with light fleet context. It
 // includes the LIVE herdr agent sessions (from /scan) so a natural-language
 // question like "how many claude sessions are running?" is answered from real
@@ -475,9 +358,38 @@ func (b *Bot) chatPrompt(ctx context.Context, threadID int64, text string) strin
 	return out
 }
 
+// chatSessionKey maps a Telegram thread to the durable-history session key: an
+// issue topic's own session, else the console sentinel (General-topic chat has no
+// work session but still needs a durable, FK-satisfying key).
+func (b *Bot) chatSessionKey(threadID int64) string {
+	if threadID != 0 {
+		if s, ok := b.sessionByTopic(threadID); ok {
+			return s.ID
+		}
+	}
+	return core.ConsoleSessionID
+}
+
 // chatHistory renders the recent per-thread conversation for the brain context
-// ("none yet" when the thread is fresh) so a follow-up resolves against it.
+// ("none yet" when the thread is fresh) so a follow-up resolves against it. When
+// a durable ContextStore is wired it survives restart and is fleet-wide queryable;
+// otherwise it falls back to the in-memory per-thread buffer.
 func (b *Bot) chatHistory(threadID int64) string {
+	if b.cstore != nil {
+		msgs, err := b.cstore.RecentMessages(b.chatSessionKey(threadID), 2*maxChatTurns)
+		if err != nil || len(msgs) == 0 {
+			return "none yet"
+		}
+		var sb strings.Builder
+		for _, m := range msgs {
+			lim := 400
+			if m.Role == "operator" {
+				lim = 300
+			}
+			fmt.Fprintf(&sb, "\n  %s: %s", m.Role, truncate(m.Content, lim))
+		}
+		return sb.String()
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	turns := b.chatHist[threadID]
@@ -491,9 +403,22 @@ func (b *Bot) chatHistory(threadID int64) string {
 	return sb.String()
 }
 
-// recordChatTurn appends an exchange to the thread's history, capped at
-// maxChatTurns (oldest dropped). In-memory; resets on daemon restart.
-func (b *Bot) recordChatTurn(threadID int64, user, bot string) {
+// recordChatTurn persists one operator↔arco exchange. Durable (per session, via
+// the ContextStore — scrubbed at the store's write chokepoint, survives restart)
+// when wired; else the in-memory per-thread buffer capped at maxChatTurns.
+func (b *Bot) recordChatTurn(ctx context.Context, threadID int64, user, bot string) {
+	if b.cstore != nil {
+		sid := b.chatSessionKey(threadID)
+		// Best-effort: a persist failure must not break the reply, but log it so
+		// silently-lost history is observable.
+		if err := b.cstore.AppendMessage(ctx, sid, "operator", user); err != nil {
+			log.Printf("arco: telegram: persist chat turn (operator): %v", err)
+		}
+		if err := b.cstore.AppendMessage(ctx, sid, "arco", bot); err != nil {
+			log.Printf("arco: telegram: persist chat turn (arco): %v", err)
+		}
+		return
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	h := append(b.chatHist[threadID], chatTurn{user: user, bot: bot})
@@ -528,34 +453,9 @@ func (b *Bot) herdrSessionFacts(ctx context.Context) string {
 		if a.Tracked {
 			track = "tracked as " + short(a.WorkerID)
 		}
-		fmt.Fprintf(&sb, " • %s [%s] on %s cwd=%s (%s)", a.Kind, a.Status, vmLabel(a.VM), a.Cwd, track)
+		fmt.Fprintf(&sb, " • %s [%s] on %s cwd=%s (%s)", a.Kind, a.State, vmLabel(a.VM), a.Cwd, track)
 	}
 	return sb.String()
-}
-
-// resolveWorker finds the single worker whose id contains the given fragment
-// (case-insensitive) — so the last-8 handle shown by /workers works, as does any
-// distinctive slice. Ambiguous or missing is an error message.
-func (b *Bot) resolveWorker(fragment string) (core.Worker, error) {
-	up := strings.ToUpper(fragment)
-	workers, err := b.store.ListWorkers(core.WorkerFilter{})
-	if err != nil {
-		return core.Worker{}, fmt.Errorf("lookup failed: %w", err)
-	}
-	var matches []core.Worker
-	for _, w := range workers {
-		if strings.Contains(strings.ToUpper(w.ID), up) {
-			matches = append(matches, w)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return core.Worker{}, fmt.Errorf("no worker matches %q", fragment)
-	case 1:
-		return matches[0], nil
-	default:
-		return core.Worker{}, fmt.Errorf("%q matches %d workers — use more of the id", fragment, len(matches))
-	}
 }
 
 // pendingQuestions returns a session's pending QUESTION escalations.
