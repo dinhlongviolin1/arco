@@ -35,7 +35,7 @@ func TestConfirm_ProposePostsCardAndDefers(t *testing.T) {
 	var ran int
 	var args string
 	m := &Message{MessageThreadID: 7, From: &User{ID: allowedUID}}
-	msg, err := b.proposeAction(context.Background(), m, mutatingTool(&ran, &args, "killed w3"), []byte(`{"worker":"w3"}`))
+	msg, err := b.proposeAction(context.Background(), m.MessageThreadID, mutatingTool(&ran, &args, "killed w3"), []byte(`{"worker":"w3"}`))
 	require.NoError(t, err)
 	require.Contains(t, msg, "approve")
 	require.Contains(t, msg, "kill worker=w3", "the card describes the concrete action")
@@ -53,7 +53,7 @@ func TestConfirm_ApproveExecutes(t *testing.T) {
 	var ran int
 	var args string
 	m := &Message{MessageThreadID: 7}
-	_, _ = b.proposeAction(context.Background(), m, mutatingTool(&ran, &args, "🛑 killed w3"), []byte(`{"worker":"w3"}`))
+	_, _ = b.proposeAction(context.Background(), m.MessageThreadID, mutatingTool(&ran, &args, "🛑 killed w3"), []byte(`{"worker":"w3"}`))
 	id := pendingID(b)
 	require.NotEmpty(t, id)
 
@@ -70,7 +70,7 @@ func TestConfirm_RejectDoesNotExecute(t *testing.T) {
 	b, api, _ := newTestBotReg(t, feature.NewRegistry())
 	var ran int
 	var args string
-	_, _ = b.proposeAction(context.Background(), &Message{MessageThreadID: 7}, mutatingTool(&ran, &args, "x"), []byte(`{"worker":"w3"}`))
+	_, _ = b.proposeAction(context.Background(), int64(7), mutatingTool(&ran, &args, "x"), []byte(`{"worker":"w3"}`))
 	id := pendingID(b)
 	toast := b.resolvePending(context.Background(), ActReject, id)
 	require.Equal(t, "rejected", toast)
@@ -89,7 +89,7 @@ func TestConfirm_ApproveViaCallback(t *testing.T) {
 	b, _, _ := newTestBotReg(t, feature.NewRegistry())
 	var ran int
 	var args string
-	_, _ = b.proposeAction(context.Background(), &Message{MessageThreadID: 7}, mutatingTool(&ran, &args, "done"), []byte(`{"worker":"w3"}`))
+	_, _ = b.proposeAction(context.Background(), int64(7), mutatingTool(&ran, &args, "done"), []byte(`{"worker":"w3"}`))
 	id := pendingID(b)
 	b.handleCallback(context.Background(), &CallbackQuery{
 		ID: "c1", From: User{ID: allowedUID}, Data: EncodeCallback(ActApprove, id),
@@ -112,7 +112,7 @@ func TestConfirm_PendingBounded(t *testing.T) {
 	var args string
 	tool := mutatingTool(&ran, &args, "ok")
 	for i := 0; i < maxPending+20; i++ {
-		_, _ = b.proposeAction(context.Background(), &Message{MessageThreadID: 1}, tool, []byte(`{"worker":"w"}`))
+		_, _ = b.proposeAction(context.Background(), int64(1), tool, []byte(`{"worker":"w"}`))
 	}
 	b.mu.Lock()
 	n := len(b.pending)

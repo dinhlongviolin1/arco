@@ -26,6 +26,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/preflight"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/redact"
+	"github.com/dinhlongviolin1/arco/internal/scheduler"
 	"github.com/dinhlongviolin1/arco/internal/telegram"
 	"github.com/dinhlongviolin1/arco/internal/vm"
 )
@@ -411,6 +412,18 @@ func Run(ctx context.Context, cfg config.Config, deps Deps) error {
 			defer sweepWG.Done()
 			tgBot.Start(sweepCtx) // returns promptly on sweepCancel (shutdown)
 		}()
+
+		// Scheduled-tasks loop: fire due recurring tasks as agentic runs (delivered
+		// to Telegram). Decoupled from the reconcile sweep; joins the same ctx+WG so
+		// shutdown drains it before store.Close. Brain-gated: skips when brain is off.
+		if eng.Brain.Enabled {
+			sched := &scheduler.Scheduler{Store: store, Run: tgBot.RunScheduledTask}
+			sweepWG.Add(1)
+			go func() {
+				defer sweepWG.Done()
+				sched.Loop(sweepCtx)
+			}()
+		}
 	}
 
 	select {

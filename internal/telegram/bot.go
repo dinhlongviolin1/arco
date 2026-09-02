@@ -92,6 +92,16 @@ type ContextStore interface {
 // ContextMessage is one durable turn for history rendering.
 type ContextMessage struct{ Role, Content string }
 
+// TaskStore manages recurring scheduled tasks (the /schedule command). CreateTask
+// creates the task AND its own session (its topic + durable memory) atomically,
+// returning the stored task. nil ⇒ /schedule reports the feature is unavailable.
+type TaskStore interface {
+	CreateTask(ctx context.Context, name, schedule, prompt string, next time.Time) (core.ScheduledTask, error)
+	ListTasks() ([]core.ScheduledTask, error)
+	SetTaskEnabled(ctx context.Context, id string, enabled bool) error
+	DeleteTask(ctx context.Context, id string) error
+}
+
 // Config builds a Bot.
 type Config struct {
 	API      api
@@ -112,6 +122,9 @@ type Config struct {
 	Registry *feature.Registry
 	// ContextStore is the durable chat history (nil = in-memory fallback).
 	ContextStore ContextStore
+	// Tasks manages recurring scheduled tasks (/schedule). nil ⇒ /schedule is
+	// reported unavailable (bare bot / tests without a store).
+	Tasks TaskStore
 	// FeatureMode returns the operator's execution policy for a mutating feature
 	// the brain proposes (auto | confirm | off). nil ⇒ everything defaults to
 	// confirm (the brain proposes, you approve with a ✅).
@@ -131,6 +144,7 @@ type Bot struct {
 	vms     []string
 	reg     *feature.Registry
 	cstore  ContextStore
+	tasks   TaskStore
 	fmode   func(feature string) feature.Mode
 
 	mu       sync.Mutex
@@ -178,6 +192,7 @@ func New(cfg Config) *Bot {
 		vms:      cfg.VMs,
 		reg:      cfg.Registry,
 		cstore:   cfg.ContextStore,
+		tasks:    cfg.Tasks,
 		fmode:    cfg.FeatureMode,
 		pending:  map[string]pendingAction{},
 		locks:    map[string]*sync.Mutex{},

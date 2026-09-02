@@ -27,10 +27,11 @@ type pendingAction struct {
 // this is a slow-leak guard). Oldest proposals are evicted first.
 const maxPending = 64
 
-// chatGate builds the per-turn gate the tool-loop uses for mutating tools: the
-// mode comes from the operator's config (default confirm); confirm-mode proposals
-// are posted as an approval card in THIS message's topic.
-func (b *Bot) chatGate(m *Message) feature.Gate {
+// gateForThread builds the gate the tool-loop uses for mutating tools in a given
+// topic: the mode comes from the operator's config (default confirm); confirm-mode
+// proposals post an approval card in THAT topic. Used for both chat turns and
+// scheduled-task runs.
+func (b *Bot) gateForThread(threadID int64) feature.Gate {
 	return feature.Gate{
 		Mode: func(name string) feature.Mode {
 			if b.fmode == nil {
@@ -39,28 +40,48 @@ func (b *Bot) chatGate(m *Message) feature.Gate {
 			return b.fmode(name)
 		},
 		Confirm: func(ctx context.Context, t feature.Tool, args json.RawMessage) (string, error) {
-			return b.proposeAction(ctx, m, t, args)
+			return b.proposeAction(ctx, threadID, t, args)
 		},
 	}
 }
 
+// chatGate is the gate for a chat turn — confirmations post in the message's topic.
+func (b *Bot) chatGate(m *Message) feature.Gate { return b.gateForThread(m.MessageThreadID) }
+
+// gateForScheduled is the gate for an UNATTENDED scheduled run. It is stricter than
+// the interactive gate: a mutating capability the operator set to `auto` is clamped
+// to `confirm` here, because no one is watching a 3am run — an autonomous kill/
+// dispatch must still post an approval card and wait for a ✅. `off` (never) and
+// `confirm` are honored as-is; only `auto` is downgraded.
+func (b *Bot) gateForScheduled(threadID int64) feature.Gate {
+	g := b.gateForThread(threadID)
+	base := g.Mode
+	g.Mode = func(name string) feature.Mode {
+		if base(name) == feature.ModeAuto {
+			return feature.ModeConfirm
+		}
+		return base(name)
+	}
+	return g
+}
+
 // proposeAction records a pending mutating action and posts a ✅/❌ card in the
-// message's topic, returning the text to relay back to the model so its reply
-// tells the operator to approve.
-func (b *Bot) proposeAction(ctx context.Context, m *Message, t feature.Tool, args json.RawMessage) (string, error) {
+// given topic, returning the text to relay back to the model so its reply tells
+// the operator to approve.
+func (b *Bot) proposeAction(ctx context.Context, threadID int64, t feature.Tool, args json.RawMessage) (string, error) {
 	desc := describeAction(t.Name, args)
 
 	b.mu.Lock()
 	b.pendSeq++
 	seq := b.pendSeq
 	id := strconv.FormatInt(seq, 36) // short, fits the 64-byte callback cap
-	b.pending[id] = pendingAction{tool: t, args: args, desc: desc, thread: m.MessageThreadID, seq: seq}
+	b.pending[id] = pendingAction{tool: t, args: args, desc: desc, thread: threadID, seq: seq}
 	b.evictOldestPendingLocked()
 	b.mu.Unlock()
 
 	kb := ApproveKeyboard(id)
 	sent, err := b.api.SendMessage(ctx, SendMessageReq{
-		ChatID: b.groupID, MessageThreadID: m.MessageThreadID,
+		ChatID: b.groupID, MessageThreadID: threadID,
 		Text: b.scrub("⚠️ arco wants to: " + desc + "\nApprove?"), ReplyMarkup: &kb,
 	})
 	if err != nil {
