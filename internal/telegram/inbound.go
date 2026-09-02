@@ -23,6 +23,7 @@ const (
 // button), registered once at Start.
 var menuCommands = []BotCommand{
 	{"dispatch", "start a worker: /dispatch <repo> <task>"},
+	{"schedule", "recurring task: /schedule <when> :: <prompt>"},
 	{"pause", "engage the emergency stop"},
 	{"resume", "release the emergency stop"},
 	{"help", "show all commands"},
@@ -274,4 +275,3 @@ func (b *Bot) maybeCloseTopic(ctx context.Context, sessionID string, threadID in
 	}
 	_ = b.api.CloseForumTopic(ctx, b.groupID, threadID)
 }
-

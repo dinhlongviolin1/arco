@@ -157,6 +157,32 @@ type Reader interface {
 	// SearchMessages returns a session's messages whose content matches the FTS5
 	// query, newest-first, capped at limit — the brain's on-demand history fetch.
 	SearchMessages(sessionID, query string, limit int) ([]Message, error)
+
+	// DueScheduledTasks returns ENABLED scheduled tasks whose next_run is at or
+	// before now, most-overdue first, capped at limit — the scheduler's hot query.
+	DueScheduledTasks(now time.Time, limit int) ([]ScheduledTask, error)
+	// ListScheduledTasks returns every scheduled task (for /schedule list).
+	ListScheduledTasks() ([]ScheduledTask, error)
+	// GetScheduledTask returns one task by id (ErrNotFound if absent).
+	GetScheduledTask(id string) (ScheduledTask, error)
+}
+
+// ScheduledTask is a recurring/planned UNATTENDED agent run: when due, arco runs
+// the chat brain (Converse) with the full tool surface + the task's own durable
+// memory, in its own session/topic, so a monitoring task can inspect and
+// (confirm-gated) act on the fleet.
+type ScheduledTask struct {
+	ID         string
+	Name       string // human label + topic name
+	Schedule   string // canonical spec: cron "0 8 * * *" or interval "30m"
+	Prompt     string // the agentic instruction the run receives
+	SessionID  string // the task's own session (its topic + durable memory)
+	Enabled    bool
+	NextRun    time.Time // when it next fires
+	LastRun    time.Time // last fire (zero = never)
+	LastStatus string    // "" | ok | error
+	LastResult string    // last run's short outcome
+	CreatedAt  time.Time
 }
 
 // Tx is a serialized single-writer transaction. It is arco-owned; the storage
@@ -174,6 +200,16 @@ type Tx interface {
 	// event payloads — so a secret in chat never persists, and the row is mirrored
 	// into transcript_fts for search. Returns the new message id.
 	AppendMessage(m Message) (id int64, err error)
+
+	// CreateScheduledTask inserts a new recurring/planned task.
+	CreateScheduledTask(t ScheduledTask) error
+	// RecordScheduledRun stamps a completed run: last_run, the newly-computed
+	// next_run, the status ("ok"/"error") and a short result line.
+	RecordScheduledRun(id string, lastRun, nextRun time.Time, status, result string) error
+	// SetScheduledTaskEnabled pauses/resumes a task.
+	SetScheduledTaskEnabled(id string, enabled bool) error
+	// DeleteScheduledTask removes a task.
+	DeleteScheduledTask(id string) error
 
 	// ObserveWorker records liveness/HEAD observations (head_commit, last_seen_at,
 	// pid, boot_id) without a state change or rev bump — the sweep/intake truth.

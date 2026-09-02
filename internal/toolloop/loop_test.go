@@ -239,7 +239,10 @@ func TestLoop_TruncatedProtocolAtCapFallsBack(t *testing.T) {
 func TestLoop_ToolReadsArgs(t *testing.T) {
 	var gotArgs string
 	tool := feature.Tool{Name: "peek", Desc: "peek a pane", Access: feature.BrainSafe,
-		Call: func(_ context.Context, a json.RawMessage) (string, error) { gotArgs = string(a); return "pane tail", nil }}
+		Call: func(_ context.Context, a json.RawMessage) (string, error) {
+			gotArgs = string(a)
+			return "pane tail", nil
+		}}
 	s := &scripted{replies: []string{`{"tool":"peek","args":{"pane":"w5:p1"}}`, `{"final":"it's testing"}`}}
 	_, err := s2run(s, []feature.Tool{tool}, "peek w5")
 	require.NoError(t, err)

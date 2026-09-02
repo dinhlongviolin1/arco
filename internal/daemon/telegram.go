@@ -14,6 +14,7 @@ import (
 	"github.com/dinhlongviolin1/arco/internal/notify"
 	"github.com/dinhlongviolin1/arco/internal/reconcile"
 	"github.com/dinhlongviolin1/arco/internal/telegram"
+	"github.com/oklog/ulid/v2"
 )
 
 // engineActions adapts *reconcile.Engine to telegram.Actions: it maps a button
@@ -157,6 +158,50 @@ func (t tgStore) SetSessionTelegram(ctx context.Context, sessionID string, topic
 	})
 }
 
+// taskStore adapts core.Store to telegram.TaskStore. CreateTask creates the task
+// AND its own work session (the topic + durable memory the run posts into) in one
+// write tx, so a scheduled task always has a valid session FK. The task's prompt is
+// scrubbed at the ledger write chokepoint.
+type taskStore struct{ s core.Store }
+
+func (t taskStore) CreateTask(ctx context.Context, name, schedule, prompt string, next time.Time) (core.ScheduledTask, error) {
+	sessionID := ulid.Make().String()
+	title := "⏰ " + name
+	task := core.ScheduledTask{
+		ID: ulid.Make().String(), Name: name, Schedule: schedule, Prompt: prompt,
+		SessionID: sessionID, Enabled: true, NextRun: next,
+	}
+	err := t.s.WithTx(ctx, func(tx core.Tx) error {
+		if err := tx.CreateSession(core.Session{
+			ID: sessionID, Goal: title, Title: title, Status: core.SessionActive,
+			Kind: core.SessionKindWork, SupervisionMode: core.ModeManual,
+		}); err != nil {
+			return err
+		}
+		return tx.CreateScheduledTask(task)
+	})
+	if err != nil {
+		return core.ScheduledTask{}, err
+	}
+	return task, nil
+}
+
+func (t taskStore) ListTasks() ([]core.ScheduledTask, error) {
+	return t.s.Reader().ListScheduledTasks()
+}
+
+func (t taskStore) SetTaskEnabled(ctx context.Context, id string, enabled bool) error {
+	return t.s.WithTx(ctx, func(tx core.Tx) error {
+		return tx.SetScheduledTaskEnabled(id, enabled)
+	})
+}
+
+func (t taskStore) DeleteTask(ctx context.Context, id string) error {
+	return t.s.WithTx(ctx, func(tx core.Tx) error {
+		return tx.DeleteScheduledTask(id)
+	})
+}
+
 // buildTelegramBot constructs the forum bot for an enabled [telegram] config and
 // verifies the token at boot (fail LOUD on a bad token, like other preflights).
 func buildTelegramBot(ctx context.Context, cfg config.Config, eng *reconcile.Engine) (*telegram.Bot, error) {
@@ -190,6 +235,7 @@ func buildTelegramBot(ctx context.Context, cfg config.Config, eng *reconcile.Eng
 		VMs:          vmLines(cfg),
 		Registry:     buildRegistry(eng, vmLines(cfg)),
 		ContextStore: contextStore{s: eng.Store},
+		Tasks:        taskStore{s: eng.Store},
 		FeatureMode: func(name string) feature.Mode {
 			// operator policy from [features] (default: confirm for any mutating tool)
 			return feature.ParseMode(cfg.Features.Mode(name), feature.ModeConfirm)
@@ -220,6 +266,12 @@ func buildRegistry(eng *reconcile.Engine, vms []string) *feature.Registry {
 			res, err := eng.Spawn(ctx, "", task, true, repo, "", "") // new issue, default VM
 			return res.WorkerID, res.SessionID, err
 		}),
+		// Natural-language "brief me every morning…": the brain proposes, the confirm
+		// gate approves (BrainAct), and create reuses the SAME taskStore as /schedule.
+		features.Schedule(func(ctx context.Context, name, sched, prompt string, next time.Time) (string, error) {
+			t, err := (taskStore{s: eng.Store}).CreateTask(ctx, name, sched, prompt, next)
+			return t.ID, err
+		}, nil),
 	)
 	return r
 }

@@ -476,4 +476,3 @@ func TestMessage_ConsolePauseResumeAuth(t *testing.T) {
 	require.Equal(t, 1, act.pauseHit)
 	require.Equal(t, 1, act.resHit)
 }
-

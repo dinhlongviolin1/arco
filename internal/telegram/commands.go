@@ -19,6 +19,9 @@ act:
                             (in an issue's topic → adds an aspect to that issue;
                              in General → starts a new issue; --vm <name> to pick a VM)
   /pause  /resume           emergency stop on / off
+  /schedule <when> :: <task> recurring unattended run in its own topic
+                            (when = 30m | 2h | 1d | a 5-field cron;
+                             also: /schedule list | pause <id> | resume <id> | remove <id>)
 
 answer:
   tap the buttons on a decision card, or just TYPE your answer inside
@@ -36,6 +39,7 @@ chat:
 var builtinCommands = map[string]bool{
 	"help": true, "start": true,
 	"pause": true, "resume": true, "dispatch": true, "new": true,
+	"schedule": true,
 }
 
 // helpMessage is the built-in help plus a generated section for registered
@@ -93,6 +97,8 @@ func (b *Bot) handleCommand(ctx context.Context, m *Message, text string) {
 		}
 	case "/dispatch", "/new":
 		b.reply(ctx, m, b.cmdDispatch(ctx, m, arg))
+	case "/schedule":
+		b.reply(ctx, m, b.cmdSchedule(ctx, arg))
 	default:
 		// Coexistence seam: a command the switch doesn't own may be served by a
 		// registered feature. The switch is consulted first, so no command is ever
