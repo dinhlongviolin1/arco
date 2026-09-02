@@ -173,10 +173,10 @@ type Reader interface {
 // (confirm-gated) act on the fleet.
 type ScheduledTask struct {
 	ID         string
-	Name       string    // human label + topic name
-	Schedule   string    // canonical spec: cron "0 8 * * *" or interval "30m"
-	Prompt     string    // the agentic instruction the run receives
-	SessionID  string    // the task's own session (its topic + durable memory)
+	Name       string // human label + topic name
+	Schedule   string // canonical spec: cron "0 8 * * *" or interval "30m"
+	Prompt     string // the agentic instruction the run receives
+	SessionID  string // the task's own session (its topic + durable memory)
 	Enabled    bool
 	NextRun    time.Time // when it next fires
 	LastRun    time.Time // last fire (zero = never)

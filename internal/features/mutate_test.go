@@ -42,7 +42,7 @@ func TestAdopt_ToolExecutes(t *testing.T) {
 func TestAdopt_AllOnlyLiveUntracked(t *testing.T) {
 	scan := fakeScanner{agents: []core.ScannedAgent{
 		{AgentObs: core.AgentObs{Ref: "w1:p1", Alive: true}, Tracked: true, WorkerID: "01AAAA"},
-		{AgentObs: core.AgentObs{Ref: "w5:p1", Alive: true}}, // live + untracked → adopt
+		{AgentObs: core.AgentObs{Ref: "w5:p1", Alive: true}},   // live + untracked → adopt
 		{AgentObs: core.AgentObs{Ref: "wQ:p1", State: "done"}}, // finished → skip
 	}}
 	ad := &recordingAdopter{}

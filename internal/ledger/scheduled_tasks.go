@@ -116,10 +116,10 @@ func scanScheduled(rows rowScanner) ([]core.ScheduledTask, error) {
 	var out []core.ScheduledTask
 	for rows.Next() {
 		var (
-			st                    core.ScheduledTask
-			enabled               int
-			nextRun, created      string
-			lastRun               sql.NullString
+			st               core.ScheduledTask
+			enabled          int
+			nextRun, created string
+			lastRun          sql.NullString
 		)
 		if err := rows.Scan(&st.ID, &st.Name, &st.Schedule, &st.Prompt, &st.SessionID,
 			&enabled, &nextRun, &lastRun, &st.LastStatus, &st.LastResult, &created); err != nil {

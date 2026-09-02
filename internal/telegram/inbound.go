@@ -275,4 +275,3 @@ func (b *Bot) maybeCloseTopic(ctx context.Context, sessionID string, threadID in
 	}
 	_ = b.api.CloseForumTopic(ctx, b.groupID, threadID)
 }
-

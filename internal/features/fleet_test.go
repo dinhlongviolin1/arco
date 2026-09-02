@@ -16,7 +16,7 @@ type fakeLedger struct {
 	escs     []core.Escalation
 }
 
-func (f fakeLedger) ListWorkers(core.WorkerFilter) ([]core.Worker, error)   { return f.workers, nil }
+func (f fakeLedger) ListWorkers(core.WorkerFilter) ([]core.Worker, error) { return f.workers, nil }
 func (f fakeLedger) ListSessions(core.SessionFilter) ([]core.Session, error) {
 	return f.sessions, nil
 }
@@ -64,7 +64,7 @@ func TestSessions_ActiveOnly(t *testing.T) {
 	topic := int64(7)
 	l := fakeLedger{sessions: []core.Session{
 		{ID: "S1", Slug: "fix-auth", Status: core.SessionActive, TGTopicID: &topic},
-		{ID: "S2", Slug: "old", Status: core.SessionDone},                 // excluded
+		{ID: "S2", Slug: "old", Status: core.SessionDone},                  // excluded
 		{ID: "P1", Kind: core.SessionKindPool, Status: core.SessionActive}, // pool excluded
 	}}
 	out := run(Sessions(l))

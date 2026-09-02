@@ -43,9 +43,9 @@ func TestScheduled_DueOnlyEnabledAndPast(t *testing.T) {
 	s := newTestStore(t)
 	seedContextSession(t, s, "S1")
 	now := time.Now().UTC()
-	makeTask(t, s, "PAST", "due", now.Add(-time.Minute), true)     // due
-	makeTask(t, s, "FUT", "not yet", now.Add(time.Hour), true)     // future
-	makeTask(t, s, "OFF", "paused", now.Add(-time.Hour), false)    // disabled
+	makeTask(t, s, "PAST", "due", now.Add(-time.Minute), true)  // due
+	makeTask(t, s, "FUT", "not yet", now.Add(time.Hour), true)  // future
+	makeTask(t, s, "OFF", "paused", now.Add(-time.Hour), false) // disabled
 
 	due, err := s.Reader().DueScheduledTasks(now, 10)
 	require.NoError(t, err)
